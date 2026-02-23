@@ -1,0 +1,25 @@
+name: emulator_orchestrator
+description: Orchestrator, CLI, and API server for ARM firmware emulation
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.5.0
+
+resolution: workspace
+
+dependencies:
+  socket_io_client: ^2.0.3+1
+  uuid: ^4.0.0
+  archive: ^3.4.0
+  path: ^1.9.0
+  drift: ^2.15.0
+  sqlite3: ^2.4.0
+  crypto: ^3.0.3
+  shelf: ^1.4.0
+  shelf_router: ^1.1.0
+
+dev_dependencies:
+  test: ^1.24.0
+  drift_dev: ^2.15.0
+  build_runner: ^2.4.0

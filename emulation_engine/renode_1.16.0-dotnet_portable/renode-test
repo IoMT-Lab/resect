@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -e
+set -u
+
+# this is to support running renode-test from an external directory and via a symlink
+ROOT_PATH="$(cd $(dirname $(readlink -f $0 2>/dev/null || echo $0)); echo $PWD)"
+ TEST_PATH=$ROOT_PATH/tests
+
+
+. "${TEST_PATH}/common.sh"
+
+set +e
+STTY_CONFIG=`stty -g 2>/dev/null`
+$PYTHON_RUNNER -u "`get_path "$TEST_PATH/run_tests.py"`" --exclude "skip_${DETECTED_OS}" --exclude "skip_host_${DETECTED_ARCH}" --robot-framework-remote-server-full-directory=$ROOT_PATH --robot-framework-remote-server-name=renode --css-file=$TEST_PATH/robot.css --runner=none -r $(pwd) "$@"
+RESULT_CODE=$?
+
+set -e
+if [ -n "${STTY_CONFIG:-}" ]
+then
+    # SIGTTOU might be sent when trying to change the terminal settings when "renode-test" runs in the background so trap the signal.
+    trap "" SIGTTOU
+    stty "$STTY_CONFIG"
+    trap - SIGTTOU
+fi
+exit $RESULT_CODE

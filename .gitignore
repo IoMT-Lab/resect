@@ -1,0 +1,45 @@
+# Dart/Flutter build artifacts
+.dart_tool/
+.pub-cache/
+.pub/
+build/
+**/doc/api/
+
+# Flutter platform artifacts
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+
+# Drift codegen (regenerated via build_runner)
+*.g.dart
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# Claude Code
+.claude/
+
+# OS / misc
+.DS_Store
+*.class
+*.log
+*.pyc
+*.swp
+.atom/
+.buildlog/
+.history
+.svn/
+
+# Symbolication / obfuscation
+app.*.symbols
+app.*.map.json
+
+# Old root-level stale files (from before workspace split)
+/lib/
+/test/
+/bin/
+/linux/

@@ -1,0 +1,58 @@
+nvic: IRQControllers.NVIC @ sysbus 0xE000E000
+    systickFrequency: 160000000
+    IRQ -> cpu@0
+
+cpu: CPU.CortexM @ sysbus
+    cpuType: "cortex-m4f"
+    nvic: nvic
+
+mask_rom: Memory.MappedMemory @ sysbus 0x0
+    size: 0x40000
+
+internal_sram: Memory.MappedMemory @ sysbus 0x00080000
+    size: 0x80000
+
+hwzero: MemoryControllers.Renesas_HwZero @ sysbus 0x50040100
+    IRQ -> nvic@28
+
+sysbus:
+    init:
+        Tag <0x00000000, 0x0003FFFF> "Mask ROM"
+        Tag <0x00080000, 0x000FFFFF> "Internal SRAM"
+        Tag <0x00100000, 0x002FFFFF> "I-Cache"
+        Tag <0x00F80000, 0x00F8BFFF> "Retention RAM"
+
+        Tag <0x40000000, 0x4000FFFF> "Timer0"
+        Tag <0x40001000, 0x40001FFF> "Timer1"
+        Tag <0x40002000, 0x40002FFF> "Dual Timer"
+        Tag <0x40007000, 0x40007FFF> "UART1"
+        Tag <0x40008000, 0x40008FFF> "Watchdog Timer"
+        Tag <0x40009000, 0x40009FFF> "UART2"
+        Tag <0x4000A000, 0x4000AFFF> "PWM"
+        Tag <0x4000E000, 0x4000EFFF> "DMA1"
+        Tag <0x40010000, 0x40010FFF> "GPIO0"
+        Tag <0x40011000, 0x40011FFF> "GPIO1"
+        Tag <0x40012000, 0x40012FFF> "UART0"
+        Tag <0x40015000, 0x40015FFF> "I2C Master"
+        Tag <0x40016000, 0x40016FFF> "Aux ADC"
+        Tag <0x40017000, 0x40017FFF> "GPIO2"
+        Tag <0x40100000, 0x401FFFFF> "CC312_APBS"
+        Tag <0x40110000, 0x40117FFF> "CC312_APBC"
+
+        Tag <0x50000000, 0x5000FFFF> "System Controller"
+        Tag <0x50010000, 0x5001FFFF> "SDIO Device"
+        Tag <0x50020000, 0x5002FFFF> "Security"
+        Tag <0x50030000, 0x5003FFFF> "SDIO Host"
+        Tag <0x50040000, 0x5004FFFF> "Fast HW"
+        Tag <0x50050000, 0x5005FFFF> "Flash Controller"
+        Tag <0x50060000, 0x5006FFFF> "DMA2"
+        Tag <0x50080000, 0x5008FFFF> "Slave Interface"
+        Tag <0x50090000, 0x5009FFFF> "RTC Interface"
+        Tag <0x500A0000, 0x500AFFFF> "TA2SYNC"
+        Tag <0x500B0000, 0x500BFFFF> "Flash Host Controller"
+        Tag <0x500C0000, 0x500CFFFF> "HSU"
+        Tag <0x500D0000, 0x500DFFFF> "ICache Controller"
+        Tag <0x500E0000, 0x500EFFFF> "PSK_SHA1"
+
+        Tag <0x60000000, 0x6FFFFFFF> "PHY"
+        Tag <0xE0000000, 0xEFFFFFFF> "System Control Space"

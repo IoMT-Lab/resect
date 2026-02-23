@@ -1,0 +1,30 @@
+name: emulator_ui
+description: Flutter desktop UI for ARM firmware emulation
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.5.0
+
+resolution: workspace
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^2.4.10
+  graphview: ^1.2.0
+  file_picker: ^6.1.1
+  window_manager: ^0.3.7
+  cupertino_icons: ^1.0.6
+  sqlite3_flutter_libs: ^0.5.0
+  path: ^1.9.0
+  emulator_orchestrator:
+    path: ../emulator_orchestrator
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
