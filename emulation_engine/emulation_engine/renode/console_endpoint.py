@@ -81,3 +81,10 @@ class ConsoleEndpoint:
             request = APIRequest('set-constant', {'address': address, 'name': name, 'width': width_in_bytes, 'value': value})
             response = await self.endpoint.call(request)
             response.get_or_throw()
+
+    async def get_symbols(self, functions_only: bool) -> list[str]:
+        async with self.endpoint.lock:
+            logger.debug(f'Getting symbols {'(functions only)' if functions_only else ''}')
+            request = APIRequest('get-symbols', {'functionOnly': functions_only})
+            response = await self.endpoint.call(request)
+            return response.get_or_throw()

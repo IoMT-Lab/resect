@@ -12,6 +12,7 @@ class CallgraphNamespace(socketio.AsyncNamespace):
         self.handle_connect: Callable[[str], Coroutine[Any, Any, Any]] | None = None
         self.handle_disconnect: Callable[[str, str], Coroutine[Any, Any, Any]] | None = None
         self.handle_get_symbols: Callable[[str], Coroutine[Any, Any, Any]] | None = None
+        self.handle_get_asm_symbols: Callable[[bool], Coroutine[Any, Any, Any]] | None = None
         self.handle_get_callgraph: Callable[[str], Coroutine[Any, Any, Any]] | None = None
 
         logger.info(f"CallgraphNamespace initialized on namespace '{namespace}'")
@@ -38,4 +39,12 @@ class CallgraphNamespace(socketio.AsyncNamespace):
             return await self.handle_get_callgraph(firmware_path)
         else:
             logger.warning("No handler defined for get_callgraph request.")
+            return False, 'Not implemented'
+        
+    async def on_get_asm_symbols(self, sid):
+        if self.handle_get_asm_symbols:
+            logger.info(f"Received get_asm_symbols request")
+            return await self.handle_get_asm_symbols(True)
+        else:
+            logger.warning("No handler defined for get_asm_symbols request.")
             return False, 'Not implemented'
