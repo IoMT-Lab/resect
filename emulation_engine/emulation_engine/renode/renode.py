@@ -375,11 +375,6 @@ def trace_func(symbol_name):
         logger.info(f'Setting constant: {name} at address: {hex(address)} with value: {hex(value)} and width: {width_in_bytes} bytes')
         await self.console.set_constant(address, name, width_in_bytes, value)
 
-    async def get_symbols(self, functions_only: bool) -> list[str]:
-        if not self.console:
-            raise Exception("Renode is not running. Please start it first.")
-        logger.info(f'Get symbols{' (functions only' if functions_only else ''}')
-        return await self.console.get_symbols(functions_only)
     async def _set_variable(self, name: str, value: str):
         await self.call('set', name, f'\n"""\n{value}\n"""')
 

@@ -38,7 +38,6 @@ class Server(socketio.AsyncNamespace):
 
         self.renode = Renode(renode_path, logging_path)
         self.renode_port = renode_port
-        self.callgraph.handle_get_asm_symbols = self.renode.get_symbols
 
         self.renode.emit_started_event = self.lifecycle.emit_started_event
         self.renode.emit_paused_event = self.lifecycle.emit_paused_event
