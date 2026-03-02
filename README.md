@@ -1,8 +1,10 @@
 # Resect
 
-ARM firmware emulator creation and analysis tool. Resect automates the process
-of building high-fidelity emulators for ARM firmware by iteratively discovering
+Firmware emulator creation and analysis tool. Resect automates the process
+of building high-fidelity emulators for provided firmware by iteratively discovering
 and substituting hardware-dependent functions with software hooks.
+
+Supports: ARM, X86
 
 The project has three interfaces — a Flutter desktop GUI, a CLI, and an HTTP API
 server — all backed by a shared orchestration layer that communicates with a
