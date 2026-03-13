@@ -48,11 +48,13 @@ class ARMCallgraph:
     
     async def _process_symbol(self, filename, symbol):
         called_symbols = {}
-        proc = await asyncio.create_subprocess_exec(self.objdump, f'--disassemble={symbol}', '--no-addresses', '--section=.text', '--no-show-raw-insn', filename, stdout=asyncio.subprocess.PIPE)
-        num_instructions = -5 # Subtract header/footer lines
+        proc = await asyncio.create_subprocess_exec(self.objdump, f'--disassemble={symbol}', '--no-addresses', '--no-show-raw-insn', filename, stdout=asyncio.subprocess.PIPE)
+        num_instructions = 0
         async for line in proc.stdout:
             line = line.decode()
-            num_instructions += 1
+            if line.startswith('\t'):
+                # instruction lines are the only ones that start with a tab
+                num_instructions += 1
             m = ASSEMBLY_CALL_PATTERN.search(line)
             if m:
                 function_call = m.group(1)
