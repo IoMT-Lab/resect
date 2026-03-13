@@ -22,7 +22,7 @@ class CallgraphService {
   Completer<void>? _connectCompleter;
 
   /// Timeout for RPC calls (emitWithAck).
-  static const Duration rpcTimeout = Duration(seconds: 30);
+  static const Duration rpcTimeout = Duration(seconds: 120);
 
   CallgraphService({this.serverUrl = 'http://localhost:12356'});
 
