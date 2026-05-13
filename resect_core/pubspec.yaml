@@ -1,6 +1,7 @@
 name: resect_core
 description: A starting point for Dart libraries or applications.
 version: 1.0.0
+publish_to: none
 # repository: https://github.com/my_org/my_repo
 
 environment:
@@ -10,9 +11,11 @@ resolution: workspace
 
 # Add regular dependencies here.
 dependencies:
-  path: ^1.9.0
+  callgraph: {git: git@github.com:IoMT-Lab/callgraph-dart.git}
+  logging: ^1.3.0
+  path: ^1.9.1
+  renode: {git: git@github.com:IoMT-Lab/renode-dart.git}
   
 
 dev_dependencies:
-  lints: ^6.0.0
-  test: ^1.25.6
+  iomt_lab_lints: {git: git@github.com:IoMT-Lab/lints-dart.git}

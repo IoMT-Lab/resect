@@ -1,0 +1,7 @@
+INFO: 2026-05-11 16:17:00.225744: Starting Renode process at path: ../exclude/renode_1.16.1+20260406gitf499ae286-portable/renode on port: 5678
+INFO: 2026-05-11 16:17:00.241274: Connecting to Renode API at ws://localhost:5678/proxy
+WARNING: 2026-05-11 16:17:00.272206: Failed to connect to WebSocket at ws://localhost:5678/proxy: WebSocketChannelException: SocketException: Connection refused (OS Error: Connection refused, errno = 111), address = localhost, port = 50178
+16:17:01.0553 [INFO] Loaded monitor commands from: /home/taylor/workspace/vanderbilt/projects/upgrade/resect/exclude/renode_1.16.1+20260406gitf499ae286-portable/scripts/monitor.py
+INFO: 2026-05-11 16:17:01.366182: Initialization complete.
+INFO: 2026-05-11 16:17:01.368034: Creating machine with provided REPL data...
+16:17:01.3872 [INFO] System bus created.
