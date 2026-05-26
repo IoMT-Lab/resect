@@ -15,6 +15,15 @@ echo "=== Starting Resect ==="
 echo ""
 
 # ---------------------------------------------------------------------------
+# Drift code generation (produces .g.dart files if missing or stale)
+# ---------------------------------------------------------------------------
+echo "Running Drift code generation..."
+cd "$SCRIPT_DIR/emulator_orchestrator"
+dart run build_runner build --delete-conflicting-outputs
+echo "✓ Code generation complete"
+echo ""
+
+# ---------------------------------------------------------------------------
 # Python server
 # ---------------------------------------------------------------------------
 echo "Starting Python server..."

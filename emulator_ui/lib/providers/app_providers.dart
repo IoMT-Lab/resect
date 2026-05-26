@@ -18,6 +18,8 @@ import 'package:emulator_orchestrator/data/repositories/emulator_repository.dart
 import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
 import 'package:emulator_orchestrator/orchestrator/events/orchestrator_events.dart';
 import 'package:emulator_orchestrator/orchestrator/workflows/synthesizer_workflow.dart';
+import 'package:emulator_orchestrator/orchestrator/vagrant_test_event.dart';
+export 'package:emulator_orchestrator/orchestrator/vagrant_test_event.dart';
 import 'package:emulator_orchestrator/api/api_server.dart';
 import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_call_graph_source.dart';
 import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_emulation_controller.dart';
@@ -538,3 +540,75 @@ final apiServerProvider = Provider<ApiServer>((ref) {
   );
 });
 
+// =============================================================================
+// VAGRANT CI/CD TEST STATE
+// =============================================================================
+
+/// Status of a single test step.
+enum VagrantStepStatus { pending, running, passed, failed }
+
+/// State for one step in the Vagrant CI/CD test panel.
+class VagrantTestStepState {
+  final VagrantTestStepId id;
+  final VagrantStepStatus status;
+  final List<String> logs;
+
+  const VagrantTestStepState({
+    required this.id,
+    this.status = VagrantStepStatus.pending,
+    this.logs = const [],
+  });
+
+  VagrantTestStepState copyWith({
+    VagrantStepStatus? status,
+    List<String>? logs,
+  }) =>
+      VagrantTestStepState(
+        id: id,
+        status: status ?? this.status,
+        logs: logs ?? this.logs,
+      );
+}
+
+/// State of the entire Vagrant CI/CD test run.
+class VagrantTestState {
+  final List<VagrantTestStepState> steps;
+  final bool isRunning;
+  final bool complete;
+  final bool? passed; // null until complete
+
+  VagrantTestState({
+    List<VagrantTestStepState>? steps,
+    this.isRunning = false,
+    this.complete = false,
+    this.passed,
+  }) : steps = steps ??
+            VagrantTestStepId.values
+                .map((id) => VagrantTestStepState(id: id))
+                .toList();
+
+  VagrantTestState copyWith({
+    List<VagrantTestStepState>? steps,
+    bool? isRunning,
+    bool? complete,
+    bool? passed,
+  }) =>
+      VagrantTestState(
+        steps: steps ?? this.steps,
+        isRunning: isRunning ?? this.isRunning,
+        complete: complete ?? this.complete,
+        passed: passed ?? this.passed,
+      );
+
+  VagrantTestState withStepUpdate(
+    VagrantTestStepId id,
+    VagrantTestStepState Function(VagrantTestStepState) update,
+  ) {
+    final updated = steps.map((s) => s.id == id ? update(s) : s).toList();
+    return copyWith(steps: updated);
+  }
+}
+
+/// Live state of the Vagrant CI/CD test panel.
+final vagrantTestStateProvider =
+    StateProvider<VagrantTestState>((ref) => VagrantTestState());

@@ -21,6 +21,25 @@ class AppPaths {
   static String documentsDir(String emulatorId) =>
       p.join(projectsDir, emulatorId, 'documents');
 
+  /// Find the emulation_engine directory relative to the current working directory.
+  ///
+  /// Checks two locations in order:
+  /// 1. `./emulation_engine`   (cwd is the workspace root)
+  /// 2. `../emulation_engine`  (cwd is a package subdir like emulator_ui/)
+  static String findEngineDir() {
+    final candidates = [
+      '${Directory.current.path}/emulation_engine',
+      '${Directory.current.parent.path}/emulation_engine',
+    ];
+    for (final candidate in candidates) {
+      if (Directory(candidate).existsSync()) return candidate;
+    }
+    throw StateError(
+      'Could not find emulation_engine directory. '
+      'Searched: ${candidates.join(', ')}',
+    );
+  }
+
   /// Ensure the projects directory exists, return its path.
   static Future<String> ensureProjectsDir() async {
     final dir = Directory(projectsDir);

@@ -9,6 +9,7 @@ import '../../providers/app_providers.dart';
 import '../dialogs/new_emulator_dialog.dart';
 import '../dialogs/unsaved_changes_dialog.dart';
 import '../dialogs/hook_database_dialog.dart';
+import '../dialogs/vagrant_test_dialog.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 
 /// Top menu bar with File, View, and Help menus.
@@ -95,6 +96,13 @@ class MenuBarWidget extends ConsumerWidget {
                     : () {},
                 enabled: currentEmulator != null && currentEmulator.hooks.isNotEmpty,
               ),
+              _MenuItem(
+                title: 'Export Vagrant...',
+                onTap: currentEmulator != null && currentEmulator.hooks.isNotEmpty
+                    ? () => _exportVagrant(context, ref)
+                    : () {},
+                enabled: currentEmulator != null && currentEmulator.hooks.isNotEmpty,
+              ),
               const _MenuDivider(),
               _MenuItem(
                 title: 'Close Emulator',
@@ -129,6 +137,16 @@ class MenuBarWidget extends ConsumerWidget {
               _MenuItem(
                 title: 'Hook Database...',
                 onTap: () => HookDatabaseDialog.show(context),
+              ),
+            ],
+          ),
+
+          _MenuBarItem(
+            title: 'Tools',
+            items: [
+              _MenuItem(
+                title: 'Run Vagrant Test...',
+                onTap: () => VagrantTestDialog.show(context),
               ),
             ],
           ),
@@ -498,6 +516,38 @@ class MenuBarWidget extends ConsumerWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to export Renode script: $e')),
+        );
+      }
+    }
+  }
+
+  /// Export emulator as a self-contained Vagrant bundle (.zip)
+  Future<void> _exportVagrant(BuildContext context, WidgetRef ref) async {
+    final emulator = ref.read(currentEmulatorProvider);
+    if (emulator == null || emulator.hooks.isEmpty) return;
+
+    final result = await FilePicker.platform.saveFile(
+      dialogTitle: 'Export Vagrant Bundle',
+      fileName: '${emulator.name}_vagrant.zip',
+      type: FileType.any,
+    );
+
+    if (result == null) return;
+
+    final repository = ref.read(emulatorRepositoryProvider);
+
+    try {
+      await repository.exportVagrant(emulator, result);
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Vagrant bundle exported successfully')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to export Vagrant bundle: $e')),
         );
       }
     }

@@ -1797,6 +1797,13 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
                         label: 'Export JSON',
                         onPressed: () => _exportResultJson(context, result, fidelity),
                       ),
+                      _exportButton(
+                        icon: Icons.computer,
+                        label: 'Export Vagrant',
+                        onPressed: emulator != null && emulator.hooks.isNotEmpty
+                            ? () => _exportVagrant(context, ref, emulator)
+                            : null,
+                      ),
                     ],
                   ),
                 ],
@@ -2074,6 +2081,36 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     try {
       final repository = ref.read(emulatorRepositoryProvider);
       await repository.exportResc(emulator, result);
+
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Exported: $result'),
+          backgroundColor: Colors.green.shade700,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Export failed: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  /// Export a self-contained Vagrant bundle (.zip).
+  Future<void> _exportVagrant(BuildContext context, WidgetRef ref, dynamic emulator) async {
+    final result = await FilePicker.platform.saveFile(
+      dialogTitle: 'Export Vagrant Bundle',
+      fileName: '${emulator.name}_vagrant.zip',
+      allowedExtensions: ['zip'],
+      type: FileType.custom,
+    );
+    if (result == null) return;
+
+    try {
+      final repository = ref.read(emulatorRepositoryProvider);
+      await repository.exportVagrant(emulator, result);
 
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

@@ -4,6 +4,8 @@ set -e
 echo "=== Resect — Installation ==="
 echo ""
 
+INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 # ---------------------------------------------------------------------------
 # 1. System packages
 # ---------------------------------------------------------------------------
@@ -12,9 +14,18 @@ sudo apt-get update
 sudo apt-get install -y \
   clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
   gcc-arm-none-eabi \
-  python3-pip pipenv \
   git git-lfs \
-  curl unzip
+  curl unzip wget lsb-release \
+  software-properties-common \
+  libsqlite3-dev
+
+# Python — read required version from Pipfile; Ubuntu 22.04 ships 3.10 so
+# install the exact version via the deadsnakes PPA if needed.
+PYTHON_VERSION=$(grep 'python_version' "$INSTALL_DIR/emulation_engine/Pipfile" \
+  | grep -oP '"\K[^"]+')
+sudo add-apt-repository -y ppa:deadsnakes/ppa
+sudo apt-get update -q
+sudo apt-get install -y "python${PYTHON_VERSION}" "python${PYTHON_VERSION}-venv" python3-pip pipenv
 
 echo "✓ System packages installed"
 
@@ -52,7 +63,6 @@ echo "✓ Flutter SDK ready"
 # ---------------------------------------------------------------------------
 # 3. Python backend (emulation_engine — inside the repo)
 # ---------------------------------------------------------------------------
-INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENGINE_DIR="$INSTALL_DIR/emulation_engine"
 
 if [ ! -d "$ENGINE_DIR" ]; then
@@ -111,7 +121,56 @@ dart pub get
 echo "✓ Dart workspace ready"
 
 # ---------------------------------------------------------------------------
-# 5. Verify
+# 5. VirtualBox (from Oracle's repository — Ubuntu's package lags behind
+#    new kernels and the DKMS module often fails to build)
+# ---------------------------------------------------------------------------
+echo "Installing VirtualBox from Oracle repository..."
+sudo apt-get install -y linux-headers-$(uname -r)
+
+wget -qO- https://www.virtualbox.org/download/oracle_vbox_2016.asc \
+  | sudo gpg --dearmor --yes -o /usr/share/keyrings/oracle-virtualbox-2016.gpg
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/oracle-virtualbox-2016.gpg] \
+  https://download.virtualbox.org/virtualbox/debian $(lsb_release -cs) contrib" \
+  | sudo tee /etc/apt/sources.list.d/virtualbox.list
+sudo apt-get update -q && sudo apt-get install -y virtualbox-7.2
+
+if ! command -v vboxmanage &>/dev/null; then
+    echo "✗ ERROR: VirtualBox failed to install (vboxmanage not found)"
+    exit 1
+fi
+
+# Build kernel modules (Oracle's package doesn't always auto-build them)
+sudo /sbin/vboxconfig
+
+# Verify the kernel module is loaded
+if ! lsmod | grep -q vboxdrv; then
+    echo "✗ ERROR: VirtualBox kernel module (vboxdrv) failed to load."
+    echo "  Try: sudo /sbin/vboxconfig"
+    exit 1
+fi
+
+echo "✓ VirtualBox $(vboxmanage --version) installed"
+
+# ---------------------------------------------------------------------------
+# 6. Vagrant
+# ---------------------------------------------------------------------------
+echo "Installing Vagrant..."
+wget -qO- https://apt.releases.hashicorp.com/gpg \
+  | sudo gpg --dearmor --yes -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
+  https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+  | sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt-get update -q && sudo apt-get install -y vagrant
+
+if ! command -v vagrant &>/dev/null; then
+    echo "✗ ERROR: Vagrant failed to install"
+    exit 1
+fi
+
+echo "✓ Vagrant $(vagrant --version) installed"
+
+# ---------------------------------------------------------------------------
+# 7. Verify
 # ---------------------------------------------------------------------------
 echo ""
 echo "=== Verification ==="
@@ -121,6 +180,8 @@ echo -n "Dart:          "; dart --version 2>&1
 echo -n "pipenv:        "; pipenv --version 2>/dev/null || echo "not found"
 echo -n "arm-objdump:   "; which arm-none-eabi-objdump 2>/dev/null || echo "not found"
 echo -n "Renode:        "; [ -x "$RENODE_BIN" ] && echo "$RENODE_BIN" || echo "not found"
+echo -n "VirtualBox:    "; vboxmanage --version 2>/dev/null || echo "not found"
+echo -n "Vagrant:       "; vagrant --version 2>/dev/null || echo "not found"
 
 echo ""
 echo "=== Installation Complete ==="

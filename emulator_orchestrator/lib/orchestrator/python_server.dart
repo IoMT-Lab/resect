@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:emulator_orchestrator/core/app_paths.dart';
 
 /// Manages the Python emulation engine server process.
 ///
@@ -90,34 +91,28 @@ class PythonServer {
   /// Stop the server process.
   void stop() {
     if (_process != null) {
-      _process!.kill();
+      // Kill the entire process group so child processes (e.g. Renode) are
+      // also terminated — otherwise they hold stdout/stderr open and the
+      // parent SSH session never closes.
+      try {
+        Process.killPid(-_process!.pid, ProcessSignal.sigterm);
+      } catch (_) {
+        _process!.kill();
+      }
       _process = null;
       stderr.writeln('Python server stopped');
     }
   }
 
   /// Find the emulation_engine directory relative to cwd.
-  ///
-  /// emulation_engine lives inside the workspace root. Checks:
-  /// 1. ./emulation_engine   (cwd is the workspace root)
-  /// 2. ../emulation_engine  (cwd is a package subdir like emulator_ui/)
   String _findEngineDir() {
-    final candidates = [
-      '${Directory.current.path}/emulation_engine',
-      '${Directory.current.parent.path}/emulation_engine',
-    ];
-
-    for (final candidate in candidates) {
-      if (Directory(candidate).existsSync()) {
-        return candidate;
-      }
+    try {
+      return AppPaths.findEngineDir();
+    } on StateError catch (e) {
+      throw PythonServerException(
+        '$e\nUse --engine-dir to specify the path explicitly.',
+      );
     }
-
-    throw PythonServerException(
-      'Could not find emulation_engine directory.\n'
-      'Searched: ${candidates.join(', ')}\n'
-      'Use --engine-dir to specify the path explicitly.',
-    );
   }
 }
 
