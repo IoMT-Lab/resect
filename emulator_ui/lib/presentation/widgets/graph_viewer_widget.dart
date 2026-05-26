@@ -7,7 +7,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:emulator_orchestrator/core/constants.dart';
+import '../../core/theme.dart';
 import '../../providers/app_providers.dart';
+import '../screens/synthesize/synthesis_controller.dart';
 import 'package:emulator_orchestrator/data/models/call_graph.dart' as cg;
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
 import 'package:emulator_orchestrator/data/models/fidelity_result.dart';
@@ -100,11 +102,6 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
   Matrix4? _viewAnimEnd;
   bool _focusOnSelect = true;
 
-  StreamSubscription? _traceSubscription;
-  StreamSubscription? _filteredTraceSubscription;
-  StreamSubscription? _pauseEventSubscription;
-  StreamSubscription? _synthesizerEventSubscription;
-
   @override
   void initState() {
     super.initState();
@@ -122,10 +119,6 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
   void dispose() {
     _rippleTimer?.cancel();
     _rippleNotifier.dispose();
-    _traceSubscription?.cancel();
-    _filteredTraceSubscription?.cancel();
-    _pauseEventSubscription?.cancel();
-    _synthesizerEventSubscription?.cancel();
     _animationController.dispose();
     _viewAnimController.dispose();
     _transformationController.dispose();
@@ -2162,15 +2155,13 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     }
   }
 
-  /// Build the EMULATE button (with STOP/PAUSE/RESET state variants).
+  /// Build the run-state button. Synthesis is launched from the Synthesize
+  /// tab now, so the stopped state is a CTA that switches to it; the
+  /// running/paused/synthesizing states still control the live emulation
+  /// via the shared [synthesisControllerProvider].
   Widget _buildRunButton(BuildContext context, WidgetRef ref) {
-    final currentEmulator = ref.watch(currentEmulatorProvider);
-    final selectedElfPath = ref.watch(selectedElfPathProvider);
-    final lifecycleService = ref.watch(lifecycleServiceProvider);
     final emulationState = ref.watch(emulationStateProvider);
     final synthesisProgress = ref.watch(synthesisProgressProvider);
-
-    final bool hasElf = selectedElfPath != null && selectedElfPath.isNotEmpty;
 
     // Synthesis in progress — show STOP button
     if (synthesisProgress != null && !synthesisProgress.complete) {
@@ -2178,7 +2169,8 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
         icon: Icons.stop,
         label: 'STOP',
         color: Colors.purple,
-        onPressed: () => _stopSynthesis(context, ref, lifecycleService),
+        onPressed: () =>
+            ref.read(synthesisControllerProvider).stopSynthesis(),
       );
     }
 
@@ -2188,7 +2180,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
         icon: Icons.pause,
         label: 'PAUSE',
         color: Colors.orange,
-        onPressed: () => _pauseEmulation(context, ref, lifecycleService),
+        onPressed: () => ref.read(synthesisControllerProvider).pause(),
       );
     }
     if (emulationState == EmulationState.paused) {
@@ -2196,28 +2188,17 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
         icon: Icons.refresh,
         label: 'RESET',
         color: Colors.red,
-        onPressed: () => _resetEmulation(context, ref, lifecycleService),
+        onPressed: () => ref.read(synthesisControllerProvider).reset(),
       );
     }
 
-    // Stopped — show EMULATE button
-    final bool isEnabled = hasElf
-        && currentEmulator != null
-        && currentEmulator.elfFilePath != null
-        && currentEmulator.baseImagePath != null;
-
-    return ElevatedButton.icon(
-      onPressed: isEnabled ? () => _emulate(context, ref) : null,
-      icon: const Icon(Icons.play_arrow, size: 20),
-      label: const Text('EMULATE'),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: isEnabled ? Colors.green : Colors.grey,
-        foregroundColor: Colors.white,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-        ),
-      ),
+    // Stopped — CTA that opens the Synthesize tab.
+    return _buildActionButton(
+      icon: Icons.auto_fix_high,
+      label: 'Open in Synthesize',
+      color: AppTheme.accent,
+      onPressed: () =>
+          ref.read(activeTabProvider.notifier).state = ResectTab.synthesize,
     );
   }
 
@@ -2243,578 +2224,6 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     );
   }
 
-  /// Run the synthesizer workflow (EMULATE mode).
-  ///
-  /// Start emulation — either synthesize hooks or run with existing ones.
-  ///
-  /// If previous hooks exist, shows a dialog letting the user choose:
-  /// - **Synthesize**: clear resolved hooks and re-run the synthesizer
-  /// - **Run**: execute with all existing hooks (no synthesis loop)
-  ///
-  /// If no previous hooks, goes straight to synthesis.
-  Future<void> _emulate(BuildContext context, WidgetRef ref) async {
-    final currentEmulator = ref.read(currentEmulatorProvider);
-    final selectedElfPath = ref.read(selectedElfPathProvider);
-
-    if (currentEmulator == null ||
-        selectedElfPath == null ||
-        currentEmulator.elfFilePath == null ||
-        currentEmulator.baseImagePath == null) {
-      return;
-    }
-
-    final elfPath = currentEmulator.elfFilePath!;
-    final baseImagePath = currentEmulator.baseImagePath!;
-    final hookOverrides = ref.read(hookOverridesProvider);
-
-    // Warn if starting from a specific function without a memory map
-    final config = currentEmulator.emulationConfig;
-    if (config.startFrom != null &&
-        config.startFrom!.isNotEmpty &&
-        (config.memoryMapPath == null || config.memoryMapPath!.isEmpty)) {
-      final proceed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('No Memory Map'),
-          content: Text(
-            'Starting from "${config.startFrom}" without a memory map '
-            'may cause undefined behavior — registers and memory will '
-            'not be initialized.\n\n'
-            'You can add a memory map in the Execution Range section '
-            'of the explorer sidebar.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Go Back'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Continue Anyway'),
-            ),
-          ],
-        ),
-      );
-      if (proceed != true) return;
-    }
-
-    // If previous synthesis resolved hooks, ask whether to synthesize or run
-    // Returns: 'synthesize', 'run', or null (dismissed)
-    String? mode;
-    var resolvedHooks = <String, String>{};
-    if (currentEmulator.hooks.isNotEmpty) {
-      mode = await showDialog<String>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Emulation Mode'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '${currentEmulator.hooks.length} hooks were resolved in a previous session.',
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Choose how to proceed:',
-                style: TextStyle(fontWeight: FontWeight.w500),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop('synthesize'),
-              child: const Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Synthesize', style: TextStyle(fontWeight: FontWeight.bold)),
-                  Text(
-                    'Clears resolved hooks and re-runs the\nsynthesizer. Overrides and preferences\nare preserved.',
-                    style: TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-                ],
-              ),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop('run'),
-              child: const Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Run', style: TextStyle(fontWeight: FontWeight.bold)),
-                  Text(
-                    'Executes the emulator with all resolved\nhooks and forced overrides applied.\nNo synthesis.',
-                    style: TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      );
-      if (mode == null) return; // Dialog dismissed
-
-      if (mode == 'synthesize') {
-        // Clear stale resolved hooks from the model so explorer updates
-        final cleared = currentEmulator.copyWith(hooks: {}, modifiedAt: DateTime.now());
-        ref.read(currentEmulatorProvider.notifier).state = cleared;
-        ref.read(emulatorDirtyProvider.notifier).state = true;
-      } else {
-        resolvedHooks = currentEmulator.hooks;
-      }
-    } else {
-      mode = 'synthesize'; // No previous hooks — go straight to synthesis
-    }
-
-    // =========================================================================
-    // "Run" path — execute with existing hooks, no synthesis
-    // =========================================================================
-    if (mode == 'run') {
-      try {
-        // Show loading dialog
-        if (!context.mounted) return;
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => const AlertDialog(
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('Starting emulation...'),
-              ],
-            ),
-          ),
-        );
-
-        final orchestrator = ref.read(emulationOrchestratorProvider);
-
-        // Clear previous visual state
-        ref.read(executedSymbolsProvider.notifier).state = {};
-        ref.read(synthesisResultProvider.notifier).state = null;
-        ref.read(traceActivityEventsProvider.notifier).state = [];
-        _activeRipples.clear();
-        _prevExecutedSymbols = {};
-        _prevHookedSymbols = {};
-        _synthesizerEventSubscription?.cancel();
-
-        // Pre-populate hooked symbols so they show in the graph
-        final allHookedSymbols = <String>{
-          ...currentEmulator.hooks.keys,
-          ...hookOverrides.keys,
-        };
-        ref.read(hookedSymbolsProvider.notifier).state = allHookedSymbols;
-
-        // Subscribe to trace events
-        final traceService = ref.read(traceServiceProvider);
-        _traceSubscription?.cancel();
-        _traceSubscription = traceService.onTrace.listen((event) {
-          if (event.isEntry) {
-            final executedSymbols = ref.read(executedSymbolsProvider);
-            if (!executedSymbols.contains(event.symbol)) {
-              ref.read(executedSymbolsProvider.notifier).update((state) => {...state, event.symbol});
-            }
-          }
-        });
-
-        // Subscribe to filtered trace events for trace activity sidebar
-        final filteredTraceService = ref.read(filteredTraceServiceProvider);
-        _filteredTraceSubscription?.cancel();
-        _filteredTraceSubscription = filteredTraceService.onTrace.listen((event) {
-          if (event.isEntry) {
-            final currentEvents = ref.read(traceActivityEventsProvider);
-            ref.read(traceActivityEventsProvider.notifier).state = [
-              ...currentEvents,
-              TraceActivityEvent.functionCall(event.symbol),
-            ];
-          }
-        });
-
-        // Subscribe to pause events for banner notifications
-        _pauseEventSubscription?.cancel();
-        _pauseEventSubscription = orchestrator.events.listen((event) {
-          if (event is EmulationPausedEvent) {
-            _showPauseBanner(context, ref, event.pauseDetails);
-          } else if (event is EmulationStateChangedEvent) {
-            if (event.state == EmulationState.running) {
-              final currentEvents = ref.read(traceActivityEventsProvider);
-              ref.read(traceActivityEventsProvider.notifier).state = [
-                ...currentEvents,
-                TraceActivityEvent.resumed(),
-              ];
-            }
-          }
-        });
-
-        // Start (or restart) emulation with all hooks
-        await orchestrator.restartEmulation(
-          elfPath: elfPath,
-          baseImagePath: baseImagePath,
-          startFrom: currentEmulator.emulationConfig.startFrom,
-          endAt: currentEmulator.emulationConfig.endAt,
-          pauseOnUnhandled: currentEmulator.emulationConfig.pauseOnUnhandled,
-          hookOverrides: hookOverrides,
-          resolvedHooks: resolvedHooks,
-          memoryMapPath: currentEmulator.emulationConfig.memoryMapPath,
-        );
-
-        // Close loading dialog
-        if (!context.mounted) return;
-        Navigator.of(context).pop();
-
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Emulation started with existing hooks'),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 3),
-          ),
-        );
-      } catch (e) {
-        if (context.mounted) Navigator.of(context).pop();
-        if (!context.mounted) return;
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Emulation Error'),
-            content: Text(e.toString()),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('OK'),
-              ),
-            ],
-          ),
-        );
-      }
-      return; // Done — no synthesis
-    }
-
-    // =========================================================================
-    // "Synthesize" path — run the synthesis loop
-    // =========================================================================
-    try {
-      final orchestrator = ref.read(emulationOrchestratorProvider);
-
-      // Clear previous visual state so highlights start fresh
-      ref.read(executedSymbolsProvider.notifier).state = {};
-      ref.read(hookedSymbolsProvider.notifier).state = {};
-      ref.read(synthesisResultProvider.notifier).state = null;
-      ref.read(traceActivityEventsProvider.notifier).state = [];
-      _activeRipples.clear();
-      _prevExecutedSymbols = {};
-      _prevHookedSymbols = {};
-
-      // Initialize synthesis progress in sidebar
-      ref.read(synthesisProgressProvider.notifier).state = SynthesisProgress(
-        countdownStart: DateTime.now(),
-        status: 'Starting emulation...',
-      );
-
-      // Subscribe to trace events (keep trace activity populating across iterations)
-      final traceService = ref.read(traceServiceProvider);
-      _traceSubscription?.cancel();
-      _traceSubscription = traceService.onTrace.listen((event) {
-        if (event.isEntry) {
-          final executedSymbols = ref.read(executedSymbolsProvider);
-          if (!executedSymbols.contains(event.symbol)) {
-            ref.read(executedSymbolsProvider.notifier).update((state) => {...state, event.symbol});
-          }
-        }
-      });
-
-      // Subscribe to filtered trace events for trace activity sidebar
-      final filteredTraceService = ref.read(filteredTraceServiceProvider);
-      _filteredTraceSubscription?.cancel();
-      _filteredTraceSubscription = filteredTraceService.onTrace.listen((event) {
-        if (event.isEntry) {
-          final currentEvents = ref.read(traceActivityEventsProvider);
-          ref.read(traceActivityEventsProvider.notifier).state = [
-            ...currentEvents,
-            TraceActivityEvent.functionCall(event.symbol),
-          ];
-        }
-      });
-
-      // Do NOT subscribe to pause events — synthesizer handles pauses internally
-      _pauseEventSubscription?.cancel();
-      _pauseEventSubscription = null;
-
-      // Start (or restart) emulation
-      await orchestrator.restartEmulation(
-        elfPath: elfPath,
-        baseImagePath: baseImagePath,
-        startFrom: currentEmulator.emulationConfig.startFrom,
-        pauseOnUnhandled: true,
-        hookOverrides: hookOverrides,
-        resolvedHooks: resolvedHooks,
-        memoryMapPath: currentEmulator.emulationConfig.memoryMapPath,
-      );
-
-      // Get elfHash from artifact processing
-      final firmwareRecord = ref.read(artifactProcessingProvider).valueOrNull;
-      if (firmwareRecord == null) {
-        ref.read(synthesisProgressProvider.notifier).state = null;
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Error: Firmware not processed. Ensure call graph has loaded.'),
-            backgroundColor: Colors.red,
-          ),
-        );
-        return;
-      }
-      final elfHash = firmwareRecord.elfHash;
-
-      // Update progress — emulation started, countdown begins
-      ref.read(synthesisProgressProvider.notifier).state = SynthesisProgress(
-        countdownStart: DateTime.now(),
-        status: 'Emulation running...',
-      );
-
-      // Subscribe to synthesizer events and update provider
-      _synthesizerEventSubscription?.cancel();
-      _synthesizerEventSubscription = orchestrator.synthesizerWorkflow.events.listen((event) {
-        final current = ref.read(synthesisProgressProvider);
-        if (current == null) return;
-
-        if (event is SynthesizerIterationStarted) {
-          ref.read(synthesisProgressProvider.notifier).state = current.copyWith(
-            iteration: event.iteration,
-            status: 'Iteration ${event.iteration}',
-            countdownStart: DateTime.now(), // reset countdown on new iteration
-          );
-        } else if (event is SynthesizerHookApplied) {
-          ref.read(hookedSymbolsProvider.notifier).update(
-            (state) => {...state, event.symbol},
-          );
-          ref.read(synthesisProgressProvider.notifier).state = current.copyWith(
-            hooksApplied: current.hooksApplied + 1,
-            currentSymbol: event.symbol,
-            status: 'Hook: ${event.hookName}',
-            countdownStart: DateTime.now(), // reset countdown
-          );
-        } else if (event is SynthesizerSymbolExhausted) {
-          ref.read(synthesisProgressProvider.notifier).state = current.copyWith(
-            currentSymbol: event.symbol,
-            status: 'Exhausted: ${event.symbol}',
-          );
-        } else if (event is SynthesizerCompleted) {
-          final result = event.result;
-          ref.read(synthesisResultProvider.notifier).state = result;
-          ref.read(synthesisProgressProvider.notifier).state = current.copyWith(
-            complete: true,
-            success: result.success,
-            status: result.success
-                ? 'Complete — ${result.resolvedHooks.length} hooks'
-                : 'Failed at ${result.failedSymbol}',
-          );
-
-          // Update emulator with resolved hooks
-          if (result.resolvedHookCode.isNotEmpty) {
-            final updatedEmulator = currentEmulator.copyWith(
-              hooks: result.resolvedHookCode,
-              modifiedAt: DateTime.now(),
-            );
-            ref.read(currentEmulatorProvider.notifier).state = updatedEmulator;
-            ref.read(emulatorDirtyProvider.notifier).state = true;
-          }
-        }
-      });
-
-      // Run the synthesizer (blocks until complete)
-      final hookPreferences = ref.read(hookPreferencesProvider);
-      await orchestrator.runSynthesizer(
-        elfPath: elfPath,
-        baseImagePath: baseImagePath,
-        elfHash: elfHash,
-        startFrom: currentEmulator.emulationConfig.startFrom,
-        endAt: currentEmulator.emulationConfig.endAt,
-        hookPreferences: hookPreferences,
-        hookOverrides: hookOverrides,
-        resolvedHooks: resolvedHooks,
-        memoryMapPath: currentEmulator.emulationConfig.memoryMapPath,
-      );
-    } catch (e) {
-      // If synthesis progress was already cleared (user clicked STOP), suppress error
-      if (ref.read(synthesisProgressProvider) == null) return;
-
-      ref.read(synthesisProgressProvider.notifier).state = null;
-
-      if (!context.mounted) return;
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Synthesis Error'),
-          content: Text(e.toString()),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
-    }
-  }
-
-  /// Stop a running synthesis cleanly.
-  ///
-  /// Clears synthesis progress first so the [_emulate] catch block
-  /// knows this was an intentional stop (not an unexpected error).
-  Future<void> _stopSynthesis(
-    BuildContext context,
-    WidgetRef ref,
-    dynamic lifecycleService,
-  ) async {
-    ref.read(synthesisProgressProvider.notifier).state = null;
-    final orchestrator = ref.read(emulationOrchestratorProvider);
-    orchestrator.synthesizerWorkflow.cancel();
-    // The synthesis loop will exit at the next iteration check.
-    // Its finally block calls lifecycleService.reset() to clean up Renode state.
-  }
-
-  /// Pause the Renode emulation
-  Future<void> _pauseEmulation(
-    BuildContext context,
-    WidgetRef ref,
-    dynamic lifecycleService,
-  ) async {
-    try {
-      // Pause emulation using orchestrator
-      final orchestrator = ref.read(emulationOrchestratorProvider);
-      await orchestrator.pauseEmulation();
-
-      // Show success message
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('⏸ Emulation paused'),
-          backgroundColor: Colors.orange,
-          duration: Duration(seconds: 2),
-        ),
-      );
-    } catch (e) {
-      // Show error dialog
-      if (!context.mounted) return;
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Pause Error'),
-          content: Text(e.toString()),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
-    }
-  }
-
-  /// Reset the Renode emulation
-  Future<void> _resetEmulation(
-    BuildContext context,
-    WidgetRef ref,
-    dynamic lifecycleService,
-  ) async {
-    try {
-      // Clear any existing warning banners
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).clearSnackBars();
-      }
-
-      // Reset emulation using orchestrator
-      final orchestrator = ref.read(emulationOrchestratorProvider);
-      await orchestrator.resetEmulation();
-
-      // Clear executed and hooked symbols tracking
-      ref.read(executedSymbolsProvider.notifier).state = {};
-      ref.read(hookedSymbolsProvider.notifier).state = {};
-      ref.read(synthesisProgressProvider.notifier).state = null;
-      ref.read(synthesisResultProvider.notifier).state = null;
-      _traceSubscription?.cancel();
-      _synthesizerEventSubscription?.cancel();
-
-      // Clear trace activity and add reset event (clearing history)
-      _filteredTraceSubscription?.cancel();
-      _pauseEventSubscription?.cancel();
-      ref.read(traceActivityEventsProvider.notifier).state = [
-        TraceActivityEvent.reset(),
-      ];
-
-      // Show success message
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('↻ Emulation reset'),
-          backgroundColor: Colors.red,
-          duration: Duration(seconds: 2),
-        ),
-      );
-    } catch (e) {
-      // Show error dialog
-      if (!context.mounted) return;
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Reset Error'),
-          content: Text(e.toString()),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
-    }
-  }
-
-  /// Show a banner notification when emulation is paused
-  void _showPauseBanner(BuildContext context, WidgetRef ref, PausedEvent pauseEvent) {
-    if (!context.mounted) return;
-    
-    final scaffoldMessenger = ScaffoldMessenger.of(context);
-    scaffoldMessenger.clearSnackBars();
-    
-    String message;
-    Color backgroundColor;
-    
-    if (pauseEvent.unhandledAccess == true) {
-      message = '⚠️ PAUSED: Unhandled memory access${pauseEvent.symbol != null ? " at ${pauseEvent.symbol}" : ""}';
-      backgroundColor = Colors.red;
-    } else if (pauseEvent.user == true) {
-      message = '⏸️ PAUSED by user${pauseEvent.symbol != null ? " at ${pauseEvent.symbol}" : ""}';
-      backgroundColor = Colors.orange;
-    } else {
-      message = '⏸️ PAUSED${pauseEvent.symbol != null ? " at ${pauseEvent.symbol}" : ""}';
-      backgroundColor = Colors.orange;
-    }
-    
-    scaffoldMessenger.showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: backgroundColor,
-        duration: const Duration(seconds: 5),
-        action: SnackBarAction(
-          label: 'RESUME',
-          textColor: Colors.white,
-          onPressed: () async {
-            try {
-              final orchestrator = ref.read(emulationOrchestratorProvider);
-              await orchestrator.resumeEmulation();
-            } catch (e) {
-              print('Failed to resume: $e');
-            }
-          },
-        ),
-      ),
-    );
-  }
 }
 
 class _Edge {

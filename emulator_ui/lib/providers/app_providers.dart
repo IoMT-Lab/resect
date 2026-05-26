@@ -323,9 +323,6 @@ final fidelityResultProvider = Provider<FidelityResult?>((ref) {
 // EMULATOR MANAGEMENT PROVIDERS
 // ============================================================================
 
-/// Explorer tab selection (EMULATOR vs SYMBOLS)
-enum ExplorerTab { emulator, symbols }
-
 /// Provider for the EmulatorRepository singleton.
 ///
 /// Handles all emulator file I/O operations.
@@ -417,14 +414,6 @@ final emulatorDirtyProvider = StateProvider<bool>((ref) => false);
 /// the list reflects the latest activity.
 final recentEmulatorsProvider = FutureProvider<List<RecentEmulator>>((ref) async {
   return ref.watch(emulatorRepositoryProvider).getRecentEmulators();
-});
-
-/// Provider for current Explorer tab selection.
-///
-/// Defaults to EMULATOR tab — the primary workflow entry point.
-/// Users can switch to SYMBOLS tab manually for call graph analysis.
-final explorerTabProvider = StateProvider<ExplorerTab>((ref) {
-  return ExplorerTab.emulator;
 });
 
 // ============================================================================
