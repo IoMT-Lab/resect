@@ -8,6 +8,7 @@ import 'package:emulator_orchestrator/data/models/call_graph.dart';
 import 'package:emulator_orchestrator/data/models/trace_activity_event.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/models/firmware_record.dart';
+import 'package:emulator_orchestrator/data/models/recent_emulator.dart';
 import 'package:emulator_orchestrator/data/models/emulation_state.dart';
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
 import 'package:emulator_orchestrator/data/models/fidelity_result.dart';
@@ -408,6 +409,15 @@ final currentEmulatorProvider = StateProvider<Emulator?>((ref) => null);
 ///
 /// True if the emulator has been modified since last save.
 final emulatorDirtyProvider = StateProvider<bool>((ref) => false);
+
+/// List of recently opened emulators, newest first.
+///
+/// Loaded from the on-disk recents file the first time it's read; consumers
+/// should `ref.invalidate(recentEmulatorsProvider)` after any open/save so
+/// the list reflects the latest activity.
+final recentEmulatorsProvider = FutureProvider<List<RecentEmulator>>((ref) async {
+  return ref.watch(emulatorRepositoryProvider).getRecentEmulators();
+});
 
 /// Provider for current Explorer tab selection.
 ///

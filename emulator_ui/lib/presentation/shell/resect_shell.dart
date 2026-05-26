@@ -10,6 +10,7 @@ import '../screens/comms/comms_screen.dart';
 import '../screens/library/library_screen.dart';
 import '../screens/publish/publish_screen.dart';
 import '../screens/synthesize/synthesize_screen.dart';
+import '../widgets/menu_bar_widget.dart';
 import 'status_bar.dart';
 import 'tab_strip.dart';
 
@@ -78,6 +79,7 @@ class _ResectShellState extends ConsumerState<ResectShell> with WindowListener {
       backgroundColor: AppTheme.bgChrome,
       body: Column(
         children: [
+          const MenuBarWidget(),
           const TabStrip(),
           const Divider(height: 1, color: AppTheme.border),
           Expanded(
