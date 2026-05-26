@@ -9,6 +9,10 @@ import 'package:emulator_orchestrator/data/services/filtered_trace_service.dart'
 import 'package:emulator_orchestrator/data/services/lifecycle_service.dart';
 import 'package:emulator_orchestrator/data/services/trace_service.dart';
 import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_call_graph_source.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_emulation_controller.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_engine_lifecycle.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_trace_source.dart';
 
 /// Headless API server for the emulation orchestrator.
 ///
@@ -24,7 +28,9 @@ void main(List<String> args) async {
   print('Emulation API Server');
   print('====================');
 
-  // Instantiate services (same as app_providers.dart but without Riverpod)
+  // Instantiate concrete services. ApiServer holds direct references for
+  // isConnected checks; the orchestrator sees them only through the engine
+  // abstraction layer.
   final lifecycleService = LifecycleService(serverUrl: config.backendUrl);
   final callgraphService = CallgraphService(serverUrl: config.backendUrl);
   final traceService = TraceService(serverUrl: config.backendUrl);
@@ -34,10 +40,13 @@ void main(List<String> args) async {
   final artifactLibraryService = ArtifactLibraryService(artifactDb);
 
   final orchestrator = EmulationOrchestrator(
-    lifecycleService: lifecycleService,
-    callgraphService: callgraphService,
-    traceService: traceService,
-    filteredTraceService: filteredTraceService,
+    engineLifecycle: RenodeEngineLifecycle(),
+    emulationController: RenodeEmulationController(lifecycleService),
+    callGraphSource: RenodeCallGraphSource(callgraphService),
+    traceSource: RenodeTraceSource(
+      traceService: traceService,
+      filteredTraceService: filteredTraceService,
+    ),
     emulatorRepository: emulatorRepository,
     artifactDb: artifactDb,
   );

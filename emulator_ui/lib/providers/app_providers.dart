@@ -19,6 +19,10 @@ import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
 import 'package:emulator_orchestrator/orchestrator/events/orchestrator_events.dart';
 import 'package:emulator_orchestrator/orchestrator/workflows/synthesizer_workflow.dart';
 import 'package:emulator_orchestrator/api/api_server.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_call_graph_source.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_emulation_controller.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_engine_lifecycle.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_trace_source.dart';
 
 /// Provider for the CallgraphService singleton.
 ///
@@ -269,11 +273,18 @@ final emulatorRepositoryProvider = Provider<EmulatorRepository>((ref) {
 /// events that update Riverpod providers. This separates business logic
 /// from UI concerns, making it testable independently.
 final emulationOrchestratorProvider = Provider<EmulationOrchestrator>((ref) {
+  // Wrap the concrete Socket.IO services in engine abstractions so the
+  // orchestrator stays engine-agnostic. The four service providers remain
+  // available for any UI surface that still needs the underlying service
+  // directly (e.g. connection-status indicators).
   final orchestrator = EmulationOrchestrator(
-    lifecycleService: ref.watch(lifecycleServiceProvider),
-    callgraphService: ref.watch(callgraphServiceProvider),
-    traceService: ref.watch(traceServiceProvider),
-    filteredTraceService: ref.watch(filteredTraceServiceProvider),
+    engineLifecycle: RenodeEngineLifecycle(),
+    emulationController: RenodeEmulationController(ref.watch(lifecycleServiceProvider)),
+    callGraphSource: RenodeCallGraphSource(ref.watch(callgraphServiceProvider)),
+    traceSource: RenodeTraceSource(
+      traceService: ref.watch(traceServiceProvider),
+      filteredTraceService: ref.watch(filteredTraceServiceProvider),
+    ),
     emulatorRepository: ref.watch(emulatorRepositoryProvider),
     artifactDb: ref.watch(artifactDatabaseProvider),
   );
@@ -459,3 +470,4 @@ final apiServerProvider = Provider<ApiServer>((ref) {
     artifactLibraryService: ref.watch(artifactLibraryServiceProvider),
   );
 });
+

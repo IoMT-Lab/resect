@@ -1,41 +1,42 @@
 import 'dart:async';
-import 'dart:io';
 
-import '../data/services/lifecycle_service.dart';
-import '../data/services/callgraph_service.dart';
-import '../data/services/trace_service.dart';
-import '../data/services/filtered_trace_service.dart';
 import '../data/database/artifact_database.dart';
-import '../data/repositories/emulator_repository.dart';
-import '../data/models/emulator.dart';
 import '../data/models/call_graph.dart';
+import '../data/models/emulation_state.dart';
+import '../data/models/emulator.dart';
 import '../data/models/graph_point.dart';
 import '../data/models/synthesizer_result.dart';
-import '../data/models/emulation_state.dart';
+import '../data/repositories/emulator_repository.dart';
 
+import 'engine/call_graph_source.dart';
+import 'engine/emulation_controller.dart';
+import 'engine/engine_lifecycle.dart';
+import 'engine/trace_source.dart';
+
+import 'events/orchestrator_events.dart';
+import 'workflows/analysis_workflow.dart';
 import 'workflows/emulation_workflow.dart';
 import 'workflows/emulator_workflow.dart';
-import 'workflows/analysis_workflow.dart';
 import 'workflows/synthesizer_workflow.dart';
-import 'events/orchestrator_events.dart';
-import 'exceptions/orchestrator_exceptions.dart';
 
 /// Central orchestrator for all business logic operations.
 ///
-/// This class coordinates services, manages complex workflows, and emits
-/// events for UI state updates. It is independently testable and does not
-/// depend on Flutter widgets.
+/// This class coordinates engine capabilities, manages complex workflows,
+/// and emits events for UI state updates. It is independently testable and
+/// does not depend on Flutter widgets.
 ///
-/// The orchestrator sits between the UI and services:
+/// The orchestrator sits between the UI and the engine abstractions:
 /// ```
-/// UI (widgets) → Orchestrator (business logic) → Services (Socket.IO) → Backend
+/// UI (widgets) → Orchestrator (business logic) → Engine (interfaces) → Engine impl
 /// ```
 class EmulationOrchestrator {
-  // Dependencies (injected)
-  final LifecycleService lifecycleService;
-  final CallgraphService callgraphService;
-  final TraceService traceService;
-  final FilteredTraceService filteredTraceService;
+  // Engine capabilities (injected — engine-agnostic)
+  final EngineLifecycle engineLifecycle;
+  final EmulationController emulationController;
+  final CallGraphSource callGraphSource;
+  final TraceSource traceSource;
+
+  // Other dependencies
   final EmulatorRepository emulatorRepository;
   final ArtifactDatabase artifactDb;
 
@@ -50,27 +51,22 @@ class EmulationOrchestrator {
   Stream<OrchestrationEvent> get events => _eventController.stream;
 
   // Internal state
-  Process? _serverProcess;
   EmulationState _state = EmulationState.stopped;
   Emulator? _currentEmulator;
 
   EmulationOrchestrator({
-    required this.lifecycleService,
-    required this.callgraphService,
-    required this.traceService,
-    required this.filteredTraceService,
+    required this.engineLifecycle,
+    required this.emulationController,
+    required this.callGraphSource,
+    required this.traceSource,
     required this.emulatorRepository,
     required this.artifactDb,
   }) {
-    // Initialize workflows with service dependencies
     emulationWorkflow = EmulationWorkflow(
-      lifecycleService: lifecycleService,
-      callgraphService: callgraphService,
-      traceService: traceService,
-      filteredTraceService: filteredTraceService,
-      onServerProcessCreated: (process) {
-        _serverProcess = process;
-      },
+      engineLifecycle: engineLifecycle,
+      emulationController: emulationController,
+      callGraphSource: callGraphSource,
+      traceSource: traceSource,
       onStateChanged: (state) {
         _state = state;
         _emitEvent(EmulationStateChangedEvent(state));
@@ -89,16 +85,13 @@ class EmulationOrchestrator {
     );
 
     analysisWorkflow = AnalysisWorkflow(
-      callgraphService: callgraphService,
+      callGraphSource: callGraphSource,
     );
 
     synthesizerWorkflow = SynthesizerWorkflow(
-      lifecycleService: lifecycleService,
+      emulationController: emulationController,
       artifactDb: artifactDb,
     );
-
-    // Forward trace events from workflows to orchestrator event stream
-    _forwardTraceEvents();
   }
 
   // =========================================================================
@@ -107,7 +100,7 @@ class EmulationOrchestrator {
 
   /// Start emulation with the given ELF file and configuration.
   ///
-  /// Throws [EmulationException] on failure.
+  /// Throws on failure.
   Future<void> startEmulation({
     required String elfPath,
     String? baseImagePath,
@@ -118,18 +111,7 @@ class EmulationOrchestrator {
     Map<String, String> resolvedHooks = const {},
     String? memoryMapPath,
   }) async {
-    // Resolve override artifact IDs → hook code
-    final resolvedOverrides = <String, String>{};
-    for (final entry in hookOverrides.entries) {
-      final artifact = await artifactDb.getArtifactById(entry.value);
-      if (artifact != null) {
-        resolvedOverrides[entry.key] = artifact.artifactData;
-      }
-    }
-
-    // Merge: resolved hooks first, overrides win on conflict
-    final allHooks = <String, String>{...resolvedHooks, ...resolvedOverrides};
-
+    final allHooks = await _resolveHookOverrides(resolvedHooks, hookOverrides);
     await emulationWorkflow.start(
       elfPath: elfPath,
       baseImagePath: baseImagePath,
@@ -141,11 +123,11 @@ class EmulationOrchestrator {
     );
   }
 
-  /// Restart emulation using the existing server process.
+  /// Restart emulation using the existing engine process.
   ///
-  /// Lighter than resetEmulation() + startEmulation() — keeps the server
-  /// alive and just resets Renode state, reloads firmware, and restarts.
-  /// Falls back to full start if no server is running.
+  /// Lighter than resetEmulation() + startEmulation() — keeps the engine
+  /// alive and just resets state, reloads firmware, and restarts.
+  /// Falls back to full start if no engine is running.
   Future<void> restartEmulation({
     required String elfPath,
     String? baseImagePath,
@@ -156,18 +138,7 @@ class EmulationOrchestrator {
     Map<String, String> resolvedHooks = const {},
     String? memoryMapPath,
   }) async {
-    // Resolve override artifact IDs → hook code
-    final resolvedOverrides = <String, String>{};
-    for (final entry in hookOverrides.entries) {
-      final artifact = await artifactDb.getArtifactById(entry.value);
-      if (artifact != null) {
-        resolvedOverrides[entry.key] = artifact.artifactData;
-      }
-    }
-
-    // Merge: resolved hooks first, overrides win on conflict
-    final allHooks = <String, String>{...resolvedHooks, ...resolvedOverrides};
-
+    final allHooks = await _resolveHookOverrides(resolvedHooks, hookOverrides);
     await emulationWorkflow.restart(
       elfPath: elfPath,
       baseImagePath: baseImagePath,
@@ -191,18 +162,10 @@ class EmulationOrchestrator {
 
   /// Reset emulation to initial state.
   ///
-  /// Cancels subscriptions, disconnects services, and kills the server process.
+  /// Cancels subscriptions, disconnects channels, and stops the engine.
   Future<void> resetEmulation() async {
-    // Cancel subscriptions and disconnect services
     await emulationWorkflow.reset();
-
-    // Kill server process
-    if (_serverProcess != null) {
-      _serverProcess!.kill();
-      _serverProcess = null;
-      print('Python server stopped');
-    }
-
+    await engineLifecycle.stop();
     _state = EmulationState.stopped;
   }
 
@@ -210,7 +173,6 @@ class EmulationOrchestrator {
   // PUBLIC API: EMULATOR OPERATIONS
   // =========================================================================
 
-  /// Create a new emulator.
   Future<Emulator> createEmulator({
     required String name,
     String? elfFilePath,
@@ -223,40 +185,29 @@ class EmulationOrchestrator {
     );
   }
 
-  /// Load an existing emulator from file.
   Future<Emulator> loadEmulator(String emulatorPath) async {
     return await emulatorWorkflow.loadEmulator(emulatorPath);
   }
 
-  /// Save the current emulator.
   Future<void> saveEmulator(Emulator emulator, {String? savePath}) async {
     await emulatorWorkflow.saveEmulator(emulator, savePath: savePath);
     _emitEvent(EmulatorSavedEvent(emulator, savePath ?? emulator.emulatorPath!));
   }
 
-  /// Close the current emulator.
   Future<void> closeEmulator({bool checkUnsaved = true}) async {
     await emulatorWorkflow.closeEmulator(checkUnsaved: checkUnsaved);
   }
 
-  /// Mark the current emulator as having unsaved changes.
   void markEmulatorDirty() {
     emulatorWorkflow.markDirty();
   }
 
-  /// Check if the current emulator has unsaved changes.
   bool get hasUnsavedChanges => emulatorWorkflow.hasUnsavedChanges;
 
   // =========================================================================
   // PUBLIC API: SYNTHESIZER OPERATIONS
   // =========================================================================
 
-  /// Run the automated hook synthesizer.
-  ///
-  /// Prerequisites: Emulation must be started first (server running, firmware
-  /// loaded). The synthesizer takes over and manages reset/hook/restart cycles.
-  ///
-  /// Returns a [SynthesizerResult] with the outcome.
   Future<SynthesizerResult> runSynthesizer({
     required String elfPath,
     required String baseImagePath,
@@ -287,21 +238,18 @@ class EmulationOrchestrator {
   // PUBLIC API: ANALYSIS OPERATIONS
   // =========================================================================
 
-  /// Generate call graph for the given ELF file.
   Future<CallGraph> generateCallGraph(String elfPath) async {
     return await analysisWorkflow.generateCallGraph(elfPath);
   }
 
-  /// Apply layout algorithm to call graph nodes.
   Map<String, GraphPoint> applyLayout({
     required CallGraph callGraph,
     required GraphLayout layoutType,
   }) {
-    final positions = analysisWorkflow.applyLayout(
+    return analysisWorkflow.applyLayout(
       callGraph: callGraph,
       layoutType: layoutType,
     );
-    return positions;
   }
 
   // =========================================================================
@@ -312,32 +260,36 @@ class EmulationOrchestrator {
     _eventController.add(event);
   }
 
-  void _forwardTraceEvents() {
-    // Listen to trace events from emulation workflow and forward them
-    // This is set up when trace services are connected
-    // The actual subscription happens in EmulationWorkflow
+  /// Resolve hookOverrides (symbol → artifactId) into hook code and merge
+  /// with resolvedHooks (symbol → hookCode). Overrides win on conflict.
+  Future<Map<String, String>> _resolveHookOverrides(
+    Map<String, String> resolvedHooks,
+    Map<String, int> hookOverrides,
+  ) async {
+    final resolvedOverrides = <String, String>{};
+    for (final entry in hookOverrides.entries) {
+      final artifact = await artifactDb.getArtifactById(entry.value);
+      if (artifact != null) {
+        resolvedOverrides[entry.key] = artifact.artifactData;
+      }
+    }
+    return {...resolvedHooks, ...resolvedOverrides};
   }
 
   // =========================================================================
   // GETTERS
   // =========================================================================
 
-  /// Get current emulation state
   EmulationState get state => _state;
-
-  /// Get current emulator
   Emulator? get currentEmulator => _currentEmulator;
-
-  /// Check if a server process is running
-  bool get hasServerProcess => _serverProcess != null;
+  bool get hasServerProcess => engineLifecycle.isRunning;
 
   // =========================================================================
   // CLEANUP
   // =========================================================================
 
-  /// Clean up resources
   void dispose() {
-    _serverProcess?.kill();
+    engineLifecycle.stop();
     _eventController.close();
     emulationWorkflow.dispose();
     emulatorWorkflow.dispose();

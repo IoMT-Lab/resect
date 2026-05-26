@@ -20,6 +20,13 @@ export 'orchestrator/workflows/emulation_workflow.dart';
 export 'orchestrator/workflows/emulator_workflow.dart';
 export 'orchestrator/workflows/synthesizer_workflow.dart';
 
+// Engine abstraction
+export 'orchestrator/engine/engine.dart';
+export 'orchestrator/engine/renode/renode_engine_lifecycle.dart';
+export 'orchestrator/engine/renode/renode_call_graph_source.dart';
+export 'orchestrator/engine/renode/renode_emulation_controller.dart';
+export 'orchestrator/engine/renode/renode_trace_source.dart';
+
 // Data models
 export 'data/models/call_graph.dart';
 export 'data/models/emulation_state.dart';

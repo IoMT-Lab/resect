@@ -1,6 +1,10 @@
 import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 
+import '../../orchestrator/engine/paused_event.dart';
+
+export '../../orchestrator/engine/paused_event.dart';
+
 /// Service for managing emulation lifecycle (load, start, pause, resume, reset).
 ///
 /// This communicates with the Python server's /lifecycle namespace to control
@@ -271,27 +275,6 @@ class LifecycleService {
       onTimeout: () => throw TimeoutException(
         'RPC call "$event" timed out after ${rpcTimeout.inSeconds}s',
       ),
-    );
-  }
-}
-
-/// Event data for paused state
-class PausedEvent {
-  final bool user;
-  final String? symbol;
-  final bool? unhandledAccess;
-
-  PausedEvent({
-    required this.user,
-    this.symbol,
-    this.unhandledAccess,
-  });
-
-  factory PausedEvent.fromList(List data) {
-    return PausedEvent(
-      user: data[0] as bool,
-      symbol: data.length > 1 ? data[1] as String? : null,
-      unhandledAccess: data.length > 2 ? data[2] as bool? : null,
     );
   }
 }

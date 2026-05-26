@@ -1,6 +1,10 @@
 import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 
+import '../../orchestrator/engine/trace_event.dart';
+
+export '../../orchestrator/engine/trace_event.dart';
+
 /// Service for tracking function execution during emulation.
 ///
 /// This communicates with the Python server's /trace namespace to receive
@@ -113,23 +117,5 @@ class TraceService {
     _socket?.dispose();
     _connectionController.close();
     _traceController.close();
-  }
-}
-
-/// Event data for function trace (entry/exit)
-class TraceEvent {
-  final String symbol;
-  final bool isEntry;
-
-  TraceEvent({
-    required this.symbol,
-    required this.isEntry,
-  });
-
-  factory TraceEvent.fromList(List data) {
-    return TraceEvent(
-      symbol: data[0] as String,
-      isEntry: data[1] as bool,
-    );
   }
 }

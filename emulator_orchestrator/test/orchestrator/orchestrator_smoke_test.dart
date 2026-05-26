@@ -1,23 +1,34 @@
 import 'package:drift/native.dart';
 import 'package:test/test.dart';
-import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
-import 'package:emulator_orchestrator/data/services/lifecycle_service.dart';
-import 'package:emulator_orchestrator/data/services/callgraph_service.dart';
-import 'package:emulator_orchestrator/data/services/trace_service.dart';
-import 'package:emulator_orchestrator/data/services/filtered_trace_service.dart';
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
 import 'package:emulator_orchestrator/data/repositories/emulator_repository.dart';
+import 'package:emulator_orchestrator/data/services/callgraph_service.dart';
+import 'package:emulator_orchestrator/data/services/filtered_trace_service.dart';
+import 'package:emulator_orchestrator/data/services/lifecycle_service.dart';
+import 'package:emulator_orchestrator/data/services/trace_service.dart';
+import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_call_graph_source.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_emulation_controller.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_engine_lifecycle.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_trace_source.dart';
+
+EmulationOrchestrator _buildOrchestrator() {
+  return EmulationOrchestrator(
+    engineLifecycle: RenodeEngineLifecycle(),
+    emulationController: RenodeEmulationController(LifecycleService()),
+    callGraphSource: RenodeCallGraphSource(CallgraphService()),
+    traceSource: RenodeTraceSource(
+      traceService: TraceService(),
+      filteredTraceService: FilteredTraceService(),
+    ),
+    emulatorRepository: EmulatorRepository(),
+    artifactDb: ArtifactDatabase.forTesting(NativeDatabase.memory()),
+  );
+}
 
 void main() {
   test('Orchestrator can be instantiated', () {
-    final orchestrator = EmulationOrchestrator(
-      lifecycleService: LifecycleService(),
-      callgraphService: CallgraphService(),
-      traceService: TraceService(),
-      filteredTraceService: FilteredTraceService(),
-      emulatorRepository: EmulatorRepository(),
-      artifactDb: ArtifactDatabase.forTesting(NativeDatabase.memory()),
-    );
+    final orchestrator = _buildOrchestrator();
 
     expect(orchestrator, isNotNull);
     expect(orchestrator.events, isNotNull);
@@ -29,14 +40,7 @@ void main() {
   });
 
   test('Orchestrator can create an emulator (in-memory)', () async {
-    final orchestrator = EmulationOrchestrator(
-      lifecycleService: LifecycleService(),
-      callgraphService: CallgraphService(),
-      traceService: TraceService(),
-      filteredTraceService: FilteredTraceService(),
-      emulatorRepository: EmulatorRepository(),
-      artifactDb: ArtifactDatabase.forTesting(NativeDatabase.memory()),
-    );
+    final orchestrator = _buildOrchestrator();
 
     final emulator = await orchestrator.createEmulator(
       name: 'Test Emulator',
@@ -54,25 +58,14 @@ void main() {
   });
 
   test('Orchestrator tracks emulator dirty state', () async {
-    final orchestrator = EmulationOrchestrator(
-      lifecycleService: LifecycleService(),
-      callgraphService: CallgraphService(),
-      traceService: TraceService(),
-      filteredTraceService: FilteredTraceService(),
-      emulatorRepository: EmulatorRepository(),
-      artifactDb: ArtifactDatabase.forTesting(NativeDatabase.memory()),
-    );
+    final orchestrator = _buildOrchestrator();
 
-    // Initially no unsaved changes
     expect(orchestrator.hasUnsavedChanges, isFalse);
 
-    // Create an emulator
     await orchestrator.createEmulator(name: 'Test Emulator');
 
-    // Now has unsaved changes
     expect(orchestrator.hasUnsavedChanges, isTrue);
 
-    // Mark dirty
     orchestrator.markEmulatorDirty();
     expect(orchestrator.hasUnsavedChanges, isTrue);
 

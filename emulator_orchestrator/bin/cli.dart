@@ -2,18 +2,20 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
+import 'package:emulator_orchestrator/data/models/call_graph.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/repositories/emulator_repository.dart';
 import 'package:emulator_orchestrator/data/services/artifact_library_service.dart';
 import 'package:emulator_orchestrator/data/services/callgraph_service.dart';
+import 'package:emulator_orchestrator/data/services/fidelity_calculator.dart';
 import 'package:emulator_orchestrator/data/services/filtered_trace_service.dart';
 import 'package:emulator_orchestrator/data/services/lifecycle_service.dart';
 import 'package:emulator_orchestrator/data/services/trace_service.dart';
 import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
-import 'package:emulator_orchestrator/data/services/fidelity_calculator.dart';
-import 'package:emulator_orchestrator/data/models/call_graph.dart';
-import 'package:emulator_orchestrator/orchestrator/python_server.dart';
-import 'package:emulator_orchestrator/orchestrator/service_connector.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_call_graph_source.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_emulation_controller.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_engine_lifecycle.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_trace_source.dart';
 
 /// CLI tool for emulator creation, call graph generation, and synthesizer.
 ///
@@ -64,7 +66,7 @@ void main(List<String> args) async {
 
 /// Create a new emulator project.
 ///
-/// No Python backend needed — purely local file operations.
+/// No engine backend needed — purely local file operations.
 Future<void> _runCreate(Map<String, String> flags) async {
   if (flags.containsKey('help') || flags.containsKey('h')) {
     _printCreateUsage();
@@ -92,7 +94,6 @@ Future<void> _runCreate(Map<String, String> flags) async {
     exit(1);
   }
 
-  // Validate files exist
   if (!await File(elfPath).exists()) {
     stderr.writeln('Error: ELF file not found: $elfPath');
     exit(1);
@@ -116,7 +117,6 @@ Future<void> _runCreate(Map<String, String> flags) async {
 
     stderr.writeln('Emulator created: $savePath');
 
-    // Output JSON to stdout
     final output = emulator.toJson();
     output['savePath'] = savePath;
     stdout.writeln(jsonEncode(output));
@@ -127,7 +127,7 @@ Future<void> _runCreate(Map<String, String> flags) async {
 
 /// Generate and output a call graph.
 ///
-/// Requires Python backend for static ELF analysis.
+/// Requires the emulation engine for static ELF analysis.
 Future<void> _runCallgraph(Map<String, String> flags) async {
   if (flags.containsKey('help') || flags.containsKey('h')) {
     _printCallgraphUsage();
@@ -152,30 +152,24 @@ Future<void> _runCallgraph(Map<String, String> flags) async {
 
   final serverUrl = backendUrl ?? 'http://localhost:12356';
   final orchestrator = _createOrchestrator(serverUrl: serverUrl);
-  PythonServer? pythonServer;
+  final ownsEngine = backendUrl == null;
 
   try {
-    // Start Python backend if not connecting to existing
-    if (backendUrl == null) {
-      pythonServer = PythonServer();
-      await pythonServer.start(engineDir: engineDir);
+    if (ownsEngine) {
+      await orchestrator.engineLifecycle.start(engineDir: engineDir);
     }
 
-    // Connect callgraph service
-    final callgraphService = orchestrator.callgraphService;
-    final connected = await ServiceConnector.connectCallgraph(callgraphService);
+    final connected = await orchestrator.callGraphSource.connect();
     if (!connected) {
       stderr.writeln('Error: Could not connect to backend at $serverUrl');
       exit(1);
     }
 
-    // Generate call graph
     stderr.writeln('Generating call graph for $elfPath...');
     final callGraph = await orchestrator.generateCallGraph(elfPath);
 
     // Process ELF in artifact DB (register symbols, create default hooks)
-    final artifactDb = orchestrator.artifactDb;
-    final artifactService = ArtifactLibraryService(artifactDb);
+    final artifactService = ArtifactLibraryService(orchestrator.artifactDb);
     final symbolNames = callGraph.symbols.keys.toList();
     final firmwareRecord = await artifactService.processElfFile(
       elfFilePath: elfPath,
@@ -184,7 +178,6 @@ Future<void> _runCallgraph(Map<String, String> flags) async {
     stderr.writeln('Registered firmware: ${firmwareRecord.elfHash} '
         '(${firmwareRecord.symbolNames.length} symbols)');
 
-    // Format output
     String result;
     if (format == 'summary') {
       final buf = StringBuffer();
@@ -204,7 +197,6 @@ Future<void> _runCallgraph(Map<String, String> flags) async {
       result = const JsonEncoder.withIndent('  ').convert(callGraph.toJson());
     }
 
-    // Output
     if (outputPath != null) {
       await File(outputPath).writeAsString(result);
       stderr.writeln('Written to $outputPath');
@@ -212,15 +204,17 @@ Future<void> _runCallgraph(Map<String, String> flags) async {
       stdout.writeln(result);
     }
   } finally {
-    pythonServer?.stop();
+    if (ownsEngine) {
+      await orchestrator.engineLifecycle.stop();
+    }
     orchestrator.dispose();
   }
 }
 
 /// Run the synthesizer against firmware.
 ///
-/// Full lifecycle: start backend, connect, generate call graph,
-/// register artifacts, start emulation, run synthesizer.
+/// Full lifecycle: start engine, connect, generate call graph, register
+/// artifacts, load firmware, run synthesizer.
 Future<void> _runSynthesize(Map<String, String> flags) async {
   if (flags.containsKey('help') || flags.containsKey('h')) {
     _printSynthesizeUsage();
@@ -260,34 +254,29 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
 
   final serverUrl = backendUrl ?? 'http://localhost:12356';
   final orchestrator = _createOrchestrator(serverUrl: serverUrl);
-  PythonServer? pythonServer;
+  final ownsEngine = backendUrl == null;
 
   try {
-    // Phase 1: Start Python backend
-    if (backendUrl == null) {
-      pythonServer = PythonServer();
-      await pythonServer.start(engineDir: engineDir);
+    if (ownsEngine) {
+      await orchestrator.engineLifecycle.start(engineDir: engineDir);
     }
 
-    // Phase 2: Connect all services
-    final connected = await ServiceConnector.connectAll(
-      callgraphService: orchestrator.callgraphService,
-      lifecycleService: orchestrator.lifecycleService,
-      traceService: orchestrator.traceService,
-      filteredTraceService: orchestrator.filteredTraceService,
-    );
-    if (!connected) {
-      stderr.writeln('Error: Could not connect to backend at $serverUrl');
+    // Connect every channel the synthesizer needs.
+    if (!await orchestrator.callGraphSource.connect()) {
+      stderr.writeln('Error: Could not connect callgraph at $serverUrl');
       exit(1);
     }
+    if (!await orchestrator.emulationController.connect()) {
+      stderr.writeln('Error: Could not connect emulation control at $serverUrl');
+      exit(1);
+    }
+    await orchestrator.traceSource.connect();
 
-    // Phase 3: Generate call graph + process artifacts
     stderr.writeln('Generating call graph...');
     final callGraph = await orchestrator.generateCallGraph(elfPath);
     stderr.writeln('Found ${callGraph.totalFunctions} functions');
 
-    final artifactDb = orchestrator.artifactDb;
-    final artifactService = ArtifactLibraryService(artifactDb);
+    final artifactService = ArtifactLibraryService(orchestrator.artifactDb);
     final symbolNames = callGraph.symbols.keys.toList();
     final firmwareRecord = await artifactService.processElfFile(
       elfFilePath: elfPath,
@@ -296,29 +285,22 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
     final elfHash = firmwareRecord.elfHash;
     stderr.writeln('ELF hash: $elfHash');
 
-    // Phase 4: Load firmware
     stderr.writeln('Loading firmware...');
-    final loadResult = await orchestrator.lifecycleService.load(replPath, elfPath);
-    if (loadResult[0] != true) {
-      stderr.writeln('Error: Failed to load firmware: ${loadResult[1]}');
-      exit(1);
-    }
+    await orchestrator.emulationController.load(replPath, elfPath);
 
-    // Phase 5: Subscribe to synthesizer events for progress reporting
     orchestrator.synthesizerWorkflow.events.listen((event) {
       stderr.writeln('[synthesizer] ${event.runtimeType} '
           '(iteration ${event.iteration})');
     });
 
-    // Track executed symbols via filtered trace for fidelity computation
+    // Track executed symbols via filtered trace for fidelity computation.
     final executedSymbols = <String>{};
-    final traceSubscription = orchestrator.filteredTraceService.onTrace.listen((event) {
+    final traceSubscription = orchestrator.traceSource.filteredTraceStream.listen((event) {
       if (event.isEntry) {
         executedSymbols.add(event.symbol);
       }
     });
 
-    // Phase 6: Run synthesizer
     stderr.writeln('Starting synthesizer (max $maxIterations iterations)...');
     final result = await orchestrator.runSynthesizer(
       elfPath: elfPath,
@@ -331,7 +313,6 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
 
     await traceSubscription.cancel();
 
-    // Output result
     stderr.writeln('');
     if (result.success) {
       stderr.writeln('SUCCESS: Firmware runs cleanly with '
@@ -339,10 +320,10 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
     } else {
       stderr.writeln('FAILED: Symbol "${result.failedSymbol}" '
           'exhausted all hooks after ${result.totalIterations} iterations');
+      exitCode = 1;
     }
     stderr.writeln('Duration: ${result.totalDuration.inSeconds}s');
 
-    // Compute fidelity metrics
     final outputMap = result.toJson();
     if (callGraph.symbols.isNotEmpty) {
       Set<String> subgraphSymbols = const {};
@@ -370,7 +351,6 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
       stdout.writeln(resultJson);
     }
 
-    // Save emulator with resolved hooks if requested
     if (saveEmulatorPath != null && result.resolvedHookCode.isNotEmpty) {
       final name = emulatorName ?? File(elfPath).uri.pathSegments.last.replaceAll('.elf', '');
       final emulator = Emulator.create(
@@ -383,18 +363,19 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
       stderr.writeln('Emulator saved to $saveEmulatorPath');
     }
   } finally {
-    // Cleanup
     try {
       await orchestrator.resetEmulation();
     } catch (_) {}
-    pythonServer?.stop();
+    if (ownsEngine) {
+      await orchestrator.engineLifecycle.stop();
+    }
     orchestrator.dispose();
   }
 }
 
 /// Export an emulator to a Renode .resc script.
 ///
-/// No Python backend needed — purely local file operations.
+/// No engine backend needed — purely local file operations.
 Future<void> _runExport(Map<String, String> flags) async {
   if (flags.containsKey('help') || flags.containsKey('h')) {
     _printExportUsage();
@@ -438,10 +419,6 @@ Future<void> _runExport(Map<String, String> flags) async {
 }
 
 /// Compute fidelity metrics for a call graph.
-///
-/// Can operate in two modes:
-/// - With --elf: generates call graph via Python backend (requires server)
-/// - With --callgraph: loads previously saved call graph JSON (no server needed)
 Future<void> _runFidelity(Map<String, String> flags) async {
   if (flags.containsKey('help') || flags.containsKey('h')) {
     _printFidelityUsage();
@@ -477,7 +454,6 @@ Future<void> _runFidelity(Map<String, String> flags) async {
   CallGraph callGraph;
 
   if (callgraphPath != null) {
-    // Load from previously saved JSON file (no backend needed)
     final file = File(callgraphPath);
     if (!await file.exists()) {
       stderr.writeln('Error: Call graph file not found: $callgraphPath');
@@ -488,7 +464,6 @@ Future<void> _runFidelity(Map<String, String> flags) async {
     callGraph = CallGraph.fromSerializedJson(json);
     stderr.writeln('Loaded call graph: ${callGraph.totalFunctions} functions');
   } else {
-    // Generate from ELF via backend
     if (!await File(elfPath!).exists()) {
       stderr.writeln('Error: ELF file not found: $elfPath');
       exit(1);
@@ -496,16 +471,14 @@ Future<void> _runFidelity(Map<String, String> flags) async {
 
     final serverUrl = backendUrl ?? 'http://localhost:12356';
     final orchestrator = _createOrchestrator(serverUrl: serverUrl);
-    PythonServer? pythonServer;
+    final ownsEngine = backendUrl == null;
 
     try {
-      if (backendUrl == null) {
-        pythonServer = PythonServer();
-        await pythonServer.start(engineDir: engineDir);
+      if (ownsEngine) {
+        await orchestrator.engineLifecycle.start(engineDir: engineDir);
       }
 
-      final callgraphService = orchestrator.callgraphService;
-      final connected = await ServiceConnector.connectCallgraph(callgraphService);
+      final connected = await orchestrator.callGraphSource.connect();
       if (!connected) {
         stderr.writeln('Error: Could not connect to backend at $serverUrl');
         exit(1);
@@ -515,12 +488,13 @@ Future<void> _runFidelity(Map<String, String> flags) async {
       callGraph = await orchestrator.generateCallGraph(elfPath);
       stderr.writeln('Found ${callGraph.totalFunctions} functions');
     } finally {
-      pythonServer?.stop();
+      if (ownsEngine) {
+        await orchestrator.engineLifecycle.stop();
+      }
       orchestrator.dispose();
     }
   }
 
-  // Compute subgraph if start/end configured
   Set<String> subgraphSymbols = const {};
   if (startFrom != null && endAt != null && endAt.isNotEmpty) {
     subgraphSymbols = FidelityCalculator.subgraphBetween(
@@ -528,7 +502,6 @@ Future<void> _runFidelity(Map<String, String> flags) async {
     ).union(traversedSymbols);
   }
 
-  // Compute fidelity
   final fidelity = FidelityCalculator.compute(
     callGraph: callGraph,
     hookedSymbols: hookedSymbols,
@@ -536,7 +509,6 @@ Future<void> _runFidelity(Map<String, String> flags) async {
     subgraphSymbols: subgraphSymbols,
   );
 
-  // Output
   String result;
   if (format == 'summary') {
     result = fidelity.toString();
@@ -557,11 +529,19 @@ Future<void> _runFidelity(Map<String, String> flags) async {
 // =============================================================================
 
 EmulationOrchestrator _createOrchestrator({String serverUrl = 'http://localhost:12356'}) {
+  final lifecycleService = LifecycleService(serverUrl: serverUrl);
+  final callgraphService = CallgraphService(serverUrl: serverUrl);
+  final traceService = TraceService(serverUrl: serverUrl);
+  final filteredTraceService = FilteredTraceService(serverUrl: serverUrl);
+
   return EmulationOrchestrator(
-    lifecycleService: LifecycleService(serverUrl: serverUrl),
-    callgraphService: CallgraphService(serverUrl: serverUrl),
-    traceService: TraceService(serverUrl: serverUrl),
-    filteredTraceService: FilteredTraceService(serverUrl: serverUrl),
+    engineLifecycle: RenodeEngineLifecycle(),
+    emulationController: RenodeEmulationController(lifecycleService),
+    callGraphSource: RenodeCallGraphSource(callgraphService),
+    traceSource: RenodeTraceSource(
+      traceService: traceService,
+      filteredTraceService: filteredTraceService,
+    ),
     emulatorRepository: EmulatorRepository(),
     artifactDb: ArtifactDatabase(),
   );
@@ -609,7 +589,7 @@ Commands:
 Run 'dart run bin/cli.dart <command> --help' for command-specific help.
 
 Global options:
-  --backend-url <url>   Connect to existing Python backend (skips auto-start)
+  --backend-url <url>   Connect to existing emulation engine (skips auto-start)
   --engine-dir <path>   Path to emulation_engine directory
   -h, --help            Show this help''');
 }

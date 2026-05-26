@@ -2,7 +2,7 @@ import 'dart:math' as math;
 
 import '../../data/models/call_graph.dart';
 import '../../data/models/graph_point.dart';
-import '../../data/services/callgraph_service.dart';
+import '../engine/call_graph_source.dart';
 import '../exceptions/orchestrator_exceptions.dart';
 
 /// Graph layout algorithm types.
@@ -24,21 +24,19 @@ enum GraphLayout {
 /// Layout algorithms are extracted from graph_viewer_widget.dart (700+ lines)
 /// to make them testable and reusable.
 class AnalysisWorkflow {
-  final CallgraphService callgraphService;
+  final CallGraphSource callGraphSource;
 
-  AnalysisWorkflow({required this.callgraphService});
+  AnalysisWorkflow({required this.callGraphSource});
 
   /// Generate call graph for the given ELF file.
   ///
-  /// Requests static analysis from the backend and parses the result.
+  /// Requests static analysis from the engine and parses the result.
   Future<CallGraph> generateCallGraph(String elfPath) async {
     try {
-      if (!callgraphService.isConnected) {
-        throw AnalysisException('Callgraph service not connected');
+      if (!callGraphSource.isConnected) {
+        throw AnalysisException('Call graph source not connected');
       }
-
-      final response = await callgraphService.getCallgraph(elfPath);
-      return CallGraph.fromJson(elfPath, response);
+      return await callGraphSource.getCallGraph(elfPath);
     } catch (e) {
       throw AnalysisException('Failed to generate call graph', e);
     }

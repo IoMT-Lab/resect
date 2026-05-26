@@ -1,28 +1,26 @@
 import 'dart:async';
-import 'dart:io';
 
-import '../../data/services/lifecycle_service.dart';
-import '../../data/services/callgraph_service.dart';
-import '../../data/services/trace_service.dart';
-import '../../data/services/filtered_trace_service.dart';
 import '../../data/models/emulation_state.dart';
+import '../engine/call_graph_source.dart';
+import '../engine/emulation_controller.dart';
+import '../engine/engine_lifecycle.dart';
+import '../engine/paused_event.dart';
+import '../engine/trace_event.dart';
+import '../engine/trace_source.dart';
 import '../exceptions/orchestrator_exceptions.dart';
-import '../python_server.dart';
 
 /// Handles the complex emulation lifecycle workflow.
 ///
-/// Extracts the business logic from graph_viewer_widget.dart to make it testable
-/// and reusable. This workflow coordinates multiple services to:
-/// 1. Start/stop the Python server process
-/// 2. Connect to lifecycle, callgraph, and trace services
+/// Coordinates the engine abstractions to:
+/// 1. Start/stop the engine process
+/// 2. Connect to lifecycle, callgraph, and trace channels
 /// 3. Load firmware with retry logic
 /// 4. Start/pause/resume/reset emulation
 class EmulationWorkflow {
-  final LifecycleService lifecycleService;
-  final CallgraphService callgraphService;
-  final TraceService traceService;
-  final FilteredTraceService filteredTraceService;
-  final void Function(Process) onServerProcessCreated;
+  final EngineLifecycle engineLifecycle;
+  final EmulationController emulationController;
+  final CallGraphSource callGraphSource;
+  final TraceSource traceSource;
   final void Function(EmulationState) onStateChanged;
   final void Function(PausedEvent) onPauseEvent;
 
@@ -36,11 +34,10 @@ class EmulationWorkflow {
   StreamSubscription? _resetSubscription;
 
   EmulationWorkflow({
-    required this.lifecycleService,
-    required this.callgraphService,
-    required this.traceService,
-    required this.filteredTraceService,
-    required this.onServerProcessCreated,
+    required this.engineLifecycle,
+    required this.emulationController,
+    required this.callGraphSource,
+    required this.traceSource,
     required this.onStateChanged,
     required this.onPauseEvent,
   });
@@ -48,12 +45,12 @@ class EmulationWorkflow {
   /// Start the full emulation workflow.
   ///
   /// This method coordinates the entire startup sequence:
-  /// 1. Disconnect all services
-  /// 2. Start new Python server process
-  /// 3. Connect to lifecycle service
-  /// 4. Reconnect callgraph service
-  /// 5. Load firmware (with retry logic)
-  /// 6. Setup trace services and subscriptions
+  /// 1. Disconnect all channels
+  /// 2. Start the engine process
+  /// 3. Connect emulation control + callgraph
+  /// 4. Load firmware (with retry logic)
+  /// 5. Apply memory map + forced hook overrides
+  /// 6. Connect trace channels + subscribe to lifecycle events
   /// 7. Start emulation
   ///
   /// Throws [EmulationException] on any failure.
@@ -66,54 +63,23 @@ class EmulationWorkflow {
     Map<String, String> resolvedOverrides = const {},
     String? memoryMapPath,
   }) async {
-    Process? serverProcess;
-
     try {
-      // Step 1: Disconnect all services
-      _disconnectAllServices();
+      _disconnectAllChannels();
 
-      // Step 2: Start new Python server process
-      final pythonServer = PythonServer();
-      await pythonServer.start();
-      serverProcess = pythonServer.process;
-      onServerProcessCreated(serverProcess!);
+      await engineLifecycle.start();
 
-      // Step 3: Connect to lifecycle service
-      await _connectLifecycleService();
+      await _connectEmulationController();
+      await _connectCallGraphSource();
 
-      // Step 4: Reconnect callgraph service
-      await _connectCallgraphService();
-
-      // Step 5: Validate base image path
       if (baseImagePath == null || baseImagePath.isEmpty) {
         throw EmulationException('No base image (.repl) file specified in emulator');
       }
 
-      // Step 6: Load firmware with retry logic
       await _loadFirmwareWithRetry(baseImagePath, elfPath);
-
-      // Step 6a: Apply memory map (if specified)
       await _applyMemoryMap(memoryMapPath);
-
-      // Step 6b: Apply forced hook overrides (if any)
-      if (resolvedOverrides.isNotEmpty) {
-        for (final entry in resolvedOverrides.entries) {
-          final hookName = '${entry.key}_override';
-          await lifecycleService.defineHook(hookName, entry.value);
-        }
-        await lifecycleService.mapHooks({
-          for (final key in resolvedOverrides.keys) key: '${key}_override',
-        });
-        print('Applied ${resolvedOverrides.length} forced hook overrides');
-      }
-
-      // Step 7: Setup trace services and subscriptions
-      await _setupTraceServices();
-
-      // Step 8: Setup lifecycle event listeners
+      await _applyForcedOverrides(resolvedOverrides);
+      await _setupTraceChannels();
       await _setupLifecycleListeners();
-
-      // Step 9: Start emulation
       await _startEmulation(
         startFrom: startFrom,
         endAt: endAt,
@@ -122,23 +88,17 @@ class EmulationWorkflow {
 
       onStateChanged(EmulationState.running);
     } catch (e) {
-      // Kill server process if startup failed partway through
-      serverProcess?.kill();
+      // Tear down the engine if startup failed partway through.
+      await engineLifecycle.stop();
       throw EmulationException('Failed to start emulation', e);
     }
   }
 
-  /// Restart emulation using the existing server process.
+  /// Restart emulation using the existing engine process.
   ///
-  /// Instead of tearing down and recreating the server, this:
-  /// 1. Resets Renode state via lifecycleService.reset()
-  /// 2. Reloads firmware
-  /// 3. Applies hook overrides
-  /// 4. Reconnects trace services and subscriptions
-  /// 5. Starts emulation
-  ///
-  /// Use this when the server process is already running (e.g., after synthesis).
-  /// Falls back to full start() if the lifecycle service is not connected.
+  /// Instead of tearing down and recreating the engine, this resets state,
+  /// reloads firmware, reapplies hooks, and restarts.
+  /// Falls back to full [start] if the control channel isn't connected.
   Future<void> restart({
     required String elfPath,
     String? baseImagePath,
@@ -148,8 +108,7 @@ class EmulationWorkflow {
     Map<String, String> resolvedOverrides = const {},
     String? memoryMapPath,
   }) async {
-    // If lifecycle service isn't connected, fall back to full start
-    if (!lifecycleService.isConnected) {
+    if (!emulationController.isConnected) {
       return start(
         elfPath: elfPath,
         baseImagePath: baseImagePath,
@@ -162,49 +121,28 @@ class EmulationWorkflow {
     }
 
     try {
-      // Cancel existing subscriptions (will re-create them)
       await _traceSubscription?.cancel();
       await _filteredTraceSubscription?.cancel();
       await _pauseSubscription?.cancel();
       await _resumeSubscription?.cancel();
       await _resetSubscription?.cancel();
 
-      // Step 1: Reset Renode state
-      await lifecycleService.reset();
+      await emulationController.reset();
       await Future.delayed(const Duration(milliseconds: 500));
 
-      // Step 2: Validate base image path
       if (baseImagePath == null || baseImagePath.isEmpty) {
         throw EmulationException('No base image (.repl) file specified');
       }
 
-      // Step 3: Reload firmware
       await _loadFirmwareWithRetry(baseImagePath, elfPath);
-
-      // Step 3a: Apply memory map (if specified)
       await _applyMemoryMap(memoryMapPath);
+      await _applyForcedOverrides(resolvedOverrides);
 
-      // Step 4: Apply forced hook overrides (if any)
-      if (resolvedOverrides.isNotEmpty) {
-        for (final entry in resolvedOverrides.entries) {
-          final hookName = '${entry.key}_override';
-          await lifecycleService.defineHook(hookName, entry.value);
-        }
-        await lifecycleService.mapHooks({
-          for (final key in resolvedOverrides.keys) key: '${key}_override',
-        });
-        print('Applied ${resolvedOverrides.length} forced hook overrides');
-      }
+      // Reconnect trace channels for a clean slate.
+      traceSource.disconnect();
+      await _setupTraceChannels();
 
-      // Step 5: Reconnect trace services (disconnect first for clean state)
-      traceService.disconnect();
-      filteredTraceService.disconnect();
-      await _setupTraceServices();
-
-      // Step 6: Setup lifecycle event listeners
       await _setupLifecycleListeners();
-
-      // Step 7: Start emulation
       await _startEmulation(
         startFrom: startFrom,
         endAt: endAt,
@@ -220,10 +158,7 @@ class EmulationWorkflow {
   /// Pause the running emulation.
   Future<void> pause() async {
     try {
-      final result = await lifecycleService.pause();
-      if (result[0] != true) {
-        throw EmulationException('Failed to pause: ${result[1]}');
-      }
+      await emulationController.pause();
       onStateChanged(EmulationState.paused);
     } catch (e) {
       throw EmulationException('Failed to pause emulation', e);
@@ -233,21 +168,17 @@ class EmulationWorkflow {
   /// Resume paused emulation.
   Future<void> resume() async {
     try {
-      final result = await lifecycleService.start();
-      if (result[0] != true) {
-        throw EmulationException('Failed to resume: ${result[1]}');
-      }
+      await emulationController.resume();
       onStateChanged(EmulationState.running);
     } catch (e) {
       throw EmulationException('Failed to resume emulation', e);
     }
   }
 
-  /// Cancel all subscriptions and disconnect services.
+  /// Cancel all subscriptions and disconnect channels.
   ///
-  /// The orchestrator is responsible for killing the server process.
+  /// The orchestrator is responsible for stopping the engine process.
   Future<void> reset() async {
-    // Cancel trace subscriptions
     await _traceSubscription?.cancel();
     await _filteredTraceSubscription?.cancel();
     await _pauseSubscription?.cancel();
@@ -260,13 +191,11 @@ class EmulationWorkflow {
     _resumeSubscription = null;
     _resetSubscription = null;
 
-    // Disconnect services
-    _disconnectAllServices();
+    _disconnectAllChannels();
 
     onStateChanged(EmulationState.stopped);
   }
 
-  /// Clean up all subscriptions
   void dispose() {
     _traceSubscription?.cancel();
     _filteredTraceSubscription?.cancel();
@@ -279,108 +208,104 @@ class EmulationWorkflow {
   // PRIVATE WORKFLOW STEPS
   // =========================================================================
 
-  void _disconnectAllServices() {
-    callgraphService.disconnect();
-    lifecycleService.disconnect();
-    traceService.disconnect();
-    filteredTraceService.disconnect();
+  void _disconnectAllChannels() {
+    callGraphSource.disconnect();
+    emulationController.disconnect();
+    traceSource.disconnect();
   }
 
-  Future<void> _connectLifecycleService() async {
-    print('Connecting to lifecycle service...');
-    final connected = await lifecycleService.connect();
+  Future<void> _connectEmulationController() async {
+    print('Connecting emulation control channel...');
+    final connected = await emulationController.connect();
     if (!connected) {
-      throw EmulationException('Failed to connect to Renode lifecycle service');
+      throw EmulationException('Failed to connect emulation control channel');
     }
-    print('Connected to lifecycle service');
+    print('Emulation control channel connected');
   }
 
-  Future<void> _connectCallgraphService() async {
-    await callgraphService.connect();
-    print('Reconnected to callgraph service');
+  Future<void> _connectCallGraphSource() async {
+    await callGraphSource.connect();
+    print('Reconnected to callgraph channel');
   }
 
   Future<void> _applyMemoryMap(String? memoryMapPath) async {
     if (memoryMapPath == null || memoryMapPath.isEmpty) return;
     print('Applying memory map: $memoryMapPath');
-    final result = await lifecycleService.loadMemoryMap(memoryMapPath);
-    if (result[0] != true) {
-      throw EmulationException('Failed to load memory map: ${result[1]}');
-    }
+    await emulationController.loadMemoryMap(memoryMapPath);
     print('Memory map applied successfully');
+  }
+
+  Future<void> _applyForcedOverrides(Map<String, String> overrides) async {
+    if (overrides.isEmpty) return;
+    for (final entry in overrides.entries) {
+      final hookName = '${entry.key}_override';
+      await emulationController.defineHook(hookName, entry.value);
+    }
+    await emulationController.mapHooks({
+      for (final key in overrides.keys) key: '${key}_override',
+    });
+    print('Applied ${overrides.length} forced hook overrides');
   }
 
   Future<void> _loadFirmwareWithRetry(String baseImagePath, String elfPath) async {
     print('Loading firmware: $baseImagePath and $elfPath');
 
-    List<dynamic> loadResult = [false, 'Not attempted'];
+    Object? lastError;
     for (int attempt = 0; attempt < maxLoadRetries; attempt++) {
-      loadResult = await lifecycleService.load(baseImagePath, elfPath);
-      print('Load result (attempt ${attempt + 1}): $loadResult');
-
-      if (loadResult[0] == true) {
-        return; // Success!
-      }
-
-      if (attempt < maxLoadRetries - 1) {
-        print('Load failed, waiting ${retryDelay.inSeconds} seconds before retry...');
-        await Future.delayed(retryDelay);
+      try {
+        await emulationController.load(baseImagePath, elfPath);
+        return;
+      } catch (e) {
+        lastError = e;
+        print('Load failed (attempt ${attempt + 1}): $e');
+        if (attempt < maxLoadRetries - 1) {
+          print('Waiting ${retryDelay.inSeconds} seconds before retry...');
+          await Future.delayed(retryDelay);
+        }
       }
     }
 
-    throw EmulationException('Failed to load firmware after $maxLoadRetries attempts: ${loadResult[1]}');
+    throw EmulationException(
+      'Failed to load firmware after $maxLoadRetries attempts: $lastError',
+    );
   }
 
-  Future<void> _setupTraceServices() async {
-    // Connect to trace service
-    if (!traceService.isConnected) {
-      print('Connecting to trace service...');
-      await traceService.connect();
-      print('Trace service connected: ${traceService.isConnected}');
+  Future<void> _setupTraceChannels() async {
+    if (!traceSource.isConnected) {
+      print('Connecting trace channels...');
+      await traceSource.connect();
+      print('Trace channels connected: ${traceSource.isConnected}');
     }
 
-    // Subscribe to trace events
     _traceSubscription?.cancel();
-    _traceSubscription = traceService.onTrace.listen((event) {
-      // Event will be forwarded by orchestrator
+    _traceSubscription = traceSource.traceStream.listen((_) {
+      // Forwarded by the orchestrator's own subscription.
     });
 
-    // Connect to filtered trace service
-    if (!filteredTraceService.isConnected) {
-      print('Connecting to filtered trace service...');
-      await filteredTraceService.connect();
-      print('Filtered trace service connected: ${filteredTraceService.isConnected}');
-    }
-
-    // Subscribe to filtered trace events
     _filteredTraceSubscription?.cancel();
-    _filteredTraceSubscription = filteredTraceService.onTrace.listen((event) {
-      // Event will be forwarded by orchestrator
+    _filteredTraceSubscription = traceSource.filteredTraceStream.listen((_) {
+      // Forwarded by the orchestrator's own subscription.
     });
   }
 
-  /// Setup lifecycle event listeners
   Future<void> _setupLifecycleListeners() async {
     print('Setting up lifecycle event listeners...');
 
-    // Subscribe to pause events
     _pauseSubscription?.cancel();
-    _pauseSubscription = lifecycleService.onPaused.listen((event) {
+    _pauseSubscription = emulationController.onPaused.listen((event) {
       print('Pause event received: ${event.symbol}, user=${event.user}, unhandled=${event.unhandledAccess}');
       onStateChanged(EmulationState.paused);
       onPauseEvent(event);
     });
 
-    // Subscribe to resume events
     _resumeSubscription?.cancel();
-    _resumeSubscription = lifecycleService.onResumed.listen((_) {
+    _resumeSubscription = emulationController.onResumed.listen((_) {
       print('Resume event received');
       onStateChanged(EmulationState.running);
     });
 
-    // Subscribe to reset events
     _resetSubscription?.cancel();
-    _resetSubscription = lifecycleService.onReset.listen((_) {
+    _resetSubscription = emulationController.onReset.listen((_) {
       print('Reset event received');
       onStateChanged(EmulationState.stopped);
     });
@@ -394,22 +319,15 @@ class EmulationWorkflow {
     required bool pauseOnUnhandled,
   }) async {
     print('Starting emulation...');
-
-    final result = await lifecycleService.start(
+    await emulationController.start(
       startFrom: startFrom,
       endAt: endAt,
       pauseOnUnhandled: pauseOnUnhandled,
     );
-
-    print('Start result: $result');
-    if (result[0] != true) {
-      throw EmulationException('Failed to start emulation: ${result[1]}');
-    }
   }
 
-  /// Get the trace subscription stream for external listening.
-  Stream<TraceEvent>? get traceEvents => _traceSubscription != null ? traceService.onTrace : null;
-
-  /// Get the filtered trace subscription stream for external listening.
-  Stream<TraceEvent>? get filteredTraceEvents => _filteredTraceSubscription != null ? filteredTraceService.onTrace : null;
+  /// Trace event streams from the underlying [TraceSource], exposed for
+  /// callers that want to listen externally.
+  Stream<TraceEvent> get traceEvents => traceSource.traceStream;
+  Stream<TraceEvent> get filteredTraceEvents => traceSource.filteredTraceStream;
 }

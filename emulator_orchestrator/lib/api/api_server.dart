@@ -198,7 +198,7 @@ class ApiServer {
 
       // Track executed symbols via filtered trace for fidelity
       final executedSymbols = <String>{};
-      final traceSubscription = orchestrator.filteredTraceService.onTrace.listen((event) {
+      final traceSubscription = orchestrator.traceSource.filteredTraceStream.listen((event) {
         if (event.isEntry) {
           executedSymbols.add(event.symbol);
         }

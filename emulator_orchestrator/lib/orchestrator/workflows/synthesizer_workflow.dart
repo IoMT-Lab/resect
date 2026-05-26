@@ -2,7 +2,8 @@ import 'dart:async';
 
 import '../../data/database/artifact_database.dart';
 import '../../data/models/synthesizer_result.dart';
-import '../../data/services/lifecycle_service.dart';
+import '../engine/emulation_controller.dart';
+import '../engine/paused_event.dart';
 import '../events/synthesizer_events.dart';
 
 /// Automated hook substitution workflow for emulator creation.
@@ -15,11 +16,11 @@ import '../events/synthesizer_events.dart';
 /// 5. Reset and restart emulation with accumulated hooks
 /// 6. Repeat until firmware runs cleanly or a symbol exhausts all hooks
 ///
-/// The synthesizer uses the existing EmulationWorkflow for the initial server
+/// The synthesizer uses the existing EmulationWorkflow for the initial engine
 /// startup, then manages subsequent reset/restart cycles directly via the
-/// lifecycle service (avoiding server restarts between iterations).
+/// emulation control channel (avoiding engine restarts between iterations).
 class SynthesizerWorkflow {
-  final LifecycleService lifecycleService;
+  final EmulationController emulationController;
   final ArtifactDatabase artifactDb;
 
   /// Event stream for progress reporting.
@@ -31,24 +32,18 @@ class SynthesizerWorkflow {
   bool get isRunning => _isRunning;
 
   SynthesizerWorkflow({
-    required this.lifecycleService,
+    required this.emulationController,
     required this.artifactDb,
   });
 
   /// Run the synthesis loop.
   ///
-  /// Prerequisites: The emulation server must already be running and connected
-  /// (i.e., EmulationWorkflow.start() has been called and firmware is loaded).
-  /// The synthesizer takes over from there, managing reset/hook/restart cycles.
+  /// Prerequisites: The emulation engine must already be running and the
+  /// control channel connected (i.e., EmulationWorkflow.start() has been
+  /// called and firmware is loaded). The synthesizer takes over from there,
+  /// managing reset/hook/restart cycles.
   ///
   /// Stops immediately if any symbol exhausts all hook candidates.
-  ///
-  /// [elfPath]: Path to the ELF firmware file
-  /// [elfHash]: SHA-256 hash of the ELF (for artifact DB lookups)
-  /// [baseImagePath]: Path to the .repl platform description
-  /// [startFrom]: Optional symbol to start execution from
-  /// [endAt]: Optional list of symbols that trigger early exit (stop conditions)
-  /// [maxIterations]: Safety limit to prevent infinite loops
   Future<SynthesizerResult> run({
     required String elfPath,
     required String elfHash,
@@ -72,11 +67,10 @@ class SynthesizerWorkflow {
     final hookMap = <String, String>{};        // symbol → hookName
     final hookIndex = <String, int>{};          // symbol → current hook index
     final hookCache = <String, List<Artifact>>{}; // symbol → available hooks
-    final definedHooks = <String, String>{};    // hookName → hookCode (all defined hooks)
+    final definedHooks = <String, String>{};    // hookName → hookCode
 
     int iteration = 0;
 
-    // Build symbol → hookCode map from hookMap (symbol → hookName) + definedHooks (hookName → hookCode)
     Map<String, String> buildHookCodeMap() {
       return {
         for (final entry in hookMap.entries)
@@ -98,8 +92,7 @@ class SynthesizerWorkflow {
       }
     }
 
-    // Pre-seed previously resolved hooks (warm start / resume mode)
-    // Overrides take precedence — skip symbols already overridden
+    // Pre-seed previously resolved hooks (warm start). Overrides take precedence.
     for (final entry in resolvedHooks.entries) {
       if (!overriddenSymbols.contains(entry.key)) {
         final hookName = '${entry.key}_resolved';
@@ -120,44 +113,34 @@ class SynthesizerWorkflow {
 
         print('[Synthesizer] Iteration $iteration — ${hookMap.length} hooks applied');
 
-        // Reset Renode state and reload firmware for clean CPU state.
-        // This runs on every iteration (including the first) to ensure the
-        // program counter is at the ELF entry point, not at a location left
-        // over from emulationWorkflow.start() which may have already paused.
-        await lifecycleService.reset();
+        // Reset state and reload firmware for a clean CPU state on every
+        // iteration (including the first) — emulationWorkflow.start() may
+        // have already paused execution mid-firmware.
+        await emulationController.reset();
         await Future.delayed(const Duration(milliseconds: 500));
         await _loadFirmwareWithRetry(baseImagePath, elfPath);
 
-        // Apply memory map (if specified)
         if (memoryMapPath != null && memoryMapPath.isNotEmpty) {
-          final mapResult = await lifecycleService.loadMemoryMap(memoryMapPath);
-          if (mapResult[0] != true) {
-            throw SynthesizerException('Failed to load memory map: ${mapResult[1]}');
-          }
+          await emulationController.loadMemoryMap(memoryMapPath);
         }
 
-        // Define all hook code (including pre-seeded overrides on iteration 1)
-        if (definedHooks.isNotEmpty) {
-          for (final entry in definedHooks.entries) {
-            await lifecycleService.defineHook(entry.key, entry.value);
-          }
+        // (Re)define all hook code (including pre-seeded overrides on iter 1)
+        for (final entry in definedHooks.entries) {
+          await emulationController.defineHook(entry.key, entry.value);
         }
 
-        // Map accumulated hooks
         if (hookMap.isNotEmpty) {
-          await lifecycleService.mapHooks(hookMap);
+          await emulationController.mapHooks(hookMap);
         }
 
-        // Start emulation and wait for a pause event
         final pauseEvent = await _startAndWaitForPause(
           startFrom: startFrom,
           endAt: endAt,
           pauseOnUnhandled: true,
         );
 
-        // Handle the pause event
         if (pauseEvent == null) {
-          // Emulation completed without pausing — success!
+          // Firmware ran cleanly — success.
           stopwatch.stop();
           final result = SynthesizerResult(
             success: true,
@@ -174,19 +157,16 @@ class SynthesizerWorkflow {
         }
 
         if (pauseEvent.unhandledAccess != true || pauseEvent.symbol == null) {
-          // Paused for a non-unhandled-access reason (e.g., user pause, breakpoint)
-          // Wait for the user to resume or abort
           print('[Synthesizer] Non-unhandled pause at ${pauseEvent.symbol}, '
               'waiting for resume...');
           await _waitForResumeOrReset();
           continue;
         }
 
-        // Unhandled access — identify the problematic symbol
         final symbol = pauseEvent.symbol!;
         print('[Synthesizer] Unhandled access at symbol: $symbol');
 
-        // If this symbol has a forced override, don't try alternatives — fail
+        // Forced override that failed: bail out, don't try alternatives.
         if (overriddenSymbols.contains(symbol)) {
           print('[Synthesizer] Symbol "$symbol" has a forced override that failed');
           stopwatch.stop();
@@ -209,14 +189,12 @@ class SynthesizerWorkflow {
           return result;
         }
 
-        // Get available hooks for this symbol (cached)
         if (!hookCache.containsKey(symbol)) {
           var hooks = await artifactDb.getArtifactsForSymbolByName(
             elfHash,
             symbol,
           );
-          // Reorder: if user has a preference for this symbol, move that
-          // artifact to the front so it's tried first.
+          // If the user has a preference for this symbol, try that artifact first.
           final preferredId = hookPreferences[symbol];
           if (preferredId != null) {
             final preferredIndex = hooks.indexWhere((a) => a.id == preferredId);
@@ -232,7 +210,6 @@ class SynthesizerWorkflow {
         final hooks = hookCache[symbol]!;
 
         if (hooks.isEmpty) {
-          // No hooks available — this should not happen if registration was correct
           print('[Synthesizer] ERROR: No hooks found for "$symbol" — '
               'artifact DB registration may have failed');
           stopwatch.stop();
@@ -255,11 +232,9 @@ class SynthesizerWorkflow {
           return result;
         }
 
-        // Get the current hook index for this symbol
         final currentIndex = hookIndex[symbol] ?? 0;
 
         if (currentIndex >= hooks.length) {
-          // All hooks exhausted for this symbol — stop
           stopwatch.stop();
           _eventController.add(SynthesizerSymbolExhausted(
             iteration: iteration,
@@ -280,15 +255,13 @@ class SynthesizerWorkflow {
           return result;
         }
 
-        // Select the next hook
         final hookArtifact = hooks[currentIndex];
         final hookName = '${symbol}_hook_$currentIndex';
         final hookCode = hookArtifact.artifactData;
 
-        // Store hook definition and update maps
         definedHooks[hookName] = hookCode;
         hookMap[symbol] = hookName;
-        hookIndex[symbol] = currentIndex + 1; // advance for next try if needed
+        hookIndex[symbol] = currentIndex + 1;
 
         _eventController.add(SynthesizerHookApplied(
           iteration: iteration,
@@ -302,7 +275,6 @@ class SynthesizerWorkflow {
             '(${currentIndex + 1}/${hooks.length}) for $symbol');
       }
 
-      // Loop exited — either max iterations or cancelled
       stopwatch.stop();
       final result = SynthesizerResult(
         success: false,
@@ -318,12 +290,10 @@ class SynthesizerWorkflow {
       ));
       return result;
     } finally {
-      // Reset Renode state so it's clean for the next run
+      // Best-effort cleanup; control channel may already be disconnected.
       try {
-        await lifecycleService.reset();
-      } catch (_) {
-        // Best-effort — lifecycle service may already be disconnected
-      }
+        await emulationController.reset();
+      } catch (_) {}
       _isRunning = false;
     }
   }
@@ -334,7 +304,7 @@ class SynthesizerWorkflow {
   /// appears to have completed (no pause within timeout).
   ///
   /// Uses a 'started'/'resumed' gate to ignore stale pause events from
-  /// prior reset/load cycles. Only accepts pauses after the server confirms
+  /// prior reset/load cycles. Only accepts pauses after the engine confirms
   /// execution actually began.
   Future<PausedEvent?> _startAndWaitForPause({
     String? startFrom,
@@ -344,23 +314,19 @@ class SynthesizerWorkflow {
     final completer = Completer<PausedEvent?>();
     bool executionStarted = false;
 
-    // Gate: only accept pause events after 'started'/'resumed' confirms
-    // execution actually began. This filters out stale pause events from
-    // the reset/load sequence (e.g., machine-paused during Clear).
     late StreamSubscription<void> startedSub;
-    startedSub = lifecycleService.onStarted.listen((_) {
+    startedSub = emulationController.onStarted.listen((_) {
       executionStarted = true;
       startedSub.cancel();
     });
     late StreamSubscription<void> resumedSub;
-    resumedSub = lifecycleService.onResumed.listen((_) {
+    resumedSub = emulationController.onResumed.listen((_) {
       executionStarted = true;
       resumedSub.cancel();
     });
 
-    // Listen for pause events, only accept after execution started
     late StreamSubscription<PausedEvent> pauseSub;
-    pauseSub = lifecycleService.onPaused.listen((event) {
+    pauseSub = emulationController.onPaused.listen((event) {
       if (executionStarted && !completer.isCompleted) {
         pauseSub.cancel();
         startedSub.cancel();
@@ -369,22 +335,19 @@ class SynthesizerWorkflow {
       }
     });
 
-    // Start emulation
-    final result = await lifecycleService.start(
-      startFrom: startFrom,
-      endAt: endAt,
-      pauseOnUnhandled: pauseOnUnhandled,
-    );
-
-    if (result[0] != true) {
+    try {
+      await emulationController.start(
+        startFrom: startFrom,
+        endAt: endAt,
+        pauseOnUnhandled: pauseOnUnhandled,
+      );
+    } catch (e) {
       pauseSub.cancel();
       startedSub.cancel();
       resumedSub.cancel();
-      throw SynthesizerException('Failed to start emulation: ${result[1]}');
+      throw SynthesizerException('Failed to start emulation: $e');
     }
 
-    // Wait for pause with a generous timeout
-    // If firmware runs cleanly, we won't get a pause — use timeout as success signal
     try {
       return await completer.future.timeout(
         const Duration(seconds: 30),
@@ -393,21 +356,19 @@ class SynthesizerWorkflow {
       pauseSub.cancel();
       startedSub.cancel();
       resumedSub.cancel();
-      // No pause within timeout — assume emulation is running cleanly
+      // No pause within timeout — assume emulation completed cleanly.
       return null;
     }
   }
 
   /// Wait for the user to resume or reset emulation.
-  ///
-  /// Used when the synthesizer encounters a non-unhandled-access pause.
   Future<void> _waitForResumeOrReset() async {
     final completer = Completer<void>();
 
     late StreamSubscription<void> resumeSub;
     late StreamSubscription<void> resetSub;
 
-    resumeSub = lifecycleService.onResumed.listen((_) {
+    resumeSub = emulationController.onResumed.listen((_) {
       if (!completer.isCompleted) {
         resumeSub.cancel();
         resetSub.cancel();
@@ -415,7 +376,7 @@ class SynthesizerWorkflow {
       }
     });
 
-    resetSub = lifecycleService.onReset.listen((_) {
+    resetSub = emulationController.onReset.listen((_) {
       if (!completer.isCompleted) {
         resumeSub.cancel();
         resetSub.cancel();
@@ -426,27 +387,26 @@ class SynthesizerWorkflow {
     await completer.future;
   }
 
-  /// Load firmware with retry logic (mirrors EmulationWorkflow).
   Future<void> _loadFirmwareWithRetry(String baseImagePath, String elfPath) async {
     const maxRetries = 3;
     const retryDelay = Duration(seconds: 2);
 
-    List<dynamic> loadResult = [false, 'Not attempted'];
+    Object? lastError;
     for (int attempt = 0; attempt < maxRetries; attempt++) {
-      loadResult = await lifecycleService.load(baseImagePath, elfPath);
-
-      if (loadResult[0] == true) {
+      try {
+        await emulationController.load(baseImagePath, elfPath);
         return;
-      }
-
-      if (attempt < maxRetries - 1) {
-        print('[Synthesizer] Load failed, retrying in ${retryDelay.inSeconds}s...');
-        await Future.delayed(retryDelay);
+      } catch (e) {
+        lastError = e;
+        if (attempt < maxRetries - 1) {
+          print('[Synthesizer] Load failed, retrying in ${retryDelay.inSeconds}s...');
+          await Future.delayed(retryDelay);
+        }
       }
     }
 
     throw SynthesizerException(
-        'Failed to load firmware after $maxRetries attempts: ${loadResult[1]}');
+        'Failed to load firmware after $maxRetries attempts: $lastError');
   }
 
   /// Cancel a running synthesis (from external control).
