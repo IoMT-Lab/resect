@@ -58,6 +58,11 @@ void main(List<String> args) async {
     stderr.writeln('Error: $e');
     exit(1);
   }
+
+  // Force termination: lingering Socket.IO sockets / broadcast stream
+  // controllers otherwise keep the VM alive after the command finishes.
+  // exitCode is set by commands (e.g. synthesize sets 1 on non-convergence).
+  exit(exitCode);
 }
 
 // =============================================================================
@@ -156,6 +161,7 @@ Future<void> _runCallgraph(Map<String, String> flags) async {
 
   try {
     if (ownsEngine) {
+      await _freeStalePorts([12356, 5000]);
       await orchestrator.engineLifecycle.start(engineDir: engineDir);
     }
 
@@ -258,6 +264,7 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
 
   try {
     if (ownsEngine) {
+      await _freeStalePorts([12356, 5000]);
       await orchestrator.engineLifecycle.start(engineDir: engineDir);
     }
 
@@ -475,6 +482,7 @@ Future<void> _runFidelity(Map<String, String> flags) async {
 
     try {
       if (ownsEngine) {
+        await _freeStalePorts([12356, 5000]);
         await orchestrator.engineLifecycle.start(engineDir: engineDir);
       }
 
@@ -527,6 +535,28 @@ Future<void> _runFidelity(Map<String, String> flags) async {
 // =============================================================================
 // HELPERS
 // =============================================================================
+
+/// Kill any process still listening on the given ports before we start our
+/// own engine. A run that was interrupted before its cleanup (Ctrl-C, kill)
+/// can leave the Python server holding port 12356; without this the new
+/// server fails to bind and the CLI silently talks to the stale one.
+Future<void> _freeStalePorts(List<int> ports) async {
+  for (final port in ports) {
+    try {
+      final result = await Process.run('lsof', ['-t', '-i:$port', '-sTCP:LISTEN']);
+      final pids = (result.stdout as String)
+          .split('\n')
+          .where((s) => s.trim().isNotEmpty);
+      for (final pid in pids) {
+        stderr.writeln('Freeing stale process $pid on port $port');
+        Process.killPid(int.parse(pid.trim()), ProcessSignal.sigterm);
+      }
+    } catch (_) {
+      // lsof absent or nothing listening — nothing to free.
+    }
+  }
+  await Future.delayed(const Duration(milliseconds: 500));
+}
 
 EmulationOrchestrator _createOrchestrator({String serverUrl = 'http://localhost:12356'}) {
   final lifecycleService = LifecycleService(serverUrl: serverUrl);

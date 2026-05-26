@@ -5,7 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:file_picker/file_picker.dart';
+import '../../core/file_selection.dart';
 import 'package:emulator_orchestrator/core/constants.dart';
 import '../../core/theme.dart';
 import '../../providers/app_providers.dart';
@@ -13,10 +13,6 @@ import '../screens/synthesize/synthesis_controller.dart';
 import 'package:emulator_orchestrator/data/models/call_graph.dart' as cg;
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
 import 'package:emulator_orchestrator/data/models/fidelity_result.dart';
-import 'package:emulator_orchestrator/data/models/trace_activity_event.dart';
-import 'package:emulator_orchestrator/data/services/lifecycle_service.dart';
-import 'package:emulator_orchestrator/orchestrator/events/orchestrator_events.dart';
-import 'package:emulator_orchestrator/orchestrator/events/synthesizer_events.dart';
 
 /// Main graph viewer widget that displays the call graph.
 /// 
@@ -2028,12 +2024,11 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
 
     String? savePath = emulator.emulatorPath;
     if (savePath == null) {
-      final result = await FilePicker.platform.saveFile(
-        dialogTitle: 'Save Emulator',
-        fileName: '${emulator.name}.emu',
-        allowedExtensions: ['emu'],
-        type: FileType.custom,
-      );
+      final result = await ref.read(fileSelectorProvider).saveFile(
+            dialogTitle: 'Save Emulator',
+            suggestedName: '${emulator.name}.emu',
+            extensions: ['emu'],
+          );
       if (result == null) return;
       savePath = result;
     }
@@ -2063,12 +2058,11 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
 
   /// Export a standalone Renode .resc script.
   Future<void> _exportResc(BuildContext context, WidgetRef ref, dynamic emulator) async {
-    final result = await FilePicker.platform.saveFile(
-      dialogTitle: 'Export Renode Script',
-      fileName: '${emulator.name}.resc',
-      allowedExtensions: ['resc'],
-      type: FileType.custom,
-    );
+    final result = await ref.read(fileSelectorProvider).saveFile(
+          dialogTitle: 'Export Renode Script',
+          suggestedName: '${emulator.name}.resc',
+          extensions: ['resc'],
+        );
     if (result == null) return;
 
     try {
@@ -2093,12 +2087,11 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
 
   /// Export a self-contained Vagrant bundle (.zip).
   Future<void> _exportVagrant(BuildContext context, WidgetRef ref, dynamic emulator) async {
-    final result = await FilePicker.platform.saveFile(
-      dialogTitle: 'Export Vagrant Bundle',
-      fileName: '${emulator.name}_vagrant.zip',
-      allowedExtensions: ['zip'],
-      type: FileType.custom,
-    );
+    final result = await ref.read(fileSelectorProvider).saveFile(
+          dialogTitle: 'Export Vagrant Bundle',
+          suggestedName: '${emulator.name}_vagrant.zip',
+          extensions: ['zip'],
+        );
     if (result == null) return;
 
     try {
@@ -2123,12 +2116,11 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
 
   /// Export the raw SynthesizerResult as JSON.
   Future<void> _exportResultJson(BuildContext context, SynthesizerResult result, FidelityResult? fidelity) async {
-    final savePath = await FilePicker.platform.saveFile(
-      dialogTitle: 'Export Synthesis Result',
-      fileName: 'synthesis_result.json',
-      allowedExtensions: ['json'],
-      type: FileType.custom,
-    );
+    final savePath = await ref.read(fileSelectorProvider).saveFile(
+          dialogTitle: 'Export Synthesis Result',
+          suggestedName: 'synthesis_result.json',
+          extensions: ['json'],
+        );
     if (savePath == null) return;
 
     try {

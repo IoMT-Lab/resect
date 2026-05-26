@@ -1,5 +1,5 @@
 import 'package:emulator_orchestrator/data/models/emulator.dart';
-import 'package:file_picker/file_picker.dart';
+import '../../../core/file_selection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -203,12 +203,11 @@ class _CardGrid extends ConsumerWidget {
   }
 
   Future<void> _exportEmulator(BuildContext context, WidgetRef ref) async {
-    final result = await FilePicker.platform.saveFile(
-      dialogTitle: 'Export Emulator Bundle',
-      fileName: '${emulator.name}.zip',
-      type: FileType.custom,
-      allowedExtensions: ['zip'],
-    );
+    final result = await ref.read(fileSelectorProvider).saveFile(
+          dialogTitle: 'Export Emulator Bundle',
+          suggestedName: '${emulator.name}.zip',
+          extensions: ['zip'],
+        );
     if (result == null) return;
     final zipPath = result.endsWith('.zip') ? result : '$result.zip';
 
@@ -228,12 +227,11 @@ class _CardGrid extends ConsumerWidget {
   }
 
   Future<void> _exportResc(BuildContext context, WidgetRef ref) async {
-    final result = await FilePicker.platform.saveFile(
-      dialogTitle: 'Export Renode Script',
-      fileName: '${emulator.name}.resc',
-      type: FileType.custom,
-      allowedExtensions: ['resc'],
-    );
+    final result = await ref.read(fileSelectorProvider).saveFile(
+          dialogTitle: 'Export Renode Script',
+          suggestedName: '${emulator.name}.resc',
+          extensions: ['resc'],
+        );
     if (result == null) return;
     final outputPath = result.endsWith('.resc') ? result : '$result.resc';
 
@@ -253,12 +251,11 @@ class _CardGrid extends ConsumerWidget {
   }
 
   Future<void> _exportVagrant(BuildContext context, WidgetRef ref) async {
-    final result = await FilePicker.platform.saveFile(
-      dialogTitle: 'Export Vagrant Bundle',
-      fileName: '${emulator.name}_vagrant.zip',
-      type: FileType.custom,
-      allowedExtensions: ['zip'],
-    );
+    final result = await ref.read(fileSelectorProvider).saveFile(
+          dialogTitle: 'Export Vagrant Bundle',
+          suggestedName: '${emulator.name}_vagrant.zip',
+          extensions: ['zip'],
+        );
     if (result == null) return;
     final zipPath = result.endsWith('.zip') ? result : '$result.zip';
 

@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../core/file_selection.dart';
 
 /// Dialog for creating a new emulator.
 ///
 /// Allows users to enter an emulator name and optionally select firmware files.
 /// Returns a map with emulator details if created, null if cancelled.
-class NewEmulatorDialog extends StatefulWidget {
+class NewEmulatorDialog extends ConsumerStatefulWidget {
   const NewEmulatorDialog({super.key});
 
   /// Show the dialog and return emulator details or null
@@ -17,10 +19,10 @@ class NewEmulatorDialog extends StatefulWidget {
   }
 
   @override
-  State<NewEmulatorDialog> createState() => _NewEmulatorDialogState();
+  ConsumerState<NewEmulatorDialog> createState() => _NewEmulatorDialogState();
 }
 
-class _NewEmulatorDialogState extends State<NewEmulatorDialog> {
+class _NewEmulatorDialogState extends ConsumerState<NewEmulatorDialog> {
   final _nameController = TextEditingController();
   String? _elfFilePath;
   String? _baseImagePath;
@@ -173,29 +175,21 @@ class _NewEmulatorDialogState extends State<NewEmulatorDialog> {
   }
 
   Future<void> _selectElfFile() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.any,
-      dialogTitle: 'Select Firmware ELF File',
-    );
-
-    if (result != null && result.files.single.path != null) {
-      setState(() {
-        _elfFilePath = result.files.single.path!;
-      });
+    final path = await ref.read(fileSelectorProvider).openFile(
+          dialogTitle: 'Select Firmware ELF File',
+        );
+    if (path != null) {
+      setState(() => _elfFilePath = path);
     }
   }
 
   Future<void> _selectBaseImage() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['repl'],
-      dialogTitle: 'Select Platform File',
-    );
-
-    if (result != null && result.files.single.path != null) {
-      setState(() {
-        _baseImagePath = result.files.single.path!;
-      });
+    final path = await ref.read(fileSelectorProvider).openFile(
+          dialogTitle: 'Select Platform File',
+          extensions: ['repl'],
+        );
+    if (path != null) {
+      setState(() => _baseImagePath = path);
     }
   }
 

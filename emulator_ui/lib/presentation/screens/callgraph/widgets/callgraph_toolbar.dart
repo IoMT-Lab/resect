@@ -1,4 +1,4 @@
-import 'package:file_picker/file_picker.dart';
+import '../../../../core/file_selection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -64,11 +64,10 @@ class CallGraphToolbar extends ConsumerWidget {
   }
 
   Future<void> _openElfFile(WidgetRef ref) async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.any,
-      dialogTitle: 'Open ELF for inspection',
-    );
-    if (result == null || result.files.single.path == null) return;
-    ref.read(selectedElfPathProvider.notifier).state = result.files.single.path;
+    final path = await ref.read(fileSelectorProvider).openFile(
+          dialogTitle: 'Open ELF for inspection',
+        );
+    if (path == null) return;
+    ref.read(selectedElfPathProvider.notifier).state = path;
   }
 }

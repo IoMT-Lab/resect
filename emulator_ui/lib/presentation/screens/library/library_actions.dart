@@ -1,7 +1,7 @@
 import 'package:emulator_orchestrator/core/app_paths.dart';
 import 'package:emulator_orchestrator/core/constants.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
-import 'package:file_picker/file_picker.dart';
+import '../../../core/file_selection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
@@ -59,7 +59,7 @@ Future<void> createNewEmulator(BuildContext context, WidgetRef ref) async {
   }
 }
 
-/// Open an existing `.emu` file. If [path] is null, shows a FilePicker.
+/// Open an existing `.emu` file. If [path] is null, shows a file dialog.
 /// Used by both the "Open Existing" button and Recent-list clicks.
 Future<void> openEmulator(
   BuildContext context,
@@ -71,14 +71,12 @@ Future<void> openEmulator(
   String? emulatorPath = path;
   if (emulatorPath == null) {
     if (!context.mounted) return;
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['emu', 'emproj'],
-      dialogTitle: 'Open Emulator',
-      initialDirectory: AppPaths.projectsDir,
-    );
-    if (result == null || result.files.single.path == null) return;
-    emulatorPath = result.files.single.path!;
+    emulatorPath = await ref.read(fileSelectorProvider).openFile(
+          dialogTitle: 'Open Emulator',
+          extensions: ['emu', 'emproj'],
+          initialDirectory: AppPaths.projectsDir,
+        );
+    if (emulatorPath == null) return;
   }
 
   final repository = ref.read(emulatorRepositoryProvider);
@@ -152,23 +150,22 @@ Future<bool> saveEmulator(BuildContext context, WidgetRef ref) async {
   }
 }
 
-/// Save the current emulator to a new path chosen via FilePicker.
+/// Save the current emulator to a new path chosen via a save dialog.
 Future<bool> saveEmulatorAs(BuildContext context, WidgetRef ref) async {
   final emulator = ref.read(currentEmulatorProvider);
   if (emulator == null) return false;
 
-  // Make sure the default save directory exists before the file picker
-  // opens — without this, FilePicker silently falls back to the user's
-  // home directory on first run.
+  // Make sure the default save directory exists before the save dialog
+  // opens — without this it can fall back to the user's home directory on
+  // first run.
   await AppPaths.ensureProjectsDir();
 
-  final result = await FilePicker.platform.saveFile(
-    dialogTitle: 'Save Emulator As',
-    fileName: '${emulator.name}${AppConstants.emulatorFileExtension}',
-    initialDirectory: AppPaths.projectsDir,
-    type: FileType.custom,
-    allowedExtensions: ['emu'],
-  );
+  final result = await ref.read(fileSelectorProvider).saveFile(
+        dialogTitle: 'Save Emulator As',
+        suggestedName: '${emulator.name}${AppConstants.emulatorFileExtension}',
+        initialDirectory: AppPaths.projectsDir,
+        extensions: ['emu'],
+      );
   if (result == null) return false;
 
   final savePath = result.endsWith(AppConstants.emulatorFileExtension)

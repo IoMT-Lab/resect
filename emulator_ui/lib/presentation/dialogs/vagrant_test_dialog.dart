@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:file_picker/file_picker.dart';
+import '../../core/file_selection.dart';
 import 'package:emulator_orchestrator/core/app_paths.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/orchestrator/vagrant_test_runner.dart';
@@ -190,16 +190,15 @@ class _VagrantTestDialogState extends ConsumerState<VagrantTestDialog> {
   }
 
   Future<void> _pickEmulator() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['emu'],
-      dialogTitle: 'Select Emulator Project',
-    );
-    if (result == null || result.files.single.path == null) return;
+    final path = await ref.read(fileSelectorProvider).openFile(
+          dialogTitle: 'Select Emulator Project',
+          extensions: ['emu'],
+        );
+    if (path == null) return;
 
     final repository = ref.read(emulatorRepositoryProvider);
     try {
-      final emulator = await repository.loadEmulator(result.files.single.path!);
+      final emulator = await repository.loadEmulator(path);
       setState(() => _pickedEmulator = emulator);
     } catch (e) {
       if (mounted) {

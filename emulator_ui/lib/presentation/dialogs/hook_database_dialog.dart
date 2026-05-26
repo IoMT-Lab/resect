@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:file_picker/file_picker.dart';
+import '../../core/file_selection.dart';
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
 
 import '../../providers/app_providers.dart';
@@ -149,13 +149,12 @@ class _HookDatabaseDialogState extends ConsumerState<HookDatabaseDialog> {
   }
 
   Future<void> _pickPyFile() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['py'],
-      dialogTitle: 'Select Hook File',
-    );
-    if (result == null || result.files.single.path == null) return;
-    setState(() => _pickedFilePath = result.files.single.path!);
+    final path = await ref.read(fileSelectorProvider).openFile(
+          dialogTitle: 'Select Hook File',
+          extensions: ['py'],
+        );
+    if (path == null) return;
+    setState(() => _pickedFilePath = path);
   }
 
   @override

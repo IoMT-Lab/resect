@@ -1,5 +1,5 @@
 import 'package:emulator_orchestrator/data/models/emulator.dart';
-import 'package:file_picker/file_picker.dart';
+import '../../../../core/file_selection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -153,13 +153,12 @@ class SynthesisConfigPanel extends ConsumerWidget {
   }
 
   Future<void> _pickMemoryMap(WidgetRef ref, Emulator emulator) async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['json'],
-      dialogTitle: 'Select Memory Map File',
-    );
-    if (result == null || result.files.single.path == null) return;
-    _updateConfig(ref, emulator, memoryMapPath: result.files.single.path!);
+    final path = await ref.read(fileSelectorProvider).openFile(
+          dialogTitle: 'Select Memory Map File',
+          extensions: ['json'],
+        );
+    if (path == null) return;
+    _updateConfig(ref, emulator, memoryMapPath: path);
   }
 
   /// Pass empty string to clear startFrom / memoryMapPath (copyWith treats
