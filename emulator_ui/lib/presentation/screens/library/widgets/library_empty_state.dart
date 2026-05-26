@@ -46,31 +46,34 @@ class LibraryEmptyState extends ConsumerWidget {
               ),
             ),
             const SizedBox(height: 32),
-            Row(
-              children: [
-                Expanded(
-                  child: _CtaCard(
-                    title: 'Create New Emulator',
-                    description:
-                        'Start a new project from a firmware ELF and a '
-                        'Renode platform description.',
-                    actionLabel: 'New',
-                    primary: true,
-                    onPressed: () => createNewEmulator(context, ref),
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: _CtaCard(
+                      title: 'Create New Emulator',
+                      description:
+                          'Start a new project from a firmware ELF and a '
+                          'Renode platform description.',
+                      actionLabel: 'New',
+                      primary: true,
+                      onPressed: () => createNewEmulator(context, ref),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: _CtaCard(
-                    title: 'Open Existing',
-                    description:
-                        'Resume a saved .emu project file from disk.',
-                    actionLabel: 'Open',
-                    primary: false,
-                    onPressed: () => openEmulator(context, ref),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _CtaCard(
+                      title: 'Open Existing',
+                      description:
+                          'Resume a saved .emu project file from disk.',
+                      actionLabel: 'Open',
+                      primary: false,
+                      onPressed: () => openEmulator(context, ref),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
             const SizedBox(height: 32),
             const RecentList(showHeader: true),
@@ -125,6 +128,7 @@ class _CtaCard extends StatelessWidget {
               height: 1.5,
             ),
           ),
+          const Spacer(),
           const SizedBox(height: 18),
           Align(
             alignment: Alignment.centerLeft,

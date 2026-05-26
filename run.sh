@@ -15,12 +15,25 @@ echo "=== Starting Resect ==="
 echo ""
 
 # ---------------------------------------------------------------------------
-# Drift code generation (produces .g.dart files if missing or stale)
+# Drift code generation (only when .g.dart files are missing; the schema
+# changes rarely so paying ~30s per launch is wasteful. Pass --regen to
+# force a rebuild after changing artifact_database.dart).
 # ---------------------------------------------------------------------------
-echo "Running Drift code generation..."
 cd "$SCRIPT_DIR/emulator_orchestrator"
-dart run build_runner build --delete-conflicting-outputs
-echo "✓ Code generation complete"
+NEED_CODEGEN=0
+if [ "$1" = "--regen" ]; then
+    NEED_CODEGEN=1
+elif [ ! -f lib/data/database/artifact_database.g.dart ]; then
+    NEED_CODEGEN=1
+fi
+
+if [ "$NEED_CODEGEN" -eq 1 ]; then
+    echo "Running Drift code generation..."
+    dart run build_runner build --delete-conflicting-outputs
+    echo "✓ Code generation complete"
+else
+    echo "✓ Drift codegen up to date (pass --regen to force rebuild)"
+fi
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -146,8 +159,20 @@ fi
 cd "$SCRIPT_DIR/emulator_ui"
 echo "Starting Flutter app..."
 
-# Use git Flutter instead of snap
-export PATH="$HOME/development/flutter/bin:$PATH"
+# Ensure Flutter is on PATH — use whatever's already there, otherwise try
+# the common install locations (capital and lowercase 'development').
+if ! command -v flutter >/dev/null 2>&1; then
+    if [ -x "$HOME/Development/flutter/bin/flutter" ]; then
+        export PATH="$HOME/Development/flutter/bin:$PATH"
+    elif [ -x "$HOME/development/flutter/bin/flutter" ]; then
+        export PATH="$HOME/development/flutter/bin:$PATH"
+    else
+        echo "✗ ERROR: flutter not found on PATH or in ~/Development/flutter."
+        echo "  Re-run ./install.sh to install it."
+        kill $SERVER_PID 2>/dev/null
+        exit 1
+    fi
+fi
 
 flutter run -d linux
 

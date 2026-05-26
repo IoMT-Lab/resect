@@ -114,83 +114,89 @@ class _CardGrid extends ConsumerWidget {
 
     return Column(
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: PublishCard(
-                title: 'Emulator Bundle',
-                description:
-                    'Zip the .emu file along with the firmware ELF, platform '
-                    'description, and any attached documents.',
-                actionLabel: 'Export .zip',
-                icon: Icons.archive_outlined,
-                onPressed: isSaved
-                    ? () => _exportEmulator(context, ref)
-                    : null,
-                disabledHint:
-                    isSaved ? null : 'Save the emulator first.',
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: PublishCard(
+                  title: 'Emulator Bundle',
+                  description:
+                      'Zip the .emu file along with the firmware ELF, platform '
+                      'description, and any attached documents.',
+                  actionLabel: 'Export .zip',
+                  icon: Icons.archive_outlined,
+                  onPressed: isSaved
+                      ? () => _exportEmulator(context, ref)
+                      : null,
+                  disabledHint:
+                      isSaved ? null : 'Save the emulator first.',
+                ),
               ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: PublishCard(
-                title: 'Renode Script',
-                description:
-                    'Generate a standalone .resc script that re-creates this '
-                    'emulator inside Renode with all resolved hooks applied.',
-                actionLabel: 'Export .resc',
-                icon: Icons.terminal,
-                onPressed: (hasElf && hasRepl && hasHooks)
-                    ? () => _exportResc(context, ref)
-                    : null,
-                disabledHint: !hasHooks
-                    ? 'Run the synthesizer to resolve hooks first.'
-                    : (!hasElf || !hasRepl)
-                        ? 'Set the firmware (.elf) and platform (.repl) first.'
-                        : null,
+              const SizedBox(width: 16),
+              Expanded(
+                child: PublishCard(
+                  title: 'Renode Script',
+                  description:
+                      'Generate a standalone .resc script that re-creates this '
+                      'emulator inside Renode with all resolved hooks applied.',
+                  actionLabel: 'Export .resc',
+                  icon: Icons.terminal,
+                  onPressed: (hasElf && hasRepl && hasHooks)
+                      ? () => _exportResc(context, ref)
+                      : null,
+                  disabledHint: !hasHooks
+                      ? 'Run the synthesizer to resolve hooks first.'
+                      : (!hasElf || !hasRepl)
+                          ? 'Set the firmware (.elf) and platform (.repl) first.'
+                          : null,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
         const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: PublishCard(
-                title: 'Vagrant Bundle',
-                description:
-                    'Zip a Vagrantfile + provisioning script + .resc so the '
-                    'emulator can be reproduced inside a VM.',
-                actionLabel: 'Export .zip',
-                icon: Icons.computer_outlined,
-                onPressed: (hasElf && hasRepl && hasHooks)
-                    ? () => _exportVagrant(context, ref)
-                    : null,
-                disabledHint: !hasHooks
-                    ? 'Run the synthesizer to resolve hooks first.'
-                    : (!hasElf || !hasRepl)
-                        ? 'Set the firmware (.elf) and platform (.repl) first.'
-                        : null,
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: PublishCard(
+                  title: 'Vagrant Bundle',
+                  description:
+                      'Zip a Vagrantfile + provisioning script + .resc so the '
+                      'emulator can be reproduced inside a VM.',
+                  actionLabel: 'Export .zip',
+                  icon: Icons.computer_outlined,
+                  onPressed: (hasElf && hasRepl && hasHooks)
+                      ? () => _exportVagrant(context, ref)
+                      : null,
+                  disabledHint: !hasHooks
+                      ? 'Run the synthesizer to resolve hooks first.'
+                      : (!hasElf || !hasRepl)
+                          ? 'Set the firmware (.elf) and platform (.repl) first.'
+                          : null,
+                ),
               ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: PublishCard(
-                title: 'Vagrant CI Test',
-                description:
-                    'Spin up a fresh Ubuntu VM and run the CLI synthesizer '
-                    'end-to-end as a CI/CD validation check.',
-                actionLabel: 'Run Test...',
-                icon: Icons.fact_check_outlined,
-                onPressed: (hasElf && hasRepl)
-                    ? () => _runVagrantTest(context)
-                    : null,
-                disabledHint: (hasElf && hasRepl)
-                    ? null
-                    : 'Set the firmware (.elf) and platform (.repl) first.',
+              const SizedBox(width: 16),
+              Expanded(
+                child: PublishCard(
+                  title: 'Vagrant CI Test',
+                  description:
+                      'Spin up a fresh Ubuntu VM and run the CLI synthesizer '
+                      'end-to-end as a CI/CD validation check.',
+                  actionLabel: 'Run Test...',
+                  icon: Icons.fact_check_outlined,
+                  onPressed: (hasElf && hasRepl)
+                      ? () => _runVagrantTest(context)
+                      : null,
+                  disabledHint: (hasElf && hasRepl)
+                      ? null
+                      : 'Set the firmware (.elf) and platform (.repl) first.',
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ],
     );

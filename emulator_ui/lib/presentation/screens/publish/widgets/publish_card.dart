@@ -43,7 +43,6 @@ class PublishCard extends StatelessWidget {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
         children: [
           Row(
             children: [
@@ -77,6 +76,7 @@ class PublishCard extends StatelessWidget {
               height: 1.5,
             ),
           ),
+          const Spacer(),
           const SizedBox(height: 18),
           Align(
             alignment: Alignment.centerLeft,

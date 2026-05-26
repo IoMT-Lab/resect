@@ -1,7 +1,31 @@
 #!/bin/bash
 set -e
 
+# Opt-in flags
+WITH_VAGRANT_TEST=0
+for arg in "$@"; do
+    case "$arg" in
+        --with-vagrant-test) WITH_VAGRANT_TEST=1 ;;
+        -h|--help)
+            cat <<EOF
+Usage: ./install.sh [--with-vagrant-test]
+
+Options:
+  --with-vagrant-test  Also install VirtualBox + Vagrant for the CI/CD
+                       test harness. Adds ~250 MB plus DKMS kernel modules.
+                       Skip this unless you specifically need the
+                       "Run Vagrant Test" feature.
+  -h, --help           Show this help.
+EOF
+            exit 0
+            ;;
+    esac
+done
+
 echo "=== Resect — Installation ==="
+if [ "$WITH_VAGRANT_TEST" -eq 1 ]; then
+    echo "  (including VirtualBox + Vagrant for CI test harness)"
+fi
 echo ""
 
 INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -13,11 +37,24 @@ echo "Installing system dependencies..."
 sudo apt-get update
 sudo apt-get install -y \
   clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
-  gcc-arm-none-eabi \
+  binutils-arm-none-eabi \
   git git-lfs \
   curl unzip wget lsb-release \
-  software-properties-common \
-  libsqlite3-dev
+  software-properties-common
+
+# Flutter's Linux build uses clang++, which links against libstdc++. Install
+# the libstdc++-N-dev package matching the GCC install clang has selected
+# (clang's default GCC pick can be newer than what `g++` would pull in, so
+# relying on `apt install g++` is unreliable on rolling distros).
+GCC_VERSION=$(clang++ -v -E - </dev/null 2>&1 \
+  | grep -oP 'Selected GCC installation:.*/\K[0-9]+' | head -1)
+if [ -n "$GCC_VERSION" ]; then
+    echo "clang selects GCC $GCC_VERSION; installing libstdc++-${GCC_VERSION}-dev"
+    sudo apt-get install -y "libstdc++-${GCC_VERSION}-dev"
+else
+    echo "⚠ Could not detect clang's GCC version; falling back to g++ default"
+    sudo apt-get install -y g++
+fi
 
 # Python — read required version from Pipfile; Ubuntu 22.04 ships 3.10 so
 # install the exact version via the deadsnakes PPA if needed.
@@ -32,31 +69,48 @@ echo "✓ System packages installed"
 # ---------------------------------------------------------------------------
 # 2. Flutter SDK (git install — snap has issues with Linux desktop builds)
 # ---------------------------------------------------------------------------
-FLUTTER_DIR="$HOME/development/flutter"
+# Locate an existing Flutter install before cloning. Order:
+#   1. `flutter` on the user's PATH (any shell-managed install)
+#   2. ~/Development/flutter (capital D — matches this repo's convention)
+#   3. ~/development/flutter (lowercase — older convention)
+# Only clone a fresh copy when none of those exist.
+FLUTTER_DIR=""
 
-if [ -x "$FLUTTER_DIR/bin/flutter" ]; then
+if command -v flutter >/dev/null 2>&1; then
+    FLUTTER_DIR="$(dirname "$(dirname "$(command -v flutter)")")"
+    echo "✓ Flutter already on PATH at $FLUTTER_DIR"
+elif [ -x "$HOME/Development/flutter/bin/flutter" ]; then
+    FLUTTER_DIR="$HOME/Development/flutter"
+    echo "✓ Flutter already installed at $FLUTTER_DIR"
+elif [ -x "$HOME/development/flutter/bin/flutter" ]; then
+    FLUTTER_DIR="$HOME/development/flutter"
     echo "✓ Flutter already installed at $FLUTTER_DIR"
 else
-    echo "Installing Flutter SDK..."
+    FLUTTER_DIR="$HOME/Development/flutter"
+    echo "Installing Flutter SDK to $FLUTTER_DIR..."
     git clone https://github.com/flutter/flutter.git -b stable "$FLUTTER_DIR"
 fi
 
-# Ensure Flutter is on PATH for this script
+# Ensure Flutter is on PATH for the rest of this script
 export PATH="$FLUTTER_DIR/bin:$PATH"
 
-# Add to shell profile if not already there
-if ! grep -q 'development/flutter/bin' "$HOME/.bashrc" 2>/dev/null; then
+# Add to shell profile only if `flutter` isn't already found by new shells.
+# Test in a clean subshell so the export above doesn't mask it.
+if ! env -i HOME="$HOME" bash -lc 'command -v flutter' >/dev/null 2>&1; then
     echo '' >> "$HOME/.bashrc"
     echo '# Flutter SDK' >> "$HOME/.bashrc"
-    echo 'export PATH="$HOME/development/flutter/bin:$PATH"' >> "$HOME/.bashrc"
-    echo "Added Flutter to ~/.bashrc PATH"
+    echo "export PATH=\"$FLUTTER_DIR/bin:\$PATH\"" >> "$HOME/.bashrc"
+    echo "Added $FLUTTER_DIR/bin to ~/.bashrc PATH"
 fi
 
 echo "Flutter version: $(flutter --version --machine 2>/dev/null | head -1 || flutter --version | head -1)"
 
-# Pre-cache artifacts and enable Linux desktop
-flutter precache
-flutter config --enable-linux-desktop
+# Pre-cache only Linux desktop artifacts — `flutter precache` with no args
+# also downloads Android, iOS, web, Windows, and macOS bits we never use.
+flutter precache --linux
+flutter config --enable-linux-desktop \
+  --no-enable-android --no-enable-ios --no-enable-web \
+  --no-enable-windows-desktop --no-enable-macos-desktop
 
 echo "✓ Flutter SDK ready"
 
@@ -121,53 +175,52 @@ dart pub get
 echo "✓ Dart workspace ready"
 
 # ---------------------------------------------------------------------------
-# 5. VirtualBox (from Oracle's repository — Ubuntu's package lags behind
-#    new kernels and the DKMS module often fails to build)
+# 5 & 6. VirtualBox + Vagrant (opt-in — only needed for the CI test harness)
 # ---------------------------------------------------------------------------
-echo "Installing VirtualBox from Oracle repository..."
-sudo apt-get install -y linux-headers-$(uname -r)
+if [ "$WITH_VAGRANT_TEST" -eq 1 ]; then
+    echo "Installing VirtualBox from Oracle repository..."
+    sudo apt-get install -y linux-headers-$(uname -r)
 
-wget -qO- https://www.virtualbox.org/download/oracle_vbox_2016.asc \
-  | sudo gpg --dearmor --yes -o /usr/share/keyrings/oracle-virtualbox-2016.gpg
-echo "deb [arch=amd64 signed-by=/usr/share/keyrings/oracle-virtualbox-2016.gpg] \
-  https://download.virtualbox.org/virtualbox/debian $(lsb_release -cs) contrib" \
-  | sudo tee /etc/apt/sources.list.d/virtualbox.list
-sudo apt-get update -q && sudo apt-get install -y virtualbox-7.2
+    wget -qO- https://www.virtualbox.org/download/oracle_vbox_2016.asc \
+      | sudo gpg --dearmor --yes -o /usr/share/keyrings/oracle-virtualbox-2016.gpg
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/oracle-virtualbox-2016.gpg] \
+      https://download.virtualbox.org/virtualbox/debian $(lsb_release -cs) contrib" \
+      | sudo tee /etc/apt/sources.list.d/virtualbox.list
+    sudo apt-get update -q && sudo apt-get install -y virtualbox-7.2
 
-if ! command -v vboxmanage &>/dev/null; then
-    echo "✗ ERROR: VirtualBox failed to install (vboxmanage not found)"
-    exit 1
+    if ! command -v vboxmanage &>/dev/null; then
+        echo "✗ ERROR: VirtualBox failed to install (vboxmanage not found)"
+        exit 1
+    fi
+
+    # Build kernel modules (Oracle's package doesn't always auto-build them)
+    sudo /sbin/vboxconfig
+
+    if ! lsmod | grep -q vboxdrv; then
+        echo "✗ ERROR: VirtualBox kernel module (vboxdrv) failed to load."
+        echo "  Try: sudo /sbin/vboxconfig"
+        exit 1
+    fi
+
+    echo "✓ VirtualBox $(vboxmanage --version) installed"
+
+    echo "Installing Vagrant..."
+    wget -qO- https://apt.releases.hashicorp.com/gpg \
+      | sudo gpg --dearmor --yes -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
+      https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+      | sudo tee /etc/apt/sources.list.d/hashicorp.list
+    sudo apt-get update -q && sudo apt-get install -y vagrant
+
+    if ! command -v vagrant &>/dev/null; then
+        echo "✗ ERROR: Vagrant failed to install"
+        exit 1
+    fi
+
+    echo "✓ Vagrant $(vagrant --version) installed"
+else
+    echo "Skipping VirtualBox + Vagrant (re-run with --with-vagrant-test to install)."
 fi
-
-# Build kernel modules (Oracle's package doesn't always auto-build them)
-sudo /sbin/vboxconfig
-
-# Verify the kernel module is loaded
-if ! lsmod | grep -q vboxdrv; then
-    echo "✗ ERROR: VirtualBox kernel module (vboxdrv) failed to load."
-    echo "  Try: sudo /sbin/vboxconfig"
-    exit 1
-fi
-
-echo "✓ VirtualBox $(vboxmanage --version) installed"
-
-# ---------------------------------------------------------------------------
-# 6. Vagrant
-# ---------------------------------------------------------------------------
-echo "Installing Vagrant..."
-wget -qO- https://apt.releases.hashicorp.com/gpg \
-  | sudo gpg --dearmor --yes -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
-  https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
-  | sudo tee /etc/apt/sources.list.d/hashicorp.list
-sudo apt-get update -q && sudo apt-get install -y vagrant
-
-if ! command -v vagrant &>/dev/null; then
-    echo "✗ ERROR: Vagrant failed to install"
-    exit 1
-fi
-
-echo "✓ Vagrant $(vagrant --version) installed"
 
 # ---------------------------------------------------------------------------
 # 7. Verify
@@ -180,8 +233,10 @@ echo -n "Dart:          "; dart --version 2>&1
 echo -n "pipenv:        "; pipenv --version 2>/dev/null || echo "not found"
 echo -n "arm-objdump:   "; which arm-none-eabi-objdump 2>/dev/null || echo "not found"
 echo -n "Renode:        "; [ -x "$RENODE_BIN" ] && echo "$RENODE_BIN" || echo "not found"
-echo -n "VirtualBox:    "; vboxmanage --version 2>/dev/null || echo "not found"
-echo -n "Vagrant:       "; vagrant --version 2>/dev/null || echo "not found"
+if [ "$WITH_VAGRANT_TEST" -eq 1 ]; then
+    echo -n "VirtualBox:    "; vboxmanage --version 2>/dev/null || echo "not found"
+    echo -n "Vagrant:       "; vagrant --version 2>/dev/null || echo "not found"
+fi
 
 echo ""
 echo "=== Installation Complete ==="
