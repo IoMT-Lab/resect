@@ -4,7 +4,7 @@ import 'package:window_manager/window_manager.dart';
 import 'package:emulator_orchestrator/core/app_paths.dart';
 import 'core/theme.dart';
 import 'package:emulator_orchestrator/core/constants.dart';
-import 'presentation/screens/home/home_screen.dart';
+import 'presentation/shell/resect_shell.dart';
 import 'providers/app_providers.dart';
 
 /// Main entry point for the application.
@@ -71,7 +71,7 @@ class _CallGraphViewerAppState extends ConsumerState<CallGraphViewerApp> {
     return MaterialApp(
       title: AppConstants.appName,
       theme: AppTheme.darkTheme,
-      home: const HomeScreen(),
+      home: const ResectShell(),
       debugShowCheckedModeBanner: false,
     );
   }

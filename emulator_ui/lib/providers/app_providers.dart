@@ -142,6 +142,73 @@ final traceActivityEventsProvider = StateProvider<List<TraceActivityEvent>>((ref
 final latestPauseEventProvider = StateProvider<PausedEvent?>((ref) => null);
 
 // ============================================================================
+// TABBED SHELL NAVIGATION
+// ============================================================================
+
+/// The five top-level tabs in the Resect shell, in display order.
+enum ResectTab {
+  library,
+  callGraph,
+  comms,
+  synthesize,
+  publish,
+}
+
+extension ResectTabLabel on ResectTab {
+  /// Display label shown in the top tab strip (rendered uppercase).
+  String get label {
+    switch (this) {
+      case ResectTab.library: return 'Library';
+      case ResectTab.callGraph: return 'Call Graph';
+      case ResectTab.comms: return 'Comms';
+      case ResectTab.synthesize: return 'Synthesize';
+      case ResectTab.publish: return 'Publish';
+    }
+  }
+}
+
+/// The currently selected tab. Defaults to Library on app start.
+final activeTabProvider = StateProvider<ResectTab>((ref) => ResectTab.library);
+
+/// How a tab should render in the tab strip.
+///
+/// - [active]: the user is on this tab.
+/// - [ready]: not active, but its prerequisites are met — fully clickable.
+/// - [notReady]: not active and prerequisites aren't met — clickable but
+///   rendered dimmed to hint that the user should set things up first.
+enum TabReadiness { active, ready, notReady }
+
+/// Compute the readiness state of a given tab based on app state.
+///
+/// Tabs are never navigationally gated — the user can always switch — but
+/// the strip dims labels whose prerequisites aren't met.
+final tabReadinessProvider = Provider.family<TabReadiness, ResectTab>((ref, tab) {
+  final active = ref.watch(activeTabProvider);
+  if (active == tab) return TabReadiness.active;
+
+  final hasEmulator = ref.watch(currentEmulatorProvider) != null;
+  final hasCallGraph = ref.watch(callgraphProvider).maybeWhen(
+        data: (cg) => cg != null,
+        orElse: () => false,
+      );
+  final hasResolvedWork = ref.watch(hookedSymbolsProvider).isNotEmpty ||
+      ref.watch(currentEmulatorProvider)?.hooks.isNotEmpty == true;
+
+  switch (tab) {
+    case ResectTab.library:
+      return TabReadiness.ready;
+    case ResectTab.callGraph:
+      return hasEmulator ? TabReadiness.ready : TabReadiness.notReady;
+    case ResectTab.comms:
+      return hasCallGraph ? TabReadiness.ready : TabReadiness.notReady;
+    case ResectTab.synthesize:
+      return hasCallGraph ? TabReadiness.ready : TabReadiness.notReady;
+    case ResectTab.publish:
+      return hasResolvedWork ? TabReadiness.ready : TabReadiness.notReady;
+  }
+});
+
+// ============================================================================
 // EMULATION STATE PROVIDERS
 // ============================================================================
 
