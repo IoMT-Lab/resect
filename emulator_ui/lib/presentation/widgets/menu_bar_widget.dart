@@ -5,6 +5,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../core/theme.dart';
 import '../../providers/app_providers.dart';
+import '../dialogs/system_config_dialog.dart';
 import '../dialogs/unsaved_changes_dialog.dart';
 import '../screens/library/library_actions.dart';
 
@@ -70,6 +71,15 @@ class MenuBarWidget extends ConsumerWidget {
             ],
           ),
           _MenuBarItem(
+            title: 'Tools',
+            items: [
+              _MenuItem(
+                title: 'System Configuration...',
+                onTap: () => SystemConfigDialog.show(context),
+              ),
+            ],
+          ),
+          _MenuBarItem(
             title: 'Help',
             items: [
               _MenuItem(
@@ -108,10 +118,10 @@ class MenuBarWidget extends ConsumerWidget {
       builder: (context) => AlertDialog(
         backgroundColor: AppTheme.bgPanel,
         title: const Text(AppConstants.appName),
-        content: Column(
+        content: const Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
+          children: [
             Text('Version: ${AppConstants.appVersion}'),
             SizedBox(height: 8),
             Text(AppConstants.appDescription),
@@ -146,24 +156,19 @@ class _MenuBarItem extends StatelessWidget {
   const _MenuBarItem({required this.title, required this.items});
 
   @override
-  Widget build(BuildContext context) {
-    return PopupMenuButton<int>(
+  Widget build(BuildContext context) => PopupMenuButton<int>(
       tooltip: title,
       offset: const Offset(0, 32),
       color: AppTheme.bgPanel,
-      itemBuilder: (context) {
-        return [
+      itemBuilder: (context) => [
           for (int i = 0; i < items.length; i++)
             PopupMenuItem<int>(
               value: i,
               padding: EdgeInsets.zero,
-              enabled: items[i] is _MenuItem
-                  ? (items[i] as _MenuItem).enabled
-                  : false,
+              enabled: items[i] is _MenuItem && (items[i] as _MenuItem).enabled,
               child: items[i],
             ),
-        ];
-      },
+        ],
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         child: Text(
@@ -172,7 +177,6 @@ class _MenuBarItem extends StatelessWidget {
         ),
       ),
     );
-  }
 }
 
 class _MenuItem extends StatelessWidget {
@@ -224,7 +228,5 @@ class _MenuDivider extends StatelessWidget {
   const _MenuDivider();
 
   @override
-  Widget build(BuildContext context) {
-    return const Divider(height: 1, color: AppTheme.border);
-  }
+  Widget build(BuildContext context) => const Divider(height: 1, color: AppTheme.border);
 }

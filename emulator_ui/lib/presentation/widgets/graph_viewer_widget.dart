@@ -2,17 +2,19 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+
+import 'package:emulator_orchestrator/core/constants.dart';
+import 'package:emulator_orchestrator/data/models/call_graph.dart' as cg;
+import 'package:emulator_orchestrator/data/models/fidelity_result.dart';
+import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../core/file_selection.dart';
-import 'package:emulator_orchestrator/core/constants.dart';
 import '../../core/theme.dart';
 import '../../providers/app_providers.dart';
 import '../screens/synthesize/synthesis_controller.dart';
-import 'package:emulator_orchestrator/data/models/call_graph.dart' as cg;
-import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
-import 'package:emulator_orchestrator/data/models/fidelity_result.dart';
 
 /// Main graph viewer widget that displays the call graph.
 /// 
@@ -53,7 +55,7 @@ class _NodeRipple {
   }) : createdAt = DateTime.now();
 
   /// Ripple duration in milliseconds.
-  static const int durationMs = 1800;
+  static const durationMs = 1800;
 
   /// Progress from 0.0 (just created) to 1.0 (fully expanded).
   double get progress {
@@ -72,10 +74,10 @@ class GraphViewerWidget extends ConsumerStatefulWidget {
 }
 
 class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with TickerProviderStateMixin {
-  final TransformationController _transformationController = TransformationController();
-  final FocusNode _focusNode = FocusNode();
+  final _transformationController = TransformationController();
+  final _focusNode = FocusNode();
   Map<String, Offset> _nodePositions = {};
-  Map<String, Offset> _nodeVelocities = {};
+  final Map<String, Offset> _nodeVelocities = {};
   List<_Edge> _edges = [];
   cg.CallGraph? _cachedCallGraph;
   String? _draggedNode;
@@ -83,20 +85,20 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
   late AnimationController _animationController;
   GraphLayout _currentLayout = GraphLayout.executionOrder;
   NodeStyle _currentNodeStyle = NodeStyle.circle;
-  Map<String, Size> _nodeSizeCache = {};
-  bool _animationEnabled = false;
-  bool _scaleByDegree = true;
+  final Map<String, Size> _nodeSizeCache = {};
+  var _animationEnabled = false;
+  var _scaleByDegree = true;
   Map<String, int> _nodeDegrees = {};
   Size? _lastViewportSize;
-  List<_NodeRipple> _activeRipples = [];
+  final List<_NodeRipple> _activeRipples = [];
   Timer? _rippleTimer;
-  final ValueNotifier<int> _rippleNotifier = ValueNotifier<int>(0);
+  final _rippleNotifier = ValueNotifier<int>(0);
   Set<String> _prevExecutedSymbols = {};
   Set<String> _prevHookedSymbols = {};
   late AnimationController _viewAnimController;
   Matrix4? _viewAnimStart;
   Matrix4? _viewAnimEnd;
-  bool _focusOnSelect = true;
+  var _focusOnSelect = true;
 
   @override
   void initState() {
@@ -194,12 +196,12 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     }
 
     // Attraction for connected nodes
-    for (var entry in _cachedCallGraph!.symbols.entries) {
+    for (final entry in _cachedCallGraph!.symbols.entries) {
       final from = entry.key;
       if (from == _draggedNode) continue;
       if (!_nodePositions.containsKey(from)) continue;
 
-      for (var to in entry.value.calledSymbols.keys) {
+      for (final to in entry.value.calledSymbols.keys) {
         if (!_nodePositions.containsKey(to) || to == _draggedNode) continue;
 
         final pos1 = _nodePositions[from]!;
@@ -218,8 +220,8 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     }
 
     // Apply forces with damping
-    bool anyMovement = false;
-    for (var node in nodes) {
+    var anyMovement = false;
+    for (final node in nodes) {
       if (node == _draggedNode) continue;
       
       final force = forces[node] ?? Offset.zero;
@@ -258,28 +260,22 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     switch (_currentLayout) {
       case GraphLayout.forceDirected:
         positions.addAll(_applyForceDirectedLayout(callGraph, nodes));
-        break;
       case GraphLayout.hierarchical:
         positions.addAll(_applyHierarchicalLayout(callGraph, nodes));
-        break;
       case GraphLayout.sugiyama:
         positions.addAll(_applySugiyamaLayout(callGraph, nodes));
-        break;
       case GraphLayout.circular:
         positions.addAll(_applyCircularLayout(callGraph, nodes));
-        break;
       case GraphLayout.grid:
         positions.addAll(_applyGridLayout(nodes));
-        break;
       case GraphLayout.executionOrder:
         positions.addAll(_applyExecutionOrderLayout(callGraph, nodes));
-        break;
     }
     
     // Build edge list
     final edges = <_Edge>[];
-    for (var entry in callGraph.symbols.entries) {
-      for (var to in entry.value.calledSymbols.keys) {
+    for (final entry in callGraph.symbols.entries) {
+      for (final to in entry.value.calledSymbols.keys) {
         if (positions.containsKey(to)) {
           edges.add(_Edge(entry.key, to));
         }
@@ -292,10 +288,10 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
 
     // Compute node degrees (in + out edges)
     final degrees = <String, int>{};
-    for (var node in nodes) {
+    for (final node in nodes) {
       degrees[node] = 0;
     }
-    for (var edge in edges) {
+    for (final edge in edges) {
       degrees[edge.from] = (degrees[edge.from] ?? 0) + 1;
       degrees[edge.to] = (degrees[edge.to] ?? 0) + 1;
     }
@@ -304,13 +300,13 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     // Precompute box sizes for labeled box style to populate cache
     if (_currentNodeStyle == NodeStyle.labeledBox) {
       _nodeSizeCache.clear();
-      for (var node in nodes) {
+      for (final node in nodes) {
         _getLabeledBoxSize(node);
       }
     }
 
     // Initialize velocities
-    for (var node in nodes) {
+    for (final node in nodes) {
       _nodeVelocities[node] = Offset.zero;
     }
     
@@ -356,11 +352,11 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
       }
       
       // Attraction for connected nodes
-      for (var entry in callGraph.symbols.entries) {
+      for (final entry in callGraph.symbols.entries) {
         final from = entry.key;
         if (!positions.containsKey(from)) continue;
 
-        for (var to in entry.value.calledSymbols.keys) {
+        for (final to in entry.value.calledSymbols.keys) {
           if (!positions.containsKey(to)) continue;
 
           final pos1 = positions[from]!;
@@ -379,7 +375,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
       }
       
       // Apply forces
-      for (var node in nodes) {
+      for (final node in nodes) {
         final force = forces[node] ?? Offset.zero;
         positions[node] = positions[node]! + force * 0.1;
       }
@@ -397,11 +393,11 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     final callers = <String, Set<String>>{};
     final hasConnections = <String>{};
     
-    for (var entry in callGraph.symbols.entries) {
+    for (final entry in callGraph.symbols.entries) {
       if (entry.value.calledSymbols.isNotEmpty) {
         hasConnections.add(entry.key);
       }
-      for (var called in entry.value.calledSymbols.keys) {
+      for (final called in entry.value.calledSymbols.keys) {
         callers.putIfAbsent(called, () => {}).add(entry.key);
         hasConnections.add(called);
       }
@@ -419,7 +415,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
         
         final symbol = callGraph.symbols[current];
         if (symbol != null) {
-          for (var called in symbol.calledSymbols.keys) {
+          for (final called in symbol.calledSymbols.keys) {
             if (!visited.contains(called) && callGraph.symbols.containsKey(called)) {
               visited.add(called);
               depths[called] = currentDepth + 1;
@@ -440,7 +436,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     ).toList();
     
     // Run BFS from entry points
-    for (var entry in entryPoints) {
+    for (final entry in entryPoints) {
       if (!visited.contains(entry)) {
         bfs(entry);
       }
@@ -451,7 +447,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     
     // Group nodes by depth
     final nodesByDepth = <int, List<String>>{};
-    for (var entry in depths.entries) {
+    for (final entry in depths.entries) {
       nodesByDepth.putIfAbsent(entry.value, () => []).add(entry.key);
     }
     
@@ -459,7 +455,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     const levelSeparation = 150.0;
     const nodeSeparation = 100.0;
     
-    for (var entry in nodesByDepth.entries) {
+    for (final entry in nodesByDepth.entries) {
       final depth = entry.key;
       final nodesAtDepth = entry.value;
       final y = depth * levelSeparation;
@@ -478,7 +474,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
       double minY = double.infinity;
       double minX = double.infinity;
       double maxX = double.negativeInfinity;
-      for (var pos in positions.values) {
+      for (final pos in positions.values) {
         if (pos.dy < minY) minY = pos.dy;
         if (pos.dx < minX) minX = pos.dx;
         if (pos.dx > maxX) maxX = pos.dx;
@@ -519,12 +515,12 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     final callers = <String, Set<String>>{};
     final hasConnections = <String>{};
     
-    for (var entry in callGraph.symbols.entries) {
+    for (final entry in callGraph.symbols.entries) {
       outDegree[entry.key] = entry.value.calledSymbols.length;
       if (entry.value.calledSymbols.isNotEmpty) {
         hasConnections.add(entry.key);
       }
-      for (var called in entry.value.calledSymbols.keys) {
+      for (final called in entry.value.calledSymbols.keys) {
         callers.putIfAbsent(called, () => {}).add(entry.key);
         inDegree[called] = (inDegree[called] ?? 0) + 1;
         hasConnections.add(called);
@@ -532,7 +528,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     }
     
     // Initialize in-degree for all nodes
-    for (var node in nodes) {
+    for (final node in nodes) {
       inDegree.putIfAbsent(node, () => 0);
     }
     
@@ -540,7 +536,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     final queue = <String>[];
     
     // Start with nodes that have no incoming edges
-    for (var node in nodes) {
+    for (final node in nodes) {
       if (hasConnections.contains(node) && inDegree[node] == 0) {
         queue.add(node);
         nodeLayer[node] = 0;
@@ -554,7 +550,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
       
       final symbol = callGraph.symbols[current];
       if (symbol != null) {
-        for (var called in symbol.calledSymbols.keys) {
+        for (final called in symbol.calledSymbols.keys) {
           if (!callGraph.symbols.containsKey(called)) continue;
           
           inDegree[called] = inDegree[called]! - 1;
@@ -581,17 +577,17 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     }
     
     // Phase 2: Minimize edge crossings (simplified - use barycenter heuristic)
-    for (var layerNum in layers.keys.toList()..sort()) {
+    for (final layerNum in layers.keys.toList()..sort()) {
       if (layerNum == 0) continue;
       
       final currentLayer = layers[layerNum]!;
       final positions = <String, double>{};
       
-      for (var node in currentLayer) {
+      for (final node in currentLayer) {
         // Calculate barycenter position based on connected nodes in previous layer
         final connectedInPrevLayer = <String>[];
         if (callers.containsKey(node)) {
-          for (var caller in callers[node]!) {
+          for (final caller in callers[node]!) {
             if (nodeLayer[caller] == layerNum - 1) {
               connectedInPrevLayer.add(caller);
             }
@@ -602,7 +598,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
           double sum = 0;
           final prevLayer = layers[layerNum - 1];
           if (prevLayer != null) {
-            for (var caller in connectedInPrevLayer) {
+            for (final caller in connectedInPrevLayer) {
               sum += prevLayer.indexOf(caller);
             }
             positions[node] = sum / connectedInPrevLayer.length;
@@ -622,7 +618,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     const layerSeparation = 180.0;
     const nodeSeparation = 120.0;
     
-    for (var entry in layers.entries) {
+    for (final entry in layers.entries) {
       final layerNum = entry.key;
       final layerNodes = entry.value;
       final y = layerNum * layerSeparation;
@@ -643,7 +639,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
       double minY = double.infinity;
       double minX = double.infinity;
       double maxX = double.negativeInfinity;
-      for (var pos in positions.values) {
+      for (final pos in positions.values) {
         if (pos.dy < minY) minY = pos.dy;
         if (pos.dx < minX) minX = pos.dx;
         if (pos.dx > maxX) maxX = pos.dx;
@@ -680,11 +676,11 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     final callers = <String, Set<String>>{};
     final hasConnections = <String>{};
     
-    for (var entry in callGraph.symbols.entries) {
+    for (final entry in callGraph.symbols.entries) {
       if (entry.value.calledSymbols.isNotEmpty) {
         hasConnections.add(entry.key);
       }
-      for (var called in entry.value.calledSymbols.keys) {
+      for (final called in entry.value.calledSymbols.keys) {
         callers.putIfAbsent(called, () => {}).add(entry.key);
         hasConnections.add(called);
       }
@@ -702,7 +698,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
         
         final symbol = callGraph.symbols[current];
         if (symbol != null) {
-          for (var called in symbol.calledSymbols.keys) {
+          for (final called in symbol.calledSymbols.keys) {
             if (!visited.contains(called) && callGraph.symbols.containsKey(called)) {
               visited.add(called);
               depths[called] = currentDepth + 1;
@@ -721,7 +717,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
       )
     ).toList();
     
-    for (var entry in entryPoints) {
+    for (final entry in entryPoints) {
       if (!visited.contains(entry)) {
         bfs(entry);
       }
@@ -732,11 +728,11 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     
     // Group connected nodes by depth and arrange in circles
     final nodesByDepth = <int, List<String>>{};
-    for (var entry in depths.entries) {
+    for (final entry in depths.entries) {
       nodesByDepth.putIfAbsent(entry.value, () => []).add(entry.key);
     }
     
-    for (var entry in nodesByDepth.entries) {
+    for (final entry in nodesByDepth.entries) {
       final depth = entry.key;
       final nodesAtDepth = entry.value;
       final radius = (depth + 1) * 150.0;
@@ -757,7 +753,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
       double minY = double.infinity;
       double minX = double.infinity;
       double maxX = double.negativeInfinity;
-      for (var pos in positions.values) {
+      for (final pos in positions.values) {
         if (pos.dy < minY) minY = pos.dy;
         if (pos.dx < minX) minX = pos.dx;
         if (pos.dx > maxX) maxX = pos.dx;
@@ -808,11 +804,11 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     final callers = <String, Set<String>>{};
     final hasConnections = <String>{};
     
-    for (var entry in callGraph.symbols.entries) {
+    for (final entry in callGraph.symbols.entries) {
       if (entry.value.calledSymbols.isNotEmpty) {
         hasConnections.add(entry.key);
       }
-      for (var called in entry.value.calledSymbols.keys) {
+      for (final called in entry.value.calledSymbols.keys) {
         callers.putIfAbsent(called, () => {}).add(entry.key);
         hasConnections.add(called);
       }
@@ -822,11 +818,11 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     final entryPoints = <String>[];
     final priorities = <String, int>{};
     
-    for (var symbol in nodes) {
+    for (final symbol in nodes) {
       if (!hasConnections.contains(symbol)) continue;
       
       final symbolLower = symbol.toLowerCase();
-      int priority = 100;
+      var priority = 100;
       
       // Highest priority: main, _start, reset handlers
       if (symbolLower == 'main' || symbolLower == '_start' || 
@@ -859,7 +855,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     
     // If no explicit entry points found, use nodes with no callers
     if (entryPoints.isEmpty) {
-      for (var symbol in nodes) {
+      for (final symbol in nodes) {
         if (hasConnections.contains(symbol) && !callers.containsKey(symbol)) {
           entryPoints.add(symbol);
         }
@@ -895,7 +891,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
             return bInstr.compareTo(aInstr);
           });
           
-          for (var called in callees) {
+          for (final called in callees) {
             if (!callGraph.symbols.containsKey(called)) continue;
             
             final newDepth = currentDepth + 1;
@@ -915,14 +911,14 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     
     // Run BFS from entry points, sorted by priority
     entryPoints.sort((a, b) => (priorities[a] ?? 100).compareTo(priorities[b] ?? 100));
-    for (var entry in entryPoints) {
+    for (final entry in entryPoints) {
       if (!visited.contains(entry)) {
         bfs(entry, priorities[entry] ?? 100);
       }
     }
     
     // 3. Calculate node importance scores
-    for (var symbol in nodes) {
+    for (final symbol in nodes) {
       if (!hasConnections.contains(symbol)) continue;
       
       final instrCount = callGraph.symbols[symbol]?.numInstructions ?? 0;
@@ -935,12 +931,12 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     
     // 4. Group nodes by depth and sort within each level
     final nodesByDepth = <int, List<String>>{};
-    for (var entry in depths.entries) {
+    for (final entry in depths.entries) {
       nodesByDepth.putIfAbsent(entry.value, () => []).add(entry.key);
     }
     
     // Sort nodes within each depth by score (descending)
-    for (var nodesAtDepth in nodesByDepth.values) {
+    for (final nodesAtDepth in nodesByDepth.values) {
       nodesAtDepth.sort((a, b) {
         final scoreA = nodeScores[a] ?? 0;
         final scoreB = nodeScores[b] ?? 0;
@@ -953,7 +949,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     const levelSeparation = 180.0;
     const nodeSeparation = 120.0;
     
-    for (var entry in nodesByDepth.entries) {
+    for (final entry in nodesByDepth.entries) {
       final depth = entry.key;
       final nodesAtDepth = entry.value;
       final y = depth * levelSeparation;
@@ -974,7 +970,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
       double minY = double.infinity;
       double minX = double.infinity;
       double maxX = double.negativeInfinity;
-      for (var pos in positions.values) {
+      for (final pos in positions.values) {
         if (pos.dy < minY) minY = pos.dy;
         if (pos.dx < minX) minX = pos.dx;
         if (pos.dx > maxX) maxX = pos.dx;
@@ -1011,27 +1007,21 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     switch (_currentLayout) {
       case GraphLayout.forceDirected:
         positions = _applyForceDirectedLayout(_cachedCallGraph!, nodes);
-        break;
       case GraphLayout.hierarchical:
         positions = _applyHierarchicalLayout(_cachedCallGraph!, nodes);
-        break;
       case GraphLayout.sugiyama:
         positions = _applySugiyamaLayout(_cachedCallGraph!, nodes);
-        break;
       case GraphLayout.circular:
         positions = _applyCircularLayout(_cachedCallGraph!, nodes);
-        break;
       case GraphLayout.grid:
         positions = _applyGridLayout(nodes);
-        break;
       case GraphLayout.executionOrder:
         positions = _applyExecutionOrderLayout(_cachedCallGraph!, nodes);
-        break;
     }
     
     setState(() {
       _nodePositions = positions;
-      for (var node in nodes) {
+      for (final node in nodes) {
         _nodeVelocities[node] = Offset.zero;
       }
     });
@@ -1054,7 +1044,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     final startStorage = _viewAnimStart!.storage;
     final endStorage = _viewAnimEnd!.storage;
     final result = Matrix4.zero();
-    for (int i = 0; i < 16; i++) {
+    for (var i = 0; i < 16; i++) {
       result.storage[i] = startStorage[i] + (endStorage[i] - startStorage[i]) * t;
     }
     _transformationController.value = result;
@@ -1063,7 +1053,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
   /// Compute the adjusted position offset (same as _buildGraph).
   Offset _adjustedOffset(String name) {
     double minX = 0, minY = 0;
-    for (var pos in _nodePositions.values) {
+    for (final pos in _nodePositions.values) {
       if (pos.dx < minX) minX = pos.dx;
       if (pos.dy < minY) minY = pos.dy;
     }
@@ -1139,7 +1129,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     double minX = double.infinity, minY = double.infinity;
     double maxX = double.negativeInfinity, maxY = double.negativeInfinity;
 
-    for (var pos in _nodePositions.values) {
+    for (final pos in _nodePositions.values) {
       if (pos.dx < minX) minX = pos.dx;
       if (pos.dy < minY) minY = pos.dy;
       if (pos.dx > maxX) maxX = pos.dx;
@@ -1247,7 +1237,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
 
   /// Detect newly executed/hooked symbols and spawn ripple animations.
   void _checkForNewRipples(Set<String> executedSymbols, Set<String> hookedSymbols) {
-    bool spawned = false;
+    var spawned = false;
 
     // New executed symbols → green ripple
     for (final symbol in executedSymbols) {
@@ -1293,8 +1283,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
   }
 
   /// Build welcome message when no file is loaded
-  Widget _buildWelcomeMessage(BuildContext context) {
-    return Center(
+  Widget _buildWelcomeMessage(BuildContext context) => Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -1324,7 +1313,6 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
         ],
       ),
     );
-  }
 
   /// Build the actual graph visualization
   Widget _buildGraph(BuildContext context, WidgetRef ref, cg.CallGraph callGraph) {
@@ -1333,7 +1321,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
 
     // Calculate canvas size based on actual node positions
     double minX = 0, minY = 0, maxX = 0, maxY = 0;
-    for (var pos in _nodePositions.values) {
+    for (final pos in _nodePositions.values) {
       if (pos.dx < minX) minX = pos.dx;
       if (pos.dy < minY) minY = pos.dy;
       if (pos.dx > maxX) maxX = pos.dx;
@@ -1347,7 +1335,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     
     // Adjust node positions to fit in canvas
     final adjustedPositions = <String, Offset>{};
-    for (var entry in _nodePositions.entries) {
+    for (final entry in _nodePositions.entries) {
       adjustedPositions[entry.key] = Offset(
         entry.value.dx + offsetX,
         entry.value.dy + offsetY,
@@ -1368,9 +1356,9 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
               final localPos = details.localPosition;
               
               // Find node under tap
-              bool nodeWasTapped = false;
-              for (var entry in adjustedPositions.entries) {
-                bool hit = false;
+              var nodeWasTapped = false;
+              for (final entry in adjustedPositions.entries) {
+                var hit = false;
                 
                 if (_currentNodeStyle == NodeStyle.labeledBox) {
                   // For labeled boxes, check if point is inside the box
@@ -1407,8 +1395,8 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
               final localPos = details.localPosition;
               
               // Find node under drag
-              for (var entry in adjustedPositions.entries) {
-                bool hit = false;
+              for (final entry in adjustedPositions.entries) {
+                var hit = false;
                 
                 if (_currentNodeStyle == NodeStyle.labeledBox) {
                   // For labeled boxes, check if point is inside the box
@@ -1536,7 +1524,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
                         _currentNodeStyle = style;
                         if (style == NodeStyle.labeledBox) {
                           _nodeSizeCache.clear();
-                          for (var node in _nodePositions.keys) {
+                          for (final node in _nodePositions.keys) {
                             _getLabeledBoxSize(node);
                           }
                         }
@@ -1721,7 +1709,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
                           shrinkWrap: true,
                           padding: const EdgeInsets.all(8),
                           itemCount: result.resolvedHooks.length,
-                          separatorBuilder: (_, __) => Divider(
+                          separatorBuilder: (_, _) => Divider(
                             height: 1,
                             color: Colors.grey.shade800,
                           ),
@@ -1804,15 +1792,13 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     );
   }
 
-  Widget _reportStat(String label, String value) {
-    return Column(
+  Widget _reportStat(String label, String value) => Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label, style: const TextStyle(fontSize: 9, color: Colors.grey)),
         Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
       ],
     );
-  }
 
   String _layoutLabel(GraphLayout layout) {
     switch (layout) {
@@ -1999,8 +1985,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     required IconData icon,
     required String label,
     required VoidCallback? onPressed,
-  }) {
-    return SizedBox(
+  }) => SizedBox(
       height: 30,
       child: ElevatedButton.icon(
         onPressed: onPressed,
@@ -2016,7 +2001,6 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
         ),
       ),
     );
-  }
 
   /// Save the emulator .emu file (with hooks baked in).
   Future<void> _exportSaveEmulator(BuildContext context, WidgetRef ref, dynamic emulator) async {
@@ -2200,8 +2184,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     required String label,
     required Color color,
     required VoidCallback onPressed,
-  }) {
-    return ElevatedButton.icon(
+  }) => ElevatedButton.icon(
       onPressed: onPressed,
       icon: Icon(icon, size: 20),
       label: Text(label),
@@ -2214,7 +2197,6 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
         ),
       ),
     );
-  }
 
 }
 
@@ -2249,14 +2231,14 @@ class _GraphPainter extends CustomPainter {
     required this.overriddenSymbols,
     this.nodeDegrees,
     this.ripples = const [],
-    Listenable? repaint,
-  }) : super(repaint: repaint);
+    super.repaint,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
     // Draw edges first
     final edgePaint = Paint()
-      ..color = Colors.blue.withOpacity(0.3)
+      ..color = Colors.blue.withValues(alpha: 0.3)
       ..strokeWidth = 1.0;
     
     // Outgoing edges (calls) - orange when highlighted
@@ -2266,7 +2248,7 @@ class _GraphPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
     
     final glowCallsEdgePaint = Paint()
-      ..color = Colors.orange.withOpacity(0.3)
+      ..color = Colors.orange.withValues(alpha: 0.3)
       ..strokeWidth = 6.0
       ..style = PaintingStyle.stroke
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.0);
@@ -2278,17 +2260,17 @@ class _GraphPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
     
     final glowCalledByEdgePaint = Paint()
-      ..color = Colors.purple.withOpacity(0.3)
+      ..color = Colors.purple.withValues(alpha: 0.3)
       ..strokeWidth = 6.0
       ..style = PaintingStyle.stroke
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.0);
 
     // Dimmed edge paint for edges connected to hooked symbols
     final hookedEdgePaint = Paint()
-      ..color = Colors.grey.withOpacity(0.15)
+      ..color = Colors.grey.withValues(alpha: 0.15)
       ..strokeWidth = 1.0;
 
-    for (var edge in edges) {
+    for (final edge in edges) {
       final from = nodePositions[edge.from];
       final to = nodePositions[edge.to];
       if (from != null && to != null) {
@@ -2328,7 +2310,7 @@ class _GraphPainter extends CustomPainter {
         final splashRadius = ripple.maxRadius * 0.15 * splashT;
         final splashOpacity = (1.0 - splashT) * 0.25;
         final splashPaint = Paint()
-          ..color = ripple.color.withOpacity(splashOpacity)
+          ..color = ripple.color.withValues(alpha: splashOpacity)
           ..style = PaintingStyle.fill;
         canvas.drawCircle(pos, splashRadius, splashPaint);
       }
@@ -2341,7 +2323,7 @@ class _GraphPainter extends CustomPainter {
         pos,
         r1,
         Paint()
-          ..color = ripple.color.withOpacity(o1)
+          ..color = ripple.color.withValues(alpha: o1)
           ..style = PaintingStyle.stroke
           ..strokeWidth = sw1,
       );
@@ -2356,7 +2338,7 @@ class _GraphPainter extends CustomPainter {
           pos,
           r2,
           Paint()
-            ..color = ripple.color.withOpacity(o2)
+            ..color = ripple.color.withValues(alpha: o2)
             ..style = PaintingStyle.stroke
             ..strokeWidth = sw2,
         );
@@ -2372,7 +2354,7 @@ class _GraphPainter extends CustomPainter {
           pos,
           r3,
           Paint()
-            ..color = ripple.color.withOpacity(o3)
+            ..color = ripple.color.withValues(alpha: o3)
             ..style = PaintingStyle.stroke
             ..strokeWidth = sw3,
         );
@@ -2380,7 +2362,7 @@ class _GraphPainter extends CustomPainter {
     }
 
     // Draw nodes
-    for (var entry in nodePositions.entries) {
+    for (final entry in nodePositions.entries) {
       final symbol = entry.key;
       final pos = entry.value;
       final isSelected = symbol == selectedSymbol;
@@ -2415,7 +2397,7 @@ class _GraphPainter extends CustomPainter {
           // Draw glow for selected nodes
           if (isSelected) {
             final glowPaint = Paint()
-              ..color = Colors.orange.withOpacity(0.4)
+              ..color = Colors.orange.withValues(alpha: 0.4)
               ..style = PaintingStyle.fill
               ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8.0);
             canvas.drawCircle(pos, glowRadius, glowPaint);
@@ -2467,7 +2449,6 @@ class _GraphPainter extends CustomPainter {
               Offset(pos.dx - textPainter.width / 2, pos.dy - 20),
             );
           }
-          break;
 
         case NodeStyle.box:
           final size = nodeDegrees != null
@@ -2477,7 +2458,7 @@ class _GraphPainter extends CustomPainter {
           // Draw glow for selected nodes
           if (isSelected) {
             final glowPaint = Paint()
-              ..color = Colors.orange.withOpacity(0.4)
+              ..color = Colors.orange.withValues(alpha: 0.4)
               ..style = PaintingStyle.fill
               ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8.0);
             canvas.drawRect(
@@ -2541,7 +2522,6 @@ class _GraphPainter extends CustomPainter {
               Offset(pos.dx - textPainter.width / 2, pos.dy - 20),
             );
           }
-          break;
 
         case NodeStyle.labeledBox:
           final labelFontSize = nodeDegrees != null
@@ -2559,14 +2539,14 @@ class _GraphPainter extends CustomPainter {
             textDirection: TextDirection.ltr,
           )..layout();
 
-          final padding = 8.0;
+          const padding = 8.0;
           final boxWidth = textPainter.width + padding * 2;
           final boxHeight = textPainter.height + padding * 2;
 
           // Draw glow for selected nodes
           if (isSelected) {
             final glowPaint = Paint()
-              ..color = Colors.orange.withOpacity(0.4)
+              ..color = Colors.orange.withValues(alpha: 0.4)
               ..style = PaintingStyle.fill
               ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8.0);
             canvas.drawRRect(
@@ -2583,7 +2563,7 @@ class _GraphPainter extends CustomPainter {
             ..style = PaintingStyle.fill;
           
           final borderPaint = Paint()
-            ..color = isSelected ? Colors.orange : Colors.white.withOpacity(0.3)
+            ..color = isSelected ? Colors.orange : Colors.white.withValues(alpha: 0.3)
             ..style = PaintingStyle.stroke
             ..strokeWidth = isSelected ? 2.5 : 1.0;
 
@@ -2606,7 +2586,6 @@ class _GraphPainter extends CustomPainter {
             canvas,
             Offset(pos.dx - textPainter.width / 2, pos.dy - textPainter.height / 2),
           );
-          break;
 
         case NodeStyle.dot:
           final dotRadius = nodeDegrees != null
@@ -2618,7 +2597,7 @@ class _GraphPainter extends CustomPainter {
           // Draw glow for selected nodes
           if (isSelected) {
             final glowPaint = Paint()
-              ..color = Colors.orange.withOpacity(0.4)
+              ..color = Colors.orange.withValues(alpha: 0.4)
               ..style = PaintingStyle.fill
               ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8.0);
             canvas.drawCircle(pos, dotGlowRadius, glowPaint);
@@ -2661,7 +2640,6 @@ class _GraphPainter extends CustomPainter {
               Offset(pos.dx - textPainter.width / 2, pos.dy - 18),
             );
           }
-          break;
       }
     }
   }

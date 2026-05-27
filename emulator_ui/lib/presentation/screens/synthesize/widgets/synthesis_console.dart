@@ -49,8 +49,7 @@ class _Centered extends StatelessWidget {
   const _Centered({required this.child});
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
+  Widget build(BuildContext context) => Container(
       color: AppTheme.bgCanvas,
       alignment: Alignment.center,
       padding: const EdgeInsets.all(40),
@@ -59,7 +58,6 @@ class _Centered extends StatelessWidget {
         child: child,
       ),
     );
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -75,8 +73,7 @@ class _IdleView extends ConsumerWidget {
       (emulator.baseImagePath ?? '').isNotEmpty;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return _Centered(
+  Widget build(BuildContext context, WidgetRef ref) => _Centered(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -115,7 +112,6 @@ class _IdleView extends ConsumerWidget {
         ],
       ),
     );
-  }
 
   Future<void> _launch(BuildContext context, WidgetRef ref) async {
     final controller = ref.read(synthesisControllerProvider);
@@ -151,7 +147,7 @@ class _IdleView extends ConsumerWidget {
     }
 
     // If prior hooks exist, ask: re-synthesize or just run with them.
-    String mode = 'synthesize';
+    var mode = 'synthesize';
     if (emulator.hooks.isNotEmpty) {
       if (!context.mounted) return;
       final chosen = await showDialog<String>(
@@ -399,8 +395,7 @@ class _StatRow extends StatelessWidget {
   const _StatRow({required this.label, required this.value});
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
+  Widget build(BuildContext context) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -424,5 +419,4 @@ class _StatRow extends StatelessWidget {
         ],
       ),
     );
-  }
 }

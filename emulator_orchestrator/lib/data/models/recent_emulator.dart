@@ -19,22 +19,18 @@ class RecentEmulator {
   });
 
   /// Load from JSON
-  factory RecentEmulator.fromJson(Map<String, dynamic> json) {
-    return RecentEmulator(
+  factory RecentEmulator.fromJson(Map<String, dynamic> json) => RecentEmulator(
       path: json['path'] as String,
       name: json['name'] as String,
       lastOpened: DateTime.parse(json['last_opened'] as String),
     );
-  }
 
   /// Convert to JSON for saving
-  Map<String, dynamic> toJson() {
-    return {
+  Map<String, dynamic> toJson() => {
       'path': path,
       'name': name,
       'last_opened': lastOpened.toIso8601String(),
     };
-  }
 
   @override
   bool operator ==(Object other) {

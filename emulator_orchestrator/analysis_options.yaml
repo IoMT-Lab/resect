@@ -1,1 +1,1 @@
-include: package:lints/recommended.yaml
+include: package:iomt_lab_lints/recommended.yaml

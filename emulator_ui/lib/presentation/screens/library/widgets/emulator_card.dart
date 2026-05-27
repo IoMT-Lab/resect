@@ -131,8 +131,7 @@ class _DetailRow extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
+  Widget build(BuildContext context) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.baseline,
@@ -162,5 +161,4 @@ class _DetailRow extends StatelessWidget {
         ],
       ),
     );
-  }
 }

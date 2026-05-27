@@ -56,13 +56,9 @@ class Emulator {
   const Emulator({
     required this.id,
     required this.name,
-    this.emulatorPath,
-    required this.createdAt,
-    required this.modifiedAt,
+    required this.createdAt, required this.modifiedAt, required this.emulationConfig, required this.uiState, this.emulatorPath,
     this.elfFilePath,
     this.baseImagePath,
-    required this.emulationConfig,
-    required this.uiState,
     this.hooks = const {},
     this.hookPreferences = const {},
     this.hookOverrides = const {},
@@ -131,8 +127,7 @@ class Emulator {
   }
 
   /// Convert emulator to JSON for saving
-  Map<String, dynamic> toJson() {
-    return {
+  Map<String, dynamic> toJson() => {
       'version': '1.0',
       'emulator': {
         'id': id,
@@ -152,7 +147,6 @@ class Emulator {
       'ui_state': uiState.toJson(),
       'metadata': metadata,
     };
-  }
 
   /// Create a copy with updated fields
   Emulator copyWith({
@@ -170,8 +164,7 @@ class Emulator {
     Map<String, int>? hookOverrides,
     Map<String, dynamic>? metadata,
     List<DocumentEntry>? documents,
-  }) {
-    return Emulator(
+  }) => Emulator(
       id: id ?? this.id,
       name: name ?? this.name,
       emulatorPath: emulatorPath ?? this.emulatorPath,
@@ -187,7 +180,6 @@ class Emulator {
       metadata: metadata ?? this.metadata,
       documents: documents ?? this.documents,
     );
-  }
 }
 
 /// A document file associated with an emulator project.
@@ -210,21 +202,17 @@ class DocumentEntry {
     required this.addedAt,
   });
 
-  factory DocumentEntry.fromJson(Map<String, dynamic> json) {
-    return DocumentEntry(
+  factory DocumentEntry.fromJson(Map<String, dynamic> json) => DocumentEntry(
       filename: json['filename'] as String,
       displayName: json['display_name'] as String? ?? json['filename'] as String,
       addedAt: DateTime.parse(json['added_at'] as String),
     );
-  }
 
-  Map<String, dynamic> toJson() {
-    return {
+  Map<String, dynamic> toJson() => {
       'filename': filename,
       'display_name': displayName,
       'added_at': addedAt.toIso8601String(),
     };
-  }
 }
 
 /// Emulation configuration settings
@@ -248,12 +236,9 @@ class EmulationConfig {
     this.memoryMapPath,
   });
 
-  factory EmulationConfig.defaults() {
-    return const EmulationConfig();
-  }
+  factory EmulationConfig.defaults() => const EmulationConfig();
 
-  factory EmulationConfig.fromJson(Map<String, dynamic> json) {
-    return EmulationConfig(
+  factory EmulationConfig.fromJson(Map<String, dynamic> json) => EmulationConfig(
       startFrom: json['start_from'] as String?,
       endAt: (json['end_at'] as List<dynamic>?)
               ?.map((e) => e as String)
@@ -262,30 +247,25 @@ class EmulationConfig {
       pauseOnUnhandled: json['pause_on_unhandled'] as bool? ?? true,
       memoryMapPath: json['memory_map'] as String?,
     );
-  }
 
-  Map<String, dynamic> toJson() {
-    return {
+  Map<String, dynamic> toJson() => {
       'start_from': startFrom,
       'end_at': endAt,
       'pause_on_unhandled': pauseOnUnhandled,
       'memory_map': memoryMapPath,
     };
-  }
 
   EmulationConfig copyWith({
     String? startFrom,
     List<String>? endAt,
     bool? pauseOnUnhandled,
     String? memoryMapPath,
-  }) {
-    return EmulationConfig(
+  }) => EmulationConfig(
       startFrom: startFrom ?? this.startFrom,
       endAt: endAt ?? this.endAt,
       pauseOnUnhandled: pauseOnUnhandled ?? this.pauseOnUnhandled,
       memoryMapPath: memoryMapPath ?? this.memoryMapPath,
     );
-  }
 }
 
 /// UI state for restoring workspace appearance
@@ -305,35 +285,27 @@ class UiState {
     this.selectedSymbol,
   });
 
-  factory UiState.defaults() {
-    return const UiState();
-  }
+  factory UiState.defaults() => const UiState();
 
-  factory UiState.fromJson(Map<String, dynamic> json) {
-    return UiState(
+  factory UiState.fromJson(Map<String, dynamic> json) => UiState(
       leftSidebarExpanded: json['left_sidebar_expanded'] as bool? ?? true,
       rightSidebarExpanded: json['right_sidebar_expanded'] as bool? ?? true,
       selectedSymbol: json['selected_symbol'] as String?,
     );
-  }
 
-  Map<String, dynamic> toJson() {
-    return {
+  Map<String, dynamic> toJson() => {
       'left_sidebar_expanded': leftSidebarExpanded,
       'right_sidebar_expanded': rightSidebarExpanded,
       'selected_symbol': selectedSymbol,
     };
-  }
 
   UiState copyWith({
     bool? leftSidebarExpanded,
     bool? rightSidebarExpanded,
     String? selectedSymbol,
-  }) {
-    return UiState(
+  }) => UiState(
       leftSidebarExpanded: leftSidebarExpanded ?? this.leftSidebarExpanded,
       rightSidebarExpanded: rightSidebarExpanded ?? this.rightSidebarExpanded,
       selectedSymbol: selectedSymbol ?? this.selectedSymbol,
     );
-  }
 }

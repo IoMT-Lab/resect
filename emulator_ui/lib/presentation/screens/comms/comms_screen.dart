@@ -13,20 +13,19 @@ class CommsScreen extends ConsumerWidget {
   const CommsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return Container(
+  Widget build(BuildContext context, WidgetRef ref) => Container(
       color: AppTheme.bgCanvas,
       alignment: Alignment.center,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 480),
-        child: Card(
+        child: const Card(
           color: AppTheme.bgPanel,
           child: Padding(
-            padding: const EdgeInsets.all(28),
+            padding: EdgeInsets.all(28),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
+              children: [
                 Text(
                   'COMMS',
                   style: TextStyle(
@@ -57,5 +56,4 @@ class CommsScreen extends ConsumerWidget {
         ),
       ),
     );
-  }
 }

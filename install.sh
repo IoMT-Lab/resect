@@ -30,6 +30,13 @@ echo ""
 
 INSTALL_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Shared configuration — source it so values set by the System Configuration UI
+# (or a prior install) take precedence over the built-in detection below.
+if [ -f "$INSTALL_DIR/resect.config" ]; then
+    # shellcheck disable=SC1091
+    source "$INSTALL_DIR/resect.config"
+fi
+
 # ---------------------------------------------------------------------------
 # 1. System packages
 # ---------------------------------------------------------------------------
@@ -56,14 +63,6 @@ else
     sudo apt-get install -y g++
 fi
 
-# Python — read required version from Pipfile; Ubuntu 22.04 ships 3.10 so
-# install the exact version via the deadsnakes PPA if needed.
-PYTHON_VERSION=$(grep 'python_version' "$INSTALL_DIR/emulation_engine/Pipfile" \
-  | grep -oP '"\K[^"]+')
-sudo add-apt-repository -y ppa:deadsnakes/ppa
-sudo apt-get update -q
-sudo apt-get install -y "python${PYTHON_VERSION}" "python${PYTHON_VERSION}-venv" python3-pip pipenv
-
 echo "✓ System packages installed"
 
 # ---------------------------------------------------------------------------
@@ -74,9 +73,9 @@ echo "✓ System packages installed"
 #   2. ~/Development/flutter (capital D — matches this repo's convention)
 #   3. ~/development/flutter (lowercase — older convention)
 # Only clone a fresh copy when none of those exist.
-FLUTTER_DIR=""
-
-if command -v flutter >/dev/null 2>&1; then
+if [ -n "$FLUTTER_DIR" ] && [ -x "$FLUTTER_DIR/bin/flutter" ]; then
+    echo "✓ Flutter from resect.config at $FLUTTER_DIR"
+elif command -v flutter >/dev/null 2>&1; then
     FLUTTER_DIR="$(dirname "$(dirname "$(command -v flutter)")")"
     echo "✓ Flutter already on PATH at $FLUTTER_DIR"
 elif [ -x "$HOME/Development/flutter/bin/flutter" ]; then
@@ -115,9 +114,11 @@ flutter config --enable-linux-desktop \
 echo "✓ Flutter SDK ready"
 
 # ---------------------------------------------------------------------------
-# 3. Python backend (emulation_engine — inside the repo)
+# 3. Engine assets (Renode binary via Git LFS, inside emulation_engine)
 # ---------------------------------------------------------------------------
-ENGINE_DIR="$INSTALL_DIR/emulation_engine"
+# The engine itself is the in-process Dart packages (renode-dart + callgraph-dart);
+# emulation_engine only supplies the Renode portable binary, fetched via Git LFS.
+ENGINE_DIR="${ENGINE_DIR:-$INSTALL_DIR/emulation_engine}"
 
 if [ ! -d "$ENGINE_DIR" ]; then
     echo "emulation_engine not found — cloning..."
@@ -131,7 +132,6 @@ if [ ! -d "$ENGINE_DIR" ]; then
     git clone "$ENGINE_URL" "$ENGINE_DIR"
 fi
 
-echo "Setting up Python backend at $ENGINE_DIR..."
 cd "$ENGINE_DIR"
 
 # Git LFS — fetch the Renode binary
@@ -144,15 +144,8 @@ else
     echo "⚠ Warning: emulation_engine is not a git repository, skipping Git LFS"
 fi
 
-# Install Python dependencies
-echo "Installing Python packages with pipenv..."
-export PIPENV_IGNORE_VIRTUALENVS=1
-export PIPENV_VERBOSITY=-1
-pipenv install --dev 2>&1 | tee /tmp/pipenv_install.log
-echo "Virtualenv location: $(pipenv --venv)"
-
 # Verify Renode
-RENODE_BIN="$ENGINE_DIR/renode_1.16.0-dotnet_portable/renode"
+RENODE_BIN="${RENODE_BIN:-$ENGINE_DIR/${RENODE_PORTABLE:-renode_1.16.0-dotnet_portable}/renode}"
 if [ -f "$RENODE_BIN" ]; then
     chmod +x "$RENODE_BIN"
     echo "✓ Renode binary found at $RENODE_BIN"
@@ -161,7 +154,7 @@ else
     echo "  If using Git LFS, run: cd $ENGINE_DIR && git lfs pull"
 fi
 
-echo "✓ Python backend ready"
+echo "✓ Engine assets ready"
 
 # ---------------------------------------------------------------------------
 # 4. Dart workspace — resolve dependencies for both packages
@@ -230,13 +223,42 @@ echo "=== Verification ==="
 
 echo -n "Flutter:       "; flutter --version 2>/dev/null | head -1
 echo -n "Dart:          "; dart --version 2>&1
-echo -n "pipenv:        "; pipenv --version 2>/dev/null || echo "not found"
 echo -n "arm-objdump:   "; which arm-none-eabi-objdump 2>/dev/null || echo "not found"
 echo -n "Renode:        "; [ -x "$RENODE_BIN" ] && echo "$RENODE_BIN" || echo "not found"
 if [ "$WITH_VAGRANT_TEST" -eq 1 ]; then
     echo -n "VirtualBox:    "; vboxmanage --version 2>/dev/null || echo "not found"
     echo -n "Vagrant:       "; vagrant --version 2>/dev/null || echo "not found"
 fi
+
+echo ""
+
+# ---------------------------------------------------------------------------
+# Seed resect.config — the shared source of truth for the app and scripts.
+# Only fills keys that aren't already present, so UI edits survive re-runs.
+# ---------------------------------------------------------------------------
+CONFIG_FILE="$INSTALL_DIR/resect.config"
+if [ ! -f "$CONFIG_FILE" ]; then
+    {
+        echo "# resect.config"
+        echo "# Shared by install.sh / run.sh and the System Configuration UI."
+    } > "$CONFIG_FILE"
+fi
+
+write_default() {  # key value — append only if the key is not already set
+    if ! grep -q "^$1=" "$CONFIG_FILE" 2>/dev/null; then
+        echo "$1=\"$2\"" >> "$CONFIG_FILE"
+    fi
+}
+
+write_default FLUTTER_DIR "$FLUTTER_DIR"
+write_default ENGINE_DIR "$ENGINE_DIR"
+write_default RENODE_PORTABLE "${RENODE_PORTABLE:-renode_1.16.0-dotnet_portable}"
+write_default RENODE_BIN "$RENODE_BIN"
+write_default RENODE_PORT "${RENODE_PORT:-5000}"
+write_default RENODE_LOG_PATH "${RENODE_LOG_PATH:-/tmp/renode_logs}"
+write_default ARM_OBJDUMP "$(command -v arm-none-eabi-objdump || echo arm-none-eabi-objdump)"
+write_default X86_OBJDUMP "$(command -v objdump || echo objdump)"
+echo "✓ Wrote $CONFIG_FILE"
 
 echo ""
 echo "=== Installation Complete ==="

@@ -90,9 +90,8 @@ class ConnectionStatusIndicator extends ConsumerWidget {
     );
   }
 
-  /// Attempt to reconnect to the Python server
+  /// Re-establish the in-process call-graph source.
   Future<void> _reconnect(WidgetRef ref) async {
-    final service = ref.read(callgraphServiceProvider);
-    await service.connect();
+    await ref.read(emulationOrchestratorProvider).callGraphSource.connect();
   }
 }

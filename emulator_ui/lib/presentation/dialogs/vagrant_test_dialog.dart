@@ -1,14 +1,14 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show Clipboard, ClipboardData;
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../core/file_selection.dart';
 import 'package:emulator_orchestrator/core/app_paths.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/orchestrator/vagrant_test_runner.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
+import '../../core/file_selection.dart';
 import '../../providers/app_providers.dart';
 
 /// Dialog for running the Vagrant CI/CD test suite against the resect project.
@@ -21,13 +21,11 @@ import '../../providers/app_providers.dart';
 class VagrantTestDialog extends ConsumerStatefulWidget {
   const VagrantTestDialog({super.key});
 
-  static Future<void> show(BuildContext context) {
-    return showDialog<void>(
+  static Future<void> show(BuildContext context) => showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (context) => const VagrantTestDialog(),
     );
-  }
 
   @override
   ConsumerState<VagrantTestDialog> createState() => _VagrantTestDialogState();
@@ -70,8 +68,7 @@ class _VagrantTestDialogState extends ConsumerState<VagrantTestDialog> {
     super.dispose();
   }
 
-  ScrollController _controllerFor(VagrantTestStepId id) {
-    return _scrollControllers.putIfAbsent(id, () {
+  ScrollController _controllerFor(VagrantTestStepId id) => _scrollControllers.putIfAbsent(id, () {
       final c = ScrollController();
       c.addListener(() {
         if (!c.hasClients) return;
@@ -84,7 +81,6 @@ class _VagrantTestDialogState extends ConsumerState<VagrantTestDialog> {
       });
       return c;
     });
-  }
 
   void _scrollToBottom(VagrantTestStepId id) {
     if (_userScrolledUp.contains(id)) return;
@@ -119,7 +115,7 @@ class _VagrantTestDialogState extends ConsumerState<VagrantTestDialog> {
     ref.read(vagrantTestStateProvider.notifier).state = VagrantTestState(
       isRunning: true,
     );
-    setState(() => _expanded.clear());
+    setState(_expanded.clear);
 
     final repoRoot = p.dirname(AppPaths.findEngineDir());
     _runner = VagrantTestRunner();
@@ -229,7 +225,7 @@ class _VagrantTestDialogState extends ConsumerState<VagrantTestDialog> {
             const SizedBox(height: 16),
             const Divider(),
             const SizedBox(height: 8),
-            ...state.steps.map((step) => _buildStepRow(step)),
+            ...state.steps.map(_buildStepRow),
             if (state.complete) ...[
               const SizedBox(height: 12),
               _buildResultBanner(state.passed),

@@ -11,12 +11,10 @@ class NewEmulatorDialog extends ConsumerStatefulWidget {
   const NewEmulatorDialog({super.key});
 
   /// Show the dialog and return emulator details or null
-  static Future<Map<String, String?>?> show(BuildContext context) {
-    return showDialog<Map<String, String?>>(
+  static Future<Map<String, String?>?> show(BuildContext context) => showDialog<Map<String, String?>>(
       context: context,
       builder: (context) => const NewEmulatorDialog(),
     );
-  }
 
   @override
   ConsumerState<NewEmulatorDialog> createState() => _NewEmulatorDialogState();
@@ -41,8 +39,7 @@ class _NewEmulatorDialogState extends ConsumerState<NewEmulatorDialog> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
+  Widget build(BuildContext context) => AlertDialog(
       title: const Text('New Emulator'),
       content: SizedBox(
         width: 500,
@@ -85,7 +82,7 @@ class _NewEmulatorDialogState extends ConsumerState<NewEmulatorDialog> {
                 label: 'Firmware ELF File',
                 path: _elfFilePath,
                 icon: Icons.memory,
-                onSelect: () => _selectElfFile(),
+                onSelect: _selectElfFile,
                 onClear: () => setState(() => _elfFilePath = null),
               ),
 
@@ -96,7 +93,7 @@ class _NewEmulatorDialogState extends ConsumerState<NewEmulatorDialog> {
                 label: 'Platform File (.repl)',
                 path: _baseImagePath,
                 icon: Icons.developer_board,
-                onSelect: () => _selectBaseImage(),
+                onSelect: _selectBaseImage,
                 onClear: () => setState(() => _baseImagePath = null),
               ),
             ],
@@ -114,7 +111,6 @@ class _NewEmulatorDialogState extends ConsumerState<NewEmulatorDialog> {
         ),
       ],
     );
-  }
 
   Widget _buildFileSelector({
     required String label,
@@ -122,8 +118,7 @@ class _NewEmulatorDialogState extends ConsumerState<NewEmulatorDialog> {
     required IconData icon,
     required VoidCallback onSelect,
     required VoidCallback onClear,
-  }) {
-    return Container(
+  }) => Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         border: Border.all(color: Colors.grey.shade700),
@@ -172,7 +167,6 @@ class _NewEmulatorDialogState extends ConsumerState<NewEmulatorDialog> {
         ],
       ),
     );
-  }
 
   Future<void> _selectElfFile() async {
     final path = await ref.read(fileSelectorProvider).openFile(
@@ -205,7 +199,5 @@ class _NewEmulatorDialogState extends ConsumerState<NewEmulatorDialog> {
     });
   }
 
-  String _getFileName(String path) {
-    return path.split('/').last;
-  }
+  String _getFileName(String path) => path.split('/').last;
 }

@@ -6,16 +6,9 @@ import 'package:emulator_orchestrator/data/models/call_graph.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/repositories/emulator_repository.dart';
 import 'package:emulator_orchestrator/data/services/artifact_library_service.dart';
-import 'package:emulator_orchestrator/data/services/callgraph_service.dart';
 import 'package:emulator_orchestrator/data/services/fidelity_calculator.dart';
-import 'package:emulator_orchestrator/data/services/filtered_trace_service.dart';
-import 'package:emulator_orchestrator/data/services/lifecycle_service.dart';
-import 'package:emulator_orchestrator/data/services/trace_service.dart';
 import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
-import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_call_graph_source.dart';
-import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_emulation_controller.dart';
-import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_engine_lifecycle.dart';
-import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_trace_source.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/dart/dart_engine.dart';
 
 /// CLI tool for emulator creation, call graph generation, and synthesizer.
 ///
@@ -142,8 +135,6 @@ Future<void> _runCallgraph(Map<String, String> flags) async {
   final elfPath = flags['elf'];
   final format = flags['format'] ?? 'json';
   final outputPath = flags['output'] ?? flags['o'];
-  final backendUrl = flags['backend-url'];
-  final engineDir = flags['engine-dir'];
 
   if (elfPath == null || elfPath.isEmpty) {
     stderr.writeln('Error: --elf is required');
@@ -155,21 +146,11 @@ Future<void> _runCallgraph(Map<String, String> flags) async {
     exit(1);
   }
 
-  final serverUrl = backendUrl ?? 'http://localhost:12356';
-  final orchestrator = _createOrchestrator(serverUrl: serverUrl);
-  final ownsEngine = backendUrl == null;
+  // Call-graph extraction is in-process (objdump) — no engine/server needed.
+  final orchestrator = _createOrchestrator();
 
   try {
-    if (ownsEngine) {
-      await _freeStalePorts([12356, 5000]);
-      await orchestrator.engineLifecycle.start(engineDir: engineDir);
-    }
-
-    final connected = await orchestrator.callGraphSource.connect();
-    if (!connected) {
-      stderr.writeln('Error: Could not connect to backend at $serverUrl');
-      exit(1);
-    }
+    await orchestrator.callGraphSource.connect();
 
     stderr.writeln('Generating call graph for $elfPath...');
     final callGraph = await orchestrator.generateCallGraph(elfPath);
@@ -210,9 +191,6 @@ Future<void> _runCallgraph(Map<String, String> flags) async {
       stdout.writeln(result);
     }
   } finally {
-    if (ownsEngine) {
-      await orchestrator.engineLifecycle.stop();
-    }
     orchestrator.dispose();
   }
 }
@@ -236,7 +214,6 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
   final outputPath = flags['output'] ?? flags['o'];
   final saveEmulatorPath = flags['save-emulator'];
   final emulatorName = flags['name'];
-  final backendUrl = flags['backend-url'];
   final engineDir = flags['engine-dir'];
 
   if (elfPath == null || elfPath.isEmpty) {
@@ -258,23 +235,18 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
     exit(1);
   }
 
-  final serverUrl = backendUrl ?? 'http://localhost:12356';
-  final orchestrator = _createOrchestrator(serverUrl: serverUrl);
-  final ownsEngine = backendUrl == null;
+  final orchestrator = _createOrchestrator();
 
   try {
-    if (ownsEngine) {
-      await _freeStalePorts([12356, 5000]);
-      await orchestrator.engineLifecycle.start(engineDir: engineDir);
-    }
+    await orchestrator.engineLifecycle.start(engineDir: engineDir);
 
     // Connect every channel the synthesizer needs.
     if (!await orchestrator.callGraphSource.connect()) {
-      stderr.writeln('Error: Could not connect callgraph at $serverUrl');
+      stderr.writeln('Error: Could not connect callgraph source');
       exit(1);
     }
     if (!await orchestrator.emulationController.connect()) {
-      stderr.writeln('Error: Could not connect emulation control at $serverUrl');
+      stderr.writeln('Error: Could not connect emulation control channel');
       exit(1);
     }
     await orchestrator.traceSource.connect();
@@ -373,9 +345,7 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
     try {
       await orchestrator.resetEmulation();
     } catch (_) {}
-    if (ownsEngine) {
-      await orchestrator.engineLifecycle.stop();
-    }
+    await orchestrator.engineLifecycle.stop();
     orchestrator.dispose();
   }
 }
@@ -440,9 +410,6 @@ Future<void> _runFidelity(Map<String, String> flags) async {
   final traversedRaw = flags['traversed'];
   final format = flags['format'] ?? 'json';
   final outputPath = flags['output'] ?? flags['o'];
-  final backendUrl = flags['backend-url'];
-  final engineDir = flags['engine-dir'];
-
   if (elfPath == null && callgraphPath == null) {
     stderr.writeln('Error: Either --elf or --callgraph is required');
     _printFidelityUsage();
@@ -476,29 +443,15 @@ Future<void> _runFidelity(Map<String, String> flags) async {
       exit(1);
     }
 
-    final serverUrl = backendUrl ?? 'http://localhost:12356';
-    final orchestrator = _createOrchestrator(serverUrl: serverUrl);
-    final ownsEngine = backendUrl == null;
+    // In-process call-graph extraction — no engine/server needed.
+    final orchestrator = _createOrchestrator();
 
     try {
-      if (ownsEngine) {
-        await _freeStalePorts([12356, 5000]);
-        await orchestrator.engineLifecycle.start(engineDir: engineDir);
-      }
-
-      final connected = await orchestrator.callGraphSource.connect();
-      if (!connected) {
-        stderr.writeln('Error: Could not connect to backend at $serverUrl');
-        exit(1);
-      }
-
+      await orchestrator.callGraphSource.connect();
       stderr.writeln('Generating call graph for $elfPath...');
       callGraph = await orchestrator.generateCallGraph(elfPath);
       stderr.writeln('Found ${callGraph.totalFunctions} functions');
     } finally {
-      if (ownsEngine) {
-        await orchestrator.engineLifecycle.stop();
-      }
       orchestrator.dispose();
     }
   }
@@ -536,42 +489,15 @@ Future<void> _runFidelity(Map<String, String> flags) async {
 // HELPERS
 // =============================================================================
 
-/// Kill any process still listening on the given ports before we start our
-/// own engine. A run that was interrupted before its cleanup (Ctrl-C, kill)
-/// can leave the Python server holding port 12356; without this the new
-/// server fails to bind and the CLI silently talks to the stale one.
-Future<void> _freeStalePorts(List<int> ports) async {
-  for (final port in ports) {
-    try {
-      final result = await Process.run('lsof', ['-t', '-i:$port', '-sTCP:LISTEN']);
-      final pids = (result.stdout as String)
-          .split('\n')
-          .where((s) => s.trim().isNotEmpty);
-      for (final pid in pids) {
-        stderr.writeln('Freeing stale process $pid on port $port');
-        Process.killPid(int.parse(pid.trim()), ProcessSignal.sigterm);
-      }
-    } catch (_) {
-      // lsof absent or nothing listening — nothing to free.
-    }
-  }
-  await Future.delayed(const Duration(milliseconds: 500));
-}
-
-EmulationOrchestrator _createOrchestrator({String serverUrl = 'http://localhost:12356'}) {
-  final lifecycleService = LifecycleService(serverUrl: serverUrl);
-  final callgraphService = CallgraphService(serverUrl: serverUrl);
-  final traceService = TraceService(serverUrl: serverUrl);
-  final filteredTraceService = FilteredTraceService(serverUrl: serverUrl);
-
+EmulationOrchestrator _createOrchestrator() {
+  // Stale-port reclaim for the Renode server-mode port is handled inside
+  // DartEngine.startProcess(), so no pre-launch cleanup is needed here.
+  final engine = DartEngine();
   return EmulationOrchestrator(
-    engineLifecycle: RenodeEngineLifecycle(),
-    emulationController: RenodeEmulationController(lifecycleService),
-    callGraphSource: RenodeCallGraphSource(callgraphService),
-    traceSource: RenodeTraceSource(
-      traceService: traceService,
-      filteredTraceService: filteredTraceService,
-    ),
+    engineLifecycle: engine.lifecycle,
+    emulationController: engine.controller,
+    callGraphSource: engine.callGraphSource,
+    traceSource: engine.traceSource,
     emulatorRepository: EmulatorRepository(),
     artifactDb: ArtifactDatabase(),
   );

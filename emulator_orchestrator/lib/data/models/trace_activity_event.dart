@@ -1,4 +1,4 @@
-import '../services/lifecycle_service.dart';
+import '../../orchestrator/engine/paused_event.dart';
 
 /// Type of trace activity event
 enum TraceActivityEventType {
@@ -23,47 +23,38 @@ class TraceActivityEvent {
   
   TraceActivityEvent._({
     required this.type,
-    this.symbol,
-    required this.timestamp,
+    required this.timestamp, this.symbol,
     this.userInitiated,
     this.unhandledAccess,
   });
 
   /// Create a function call event (from filtered trace)
-  factory TraceActivityEvent.functionCall(String symbol) {
-    return TraceActivityEvent._(
+  factory TraceActivityEvent.functionCall(String symbol) => TraceActivityEvent._(
       type: TraceActivityEventType.functionCall,
       symbol: symbol,
       timestamp: DateTime.now(),
     );
-  }
 
   /// Create a pause event (from lifecycle service)
-  factory TraceActivityEvent.paused(PausedEvent event) {
-    return TraceActivityEvent._(
+  factory TraceActivityEvent.paused(PausedEvent event) => TraceActivityEvent._(
       type: TraceActivityEventType.paused,
       symbol: event.symbol,
       timestamp: DateTime.now(),
       userInitiated: event.user,
       unhandledAccess: event.unhandledAccess,
     );
-  }
 
   /// Create a resume event
-  factory TraceActivityEvent.resumed() {
-    return TraceActivityEvent._(
+  factory TraceActivityEvent.resumed() => TraceActivityEvent._(
       type: TraceActivityEventType.resumed,
       timestamp: DateTime.now(),
     );
-  }
 
   /// Create a reset event
-  factory TraceActivityEvent.reset() {
-    return TraceActivityEvent._(
+  factory TraceActivityEvent.reset() => TraceActivityEvent._(
       type: TraceActivityEventType.reset,
       timestamp: DateTime.now(),
     );
-  }
 
   /// Get a human-readable description of the event
   String get description {

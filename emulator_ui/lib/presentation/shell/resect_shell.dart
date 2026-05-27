@@ -4,6 +4,8 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../core/theme.dart';
 import '../../providers/app_providers.dart';
+import '../../providers/config_providers.dart';
+import '../dialogs/system_config_dialog.dart';
 import '../dialogs/unsaved_changes_dialog.dart';
 import '../screens/callgraph/callgraph_screen.dart';
 import '../screens/comms/comms_screen.dart';
@@ -45,6 +47,12 @@ class _ResectShellState extends ConsumerState<ResectShell> with WindowListener {
   void initState() {
     super.initState();
     windowManager.addListener(this);
+    // On first launch (no completed setup), show the configuration wizard.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && ref.read(firstRunProvider)) {
+        SystemConfigDialog.show(context, wizard: true);
+      }
+    });
   }
 
   @override
@@ -54,7 +62,7 @@ class _ResectShellState extends ConsumerState<ResectShell> with WindowListener {
   }
 
   @override
-  void onWindowClose() async {
+  Future<void> onWindowClose() async {
     final emulator = ref.read(currentEmulatorProvider);
     final isDirty = ref.read(emulatorDirtyProvider);
     if (emulator != null && isDirty && mounted) {

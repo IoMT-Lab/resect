@@ -177,17 +177,13 @@ class EmulationOrchestrator {
     required String name,
     String? elfFilePath,
     String? baseImagePath,
-  }) async {
-    return await emulatorWorkflow.createEmulator(
+  }) async => emulatorWorkflow.createEmulator(
       name: name,
       elfFilePath: elfFilePath,
       baseImagePath: baseImagePath,
     );
-  }
 
-  Future<Emulator> loadEmulator(String emulatorPath) async {
-    return await emulatorWorkflow.loadEmulator(emulatorPath);
-  }
+  Future<Emulator> loadEmulator(String emulatorPath) async => emulatorWorkflow.loadEmulator(emulatorPath);
 
   Future<void> saveEmulator(Emulator emulator, {String? savePath}) async {
     await emulatorWorkflow.saveEmulator(emulator, savePath: savePath);
@@ -219,8 +215,7 @@ class EmulationOrchestrator {
     Map<String, int> hookOverrides = const {},
     Map<String, String> resolvedHooks = const {},
     String? memoryMapPath,
-  }) async {
-    return synthesizerWorkflow.run(
+  }) async => synthesizerWorkflow.run(
       elfPath: elfPath,
       elfHash: elfHash,
       baseImagePath: baseImagePath,
@@ -232,25 +227,20 @@ class EmulationOrchestrator {
       resolvedHooks: resolvedHooks,
       memoryMapPath: memoryMapPath,
     );
-  }
 
   // =========================================================================
   // PUBLIC API: ANALYSIS OPERATIONS
   // =========================================================================
 
-  Future<CallGraph> generateCallGraph(String elfPath) async {
-    return await analysisWorkflow.generateCallGraph(elfPath);
-  }
+  Future<CallGraph> generateCallGraph(String elfPath) async => analysisWorkflow.generateCallGraph(elfPath);
 
   Map<String, GraphPoint> applyLayout({
     required CallGraph callGraph,
     required GraphLayout layoutType,
-  }) {
-    return analysisWorkflow.applyLayout(
+  }) => analysisWorkflow.applyLayout(
       callGraph: callGraph,
       layoutType: layoutType,
     );
-  }
 
   // =========================================================================
   // INTERNAL HELPERS

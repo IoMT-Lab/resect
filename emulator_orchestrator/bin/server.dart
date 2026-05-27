@@ -4,15 +4,8 @@ import 'package:emulator_orchestrator/api/api_server.dart';
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
 import 'package:emulator_orchestrator/data/repositories/emulator_repository.dart';
 import 'package:emulator_orchestrator/data/services/artifact_library_service.dart';
-import 'package:emulator_orchestrator/data/services/callgraph_service.dart';
-import 'package:emulator_orchestrator/data/services/filtered_trace_service.dart';
-import 'package:emulator_orchestrator/data/services/lifecycle_service.dart';
-import 'package:emulator_orchestrator/data/services/trace_service.dart';
 import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
-import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_call_graph_source.dart';
-import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_emulation_controller.dart';
-import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_engine_lifecycle.dart';
-import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_trace_source.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/dart/dart_engine.dart';
 
 /// Headless API server for the emulation orchestrator.
 ///
@@ -28,34 +21,29 @@ void main(List<String> args) async {
   print('Emulation API Server');
   print('====================');
 
-  // Instantiate concrete services. ApiServer holds direct references for
-  // isConnected checks; the orchestrator sees them only through the engine
-  // abstraction layer.
-  final lifecycleService = LifecycleService(serverUrl: config.backendUrl);
-  final callgraphService = CallgraphService(serverUrl: config.backendUrl);
-  final traceService = TraceService(serverUrl: config.backendUrl);
-  final filteredTraceService = FilteredTraceService(serverUrl: config.backendUrl);
+  // Pure-Dart engine (renode-dart + callgraph-dart); no external backend.
+  final engine = DartEngine();
   final emulatorRepository = EmulatorRepository();
   final artifactDb = ArtifactDatabase();
   final artifactLibraryService = ArtifactLibraryService(artifactDb);
 
   final orchestrator = EmulationOrchestrator(
-    engineLifecycle: RenodeEngineLifecycle(),
-    emulationController: RenodeEmulationController(lifecycleService),
-    callGraphSource: RenodeCallGraphSource(callgraphService),
-    traceSource: RenodeTraceSource(
-      traceService: traceService,
-      filteredTraceService: filteredTraceService,
-    ),
+    engineLifecycle: engine.lifecycle,
+    emulationController: engine.controller,
+    callGraphSource: engine.callGraphSource,
+    traceSource: engine.traceSource,
     emulatorRepository: emulatorRepository,
     artifactDb: artifactDb,
   );
 
+  // Call-graph extraction is in-process; mark the source ready so the
+  // /callgraph endpoint's connection gate passes.
+  await engine.callGraphSource.connect();
+
   // Create and start API server
   final apiServer = ApiServer(
     orchestrator: orchestrator,
-    callgraphService: callgraphService,
-    lifecycleService: lifecycleService,
+    callGraphSource: engine.callGraphSource,
     artifactLibraryService: artifactLibraryService,
   );
 
@@ -65,7 +53,6 @@ void main(List<String> args) async {
   );
 
   print('Listening on http://${server.address.host}:${server.port}');
-  print('Backend URL: ${config.backendUrl}');
   print('');
   print('Endpoints:');
   print('  GET  /status              — Current state');
@@ -81,7 +68,7 @@ void main(List<String> args) async {
   print('Press Ctrl+C to stop.');
 
   // Handle shutdown (SIGINT from Ctrl+C, SIGTERM from process managers)
-  void shutdown() async {
+  Future<void> shutdown() async {
     print('\nShutting down...');
     await apiServer.stop();
     orchestrator.dispose();
@@ -95,19 +82,16 @@ void main(List<String> args) async {
 class _ServerConfig {
   final String address;
   final int port;
-  final String backendUrl;
 
   _ServerConfig({
     required this.address,
     required this.port,
-    required this.backendUrl,
   });
 }
 
 _ServerConfig _parseArgs(List<String> args) {
   var port = 8080;
   var address = 'localhost';
-  var backendUrl = 'http://localhost:12356';
 
   for (var i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -116,19 +100,11 @@ _ServerConfig _parseArgs(List<String> args) {
         if (i + 1 < args.length) {
           port = int.tryParse(args[++i]) ?? port;
         }
-        break;
       case '--address':
       case '-a':
         if (i + 1 < args.length) {
           address = args[++i];
         }
-        break;
-      case '--backend-url':
-      case '-b':
-        if (i + 1 < args.length) {
-          backendUrl = args[++i];
-        }
-        break;
       case '--help':
       case '-h':
         print('Usage: dart run bin/server.dart [options]');
@@ -136,7 +112,6 @@ _ServerConfig _parseArgs(List<String> args) {
         print('Options:');
         print('  -p, --port <port>            HTTP port (default: 8080)');
         print('  -a, --address <address>      Bind address (default: localhost)');
-        print('  -b, --backend-url <url>      Python backend URL (default: http://localhost:12356)');
         print('  -h, --help                   Show this help');
         exit(0);
     }
@@ -145,6 +120,5 @@ _ServerConfig _parseArgs(List<String> args) {
   return _ServerConfig(
     address: address,
     port: port,
-    backendUrl: backendUrl,
   );
 }

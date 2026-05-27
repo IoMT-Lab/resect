@@ -1,7 +1,8 @@
+import 'package:emulator_orchestrator/data/models/trace_activity_event.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../providers/app_providers.dart';
-import 'package:emulator_orchestrator/data/models/trace_activity_event.dart';
 
 /// Right sidebar showing trace activity.
 ///
@@ -83,8 +84,7 @@ class TraceActivitySidebar extends ConsumerWidget {
   }
 
   /// Build the header with title and toggle button
-  Widget _buildHeader(BuildContext context, WidgetRef ref, bool isExpanded) {
-    return Container(
+  Widget _buildHeader(BuildContext context, WidgetRef ref, bool isExpanded) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       child: Row(
         children: [
@@ -113,11 +113,9 @@ class TraceActivitySidebar extends ConsumerWidget {
         ],
       ),
     );
-  }
 
   /// Build the empty state when no trace events yet
-  Widget _buildEmptyState(BuildContext context) {
-    return Center(
+  Widget _buildEmptyState(BuildContext context) => Center(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Text(
@@ -127,15 +125,13 @@ class TraceActivitySidebar extends ConsumerWidget {
         ),
       ),
     );
-  }
 
   /// Build the list of trace events
   Widget _buildTraceList(
     BuildContext context,
     WidgetRef ref,
     List<TraceActivityEvent> events,
-  ) {
-    return ListView.builder(
+  ) => ListView.builder(
       reverse: true, // Show newest at bottom
       padding: const EdgeInsets.all(8),
       itemCount: events.length,
@@ -144,7 +140,6 @@ class TraceActivitySidebar extends ConsumerWidget {
         return _buildTraceEventItem(context, ref, event, index);
       },
     );
-  }
 
   /// Build a single trace event item
   Widget _buildTraceEventItem(
@@ -222,8 +217,8 @@ class TraceActivitySidebar extends ConsumerWidget {
         return _EventStyling(
           icon: Icons.play_arrow,
           iconColor: Colors.green,
-          backgroundColor: Colors.green.withOpacity(0.1),
-          borderColor: Colors.green.withOpacity(0.3),
+          backgroundColor: Colors.green.withValues(alpha: 0.1),
+          borderColor: Colors.green.withValues(alpha: 0.3),
           textColor: null,
           fontWeight: FontWeight.normal,
         );
@@ -234,11 +229,11 @@ class TraceActivitySidebar extends ConsumerWidget {
           icon: Icons.pause,
           iconColor: isUnhandled ? Colors.red : Colors.orange,
           backgroundColor: isUnhandled
-              ? Colors.red.withOpacity(0.1)
-              : Colors.orange.withOpacity(0.1),
+              ? Colors.red.withValues(alpha: 0.1)
+              : Colors.orange.withValues(alpha: 0.1),
           borderColor: isUnhandled
-              ? Colors.red.withOpacity(0.3)
-              : Colors.orange.withOpacity(0.3),
+              ? Colors.red.withValues(alpha: 0.3)
+              : Colors.orange.withValues(alpha: 0.3),
           textColor: isUnhandled ? Colors.red[300] : Colors.orange[300],
           fontWeight: FontWeight.bold,
         );
@@ -246,8 +241,8 @@ class TraceActivitySidebar extends ConsumerWidget {
         return _EventStyling(
           icon: Icons.play_circle_outline,
           iconColor: Colors.blue,
-          backgroundColor: Colors.blue.withOpacity(0.1),
-          borderColor: Colors.blue.withOpacity(0.3),
+          backgroundColor: Colors.blue.withValues(alpha: 0.1),
+          borderColor: Colors.blue.withValues(alpha: 0.3),
           textColor: Colors.blue[300],
           fontWeight: FontWeight.bold,
         );
@@ -255,8 +250,8 @@ class TraceActivitySidebar extends ConsumerWidget {
         return _EventStyling(
           icon: Icons.refresh,
           iconColor: Colors.purple,
-          backgroundColor: Colors.purple.withOpacity(0.1),
-          borderColor: Colors.purple.withOpacity(0.3),
+          backgroundColor: Colors.purple.withValues(alpha: 0.1),
+          borderColor: Colors.purple.withValues(alpha: 0.3),
           textColor: Colors.purple[300],
           fontWeight: FontWeight.bold,
         );
@@ -278,7 +273,6 @@ class _EventStyling {
     required this.iconColor,
     required this.backgroundColor,
     required this.borderColor,
-    this.textColor,
-    required this.fontWeight,
+    required this.fontWeight, this.textColor,
   });
 }

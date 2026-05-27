@@ -24,7 +24,7 @@ class VagrantTestRunner {
   Stream<VagrantTestEvent> get events => _controller.stream;
 
   Process? _activeProcess;
-  bool _cancelled = false;
+  var _cancelled = false;
   String? _workDir;
 
   /// Start the test run.
@@ -117,7 +117,7 @@ class VagrantTestRunner {
       }
     } catch (e) {
       if (!_cancelled) {
-        _emit(VagrantTestComplete(false));
+        _emit(const VagrantTestComplete(false));
       }
     } finally {
       await _cleanup();
@@ -234,7 +234,7 @@ class VagrantTestRunner {
       'Failed to generate call graph',
     ];
     final output = allLines.join('\n');
-    final hasCrash = crashIndicators.any((s) => output.contains(s));
+    final hasCrash = crashIndicators.any(output.contains);
 
     if (exitCode == 1 && acceptSynthesisNonConvergence && !hasCrash) {
       _emit(VagrantTestLogLine(
@@ -279,7 +279,8 @@ Vagrant.configure("2") do |config|
 end
 ''';
 
-    const provisionSh = r'''#!/usr/bin/env bash
+    const provisionSh = r'''
+#!/usr/bin/env bash
 set -e
 
 # ---------------------------------------------------------------------------

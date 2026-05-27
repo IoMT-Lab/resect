@@ -1,11 +1,11 @@
 import 'package:emulator_orchestrator/core/app_paths.dart';
 import 'package:emulator_orchestrator/core/constants.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
-import '../../../core/file_selection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
+import '../../../core/file_selection.dart';
 import '../../../providers/app_providers.dart';
 import '../../dialogs/new_emulator_dialog.dart';
 import '../../dialogs/unsaved_changes_dialog.dart';
@@ -68,7 +68,7 @@ Future<void> openEmulator(
 }) async {
   if (!await guardUnsavedChanges(context, ref)) return;
 
-  String? emulatorPath = path;
+  var emulatorPath = path;
   if (emulatorPath == null) {
     if (!context.mounted) return;
     emulatorPath = await ref.read(fileSelectorProvider).openFile(
@@ -212,8 +212,7 @@ Future<void> closeEmulator(BuildContext context, WidgetRef ref) async {
 
 /// Snapshot the providers that contribute to persisted emulator state into
 /// the [Emulator] before writing it to disk.
-Emulator _gatherEmulatorState(WidgetRef ref, Emulator emulator) {
-  return emulator.copyWith(
+Emulator _gatherEmulatorState(WidgetRef ref, Emulator emulator) => emulator.copyWith(
     modifiedAt: DateTime.now(),
     elfFilePath: ref.read(selectedElfPathProvider) ?? emulator.elfFilePath,
     uiState: UiState(
@@ -224,13 +223,10 @@ Emulator _gatherEmulatorState(WidgetRef ref, Emulator emulator) {
     hookPreferences: Map<String, int>.from(ref.read(hookPreferencesProvider)),
     hookOverrides: Map<String, int>.from(ref.read(hookOverridesProvider)),
   );
-}
 
 /// Resolve the path that "Save" would use for a never-saved emulator —
 /// used in disabled-button hover tooltips and similar copy.
-String defaultSavePathFor(Emulator emulator) {
-  return p.join(
+String defaultSavePathFor(Emulator emulator) => p.join(
     AppPaths.projectsDir,
     '${emulator.name}${AppConstants.emulatorFileExtension}',
   );
-}

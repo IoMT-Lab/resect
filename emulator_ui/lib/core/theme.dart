@@ -70,8 +70,7 @@ class AppTheme {
   // ThemeData
   // ---------------------------------------------------------------------------
 
-  static ThemeData get darkTheme {
-    return ThemeData(
+  static ThemeData get darkTheme => ThemeData(
       brightness: Brightness.dark,
       primaryColor: accent,
       scaffoldBackgroundColor: bgChrome,
@@ -132,7 +131,6 @@ class AppTheme {
         contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       ),
     );
-  }
 
   // ---------------------------------------------------------------------------
   // Tab-label text styles

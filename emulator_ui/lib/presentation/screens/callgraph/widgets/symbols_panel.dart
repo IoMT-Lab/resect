@@ -20,7 +20,7 @@ class SymbolsPanel extends ConsumerStatefulWidget {
 
 class _SymbolsPanelState extends ConsumerState<SymbolsPanel> {
   final _searchController = TextEditingController();
-  String _query = '';
+  var _query = '';
 
   @override
   void dispose() {
@@ -93,8 +93,7 @@ class _Header extends StatelessWidget {
   const _Header();
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
+  Widget build(BuildContext context) => Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
       child: const Text(
         'SYMBOLS',
@@ -106,7 +105,6 @@ class _Header extends StatelessWidget {
         ),
       ),
     );
-  }
 }
 
 class _SearchBox extends StatelessWidget {
@@ -116,42 +114,40 @@ class _SearchBox extends StatelessWidget {
   const _SearchBox({required this.controller, required this.onChanged});
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
+  Widget build(BuildContext context) => Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
       child: TextField(
         controller: controller,
         onChanged: onChanged,
         style: const TextStyle(color: AppTheme.textPrimary, fontSize: 12),
         cursorColor: AppTheme.accent,
-        decoration: InputDecoration(
+        decoration: const InputDecoration(
           hintText: 'Search symbols…',
-          hintStyle: const TextStyle(color: AppTheme.textMuted, fontSize: 12),
-          prefixIcon: const Icon(Icons.search,
+          hintStyle: TextStyle(color: AppTheme.textMuted, fontSize: 12),
+          prefixIcon: Icon(Icons.search,
               size: 14, color: AppTheme.textMuted),
           prefixIconConstraints:
-              const BoxConstraints(minWidth: 32, minHeight: 28),
+              BoxConstraints(minWidth: 32, minHeight: 28),
           isDense: true,
           filled: true,
           fillColor: AppTheme.bgCanvas,
           contentPadding:
-              const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          border: const OutlineInputBorder(
+              EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          border: OutlineInputBorder(
             borderSide: BorderSide(color: AppTheme.border),
             borderRadius: BorderRadius.zero,
           ),
-          enabledBorder: const OutlineInputBorder(
+          enabledBorder: OutlineInputBorder(
             borderSide: BorderSide(color: AppTheme.border),
             borderRadius: BorderRadius.zero,
           ),
-          focusedBorder: const OutlineInputBorder(
+          focusedBorder: OutlineInputBorder(
             borderSide: BorderSide(color: AppTheme.accent),
             borderRadius: BorderRadius.zero,
           ),
         ),
       ),
     );
-  }
 }
 
 class _SymbolList extends ConsumerWidget {
@@ -243,15 +239,15 @@ class _SymbolList extends ConsumerWidget {
     final out = <Object>[];
     if (filteredEntryPoints.isNotEmpty) {
       out.add(_Section('ENTRY POINTS', filteredEntryPoints.length));
-      out.addAll(filteredEntryPoints.map((n) => _Sym(n)));
+      out.addAll(filteredEntryPoints.map(_Sym.new));
     }
     if (lower.isNotEmpty && filteredCalledOnly.isNotEmpty) {
       out.add(_Section('OTHER MATCHES', filteredCalledOnly.length));
-      out.addAll(filteredCalledOnly.map((n) => _Sym(n)));
+      out.addAll(filteredCalledOnly.map(_Sym.new));
     }
     if (filteredIsolated.isNotEmpty) {
       out.add(_Section('ISOLATED', filteredIsolated.length));
-      out.addAll(filteredIsolated.map((n) => _Sym(n)));
+      out.addAll(filteredIsolated.map(_Sym.new));
     }
     return out;
   }
@@ -275,8 +271,7 @@ class _SectionLabel extends StatelessWidget {
   const _SectionLabel({required this.label, required this.count});
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
+  Widget build(BuildContext context) => Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
       child: Row(
         children: [
@@ -300,7 +295,6 @@ class _SectionLabel extends StatelessWidget {
         ],
       ),
     );
-  }
 }
 
 class _SymbolRow extends StatelessWidget {
@@ -315,8 +309,7 @@ class _SymbolRow extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    return InkWell(
+  Widget build(BuildContext context) => InkWell(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
@@ -343,5 +336,4 @@ class _SymbolRow extends StatelessWidget {
         ),
       ),
     );
-  }
 }

@@ -1,8 +1,8 @@
 import 'package:emulator_orchestrator/data/models/emulator.dart';
-import '../../../../core/file_selection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/file_selection.dart';
 import '../../../../core/theme.dart';
 import '../../../../providers/app_providers.dart';
 
@@ -191,8 +191,7 @@ class _NoEmulator extends StatelessWidget {
   const _NoEmulator();
 
   @override
-  Widget build(BuildContext context) {
-    return const Center(
+  Widget build(BuildContext context) => const Center(
       child: Padding(
         padding: EdgeInsets.all(24),
         child: Text(
@@ -202,7 +201,6 @@ class _NoEmulator extends StatelessWidget {
         ),
       ),
     );
-  }
 }
 
 class _SectionLabel extends StatelessWidget {
@@ -210,8 +208,7 @@ class _SectionLabel extends StatelessWidget {
   const _SectionLabel(this.text);
 
   @override
-  Widget build(BuildContext context) {
-    return Text(
+  Widget build(BuildContext context) => Text(
       text,
       style: const TextStyle(
         color: AppTheme.textMuted,
@@ -220,7 +217,6 @@ class _SectionLabel extends StatelessWidget {
         letterSpacing: 2,
       ),
     );
-  }
 }
 
 class _PathRow extends StatelessWidget {
@@ -228,8 +224,7 @@ class _PathRow extends StatelessWidget {
   const _PathRow({required this.path});
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
+  Widget build(BuildContext context) => Padding(
       padding: const EdgeInsets.only(top: 4),
       child: Text(
         path ?? '(none)',
@@ -240,7 +235,6 @@ class _PathRow extends StatelessWidget {
         ),
       ),
     );
-  }
 }
 
 class _ConfigRow extends StatelessWidget {
@@ -257,8 +251,7 @@ class _ConfigRow extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
+  Widget build(BuildContext context) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         children: [
@@ -305,7 +298,6 @@ class _ConfigRow extends StatelessWidget {
         ],
       ),
     );
-  }
 }
 
 class _HooksSection extends ConsumerWidget {
@@ -449,8 +441,7 @@ class _SymbolPickerDialogState extends State<_SymbolPickerDialog> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Dialog(
+  Widget build(BuildContext context) => Dialog(
       backgroundColor: AppTheme.bgPanel,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 420, maxHeight: 520),
@@ -544,5 +535,4 @@ class _SymbolPickerDialogState extends State<_SymbolPickerDialog> {
         ),
       ),
     );
-  }
 }

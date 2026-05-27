@@ -31,8 +31,7 @@ class _LoadedLayout extends StatelessWidget {
   const _LoadedLayout();
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
+  Widget build(BuildContext context) => Container(
       color: AppTheme.bgCanvas,
       padding: const EdgeInsets.all(32),
       child: ConstrainedBox(
@@ -72,5 +71,4 @@ class _LoadedLayout extends StatelessWidget {
         ),
       ),
     );
-  }
 }

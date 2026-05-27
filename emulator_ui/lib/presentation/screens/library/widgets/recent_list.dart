@@ -57,7 +57,7 @@ class RecentList extends ConsumerWidget {
           ),
         ),
       ),
-      error: (_, __) => const SizedBox.shrink(),
+      error: (_, _) => const SizedBox.shrink(),
     );
   }
 }
@@ -69,8 +69,7 @@ class _RecentRow extends StatelessWidget {
   const _RecentRow({required this.entry, required this.onTap});
 
   @override
-  Widget build(BuildContext context) {
-    return InkWell(
+  Widget build(BuildContext context) => InkWell(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -118,7 +117,6 @@ class _RecentRow extends StatelessWidget {
         ),
       ),
     );
-  }
 
   String _formatTimestamp(DateTime ts) {
     final delta = DateTime.now().difference(ts);
@@ -134,8 +132,7 @@ class _SectionHeader extends StatelessWidget {
   const _SectionHeader(this.label);
 
   @override
-  Widget build(BuildContext context) {
-    return Text(
+  Widget build(BuildContext context) => Text(
       label,
       style: const TextStyle(
         color: AppTheme.textPrimary,
@@ -144,5 +141,4 @@ class _SectionHeader extends StatelessWidget {
         letterSpacing: 3,
       ),
     );
-  }
 }

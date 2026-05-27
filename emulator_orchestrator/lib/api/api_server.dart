@@ -7,10 +7,9 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 
 import '../data/services/artifact_library_service.dart';
-import '../data/services/callgraph_service.dart';
 import '../data/services/fidelity_calculator.dart';
-import '../data/services/lifecycle_service.dart';
 import '../orchestrator/emulation_orchestrator.dart';
+import '../orchestrator/engine/call_graph_source.dart';
 
 /// HTTP API server wrapping the EmulationOrchestrator.
 ///
@@ -18,8 +17,7 @@ import '../orchestrator/emulation_orchestrator.dart';
 /// Can run alongside the Flutter GUI or headless (no UI).
 class ApiServer {
   final EmulationOrchestrator orchestrator;
-  final CallgraphService callgraphService;
-  final LifecycleService lifecycleService;
+  final CallGraphSource callGraphSource;
   final ArtifactLibraryService artifactLibraryService;
   late final Router _router;
 
@@ -27,8 +25,7 @@ class ApiServer {
 
   ApiServer({
     required this.orchestrator,
-    required this.callgraphService,
-    required this.lifecycleService,
+    required this.callGraphSource,
     required this.artifactLibraryService,
   }) {
     _router = Router()
@@ -139,7 +136,7 @@ class ApiServer {
     }
 
     try {
-      if (!callgraphService.isConnected) {
+      if (!callGraphSource.isConnected) {
         return _errorResponse(503, 'Callgraph service not connected. Start emulation first.');
       }
 
@@ -261,9 +258,7 @@ class ApiServer {
     });
 
     // Clean up when client disconnects
-    controller.onCancel = () {
-      subscription.cancel();
-    };
+    controller.onCancel = subscription.cancel;
 
     return Response.ok(
       controller.stream,
@@ -359,7 +354,7 @@ class ApiServer {
     }
 
     try {
-      if (!callgraphService.isConnected) {
+      if (!callGraphSource.isConnected) {
         return _errorResponse(503,
             'Callgraph service not connected. Start emulation first.');
       }
@@ -400,20 +395,16 @@ class ApiServer {
     }
   }
 
-  Response _jsonResponse(Map<String, dynamic> data, {int statusCode = 200}) {
-    return Response(
+  Response _jsonResponse(Map<String, dynamic> data, {int statusCode = 200}) => Response(
       statusCode,
       body: jsonEncode(data),
       headers: {'Content-Type': 'application/json'},
     );
-  }
 
-  Response _errorResponse(int statusCode, String message) {
-    return Response(
+  Response _errorResponse(int statusCode, String message) => Response(
       statusCode,
       body: jsonEncode({'error': message}),
       headers: {'Content-Type': 'application/json'},
     );
-  }
 
 }

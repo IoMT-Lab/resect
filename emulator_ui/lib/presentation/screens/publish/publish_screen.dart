@@ -1,8 +1,8 @@
 import 'package:emulator_orchestrator/data/models/emulator.dart';
-import '../../../core/file_selection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/file_selection.dart';
 import '../../../core/theme.dart';
 import '../../../providers/app_providers.dart';
 import '../../dialogs/vagrant_test_dialog.dart';
@@ -48,10 +48,9 @@ class _Header extends StatelessWidget {
   const _Header();
 
   @override
-  Widget build(BuildContext context) {
-    return Column(
+  Widget build(BuildContext context) => const Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: const [
+      children: [
         Text(
           'PUBLISH',
           style: TextStyle(
@@ -75,15 +74,13 @@ class _Header extends StatelessWidget {
         ),
       ],
     );
-  }
 }
 
 class _NoEmulatorNotice extends StatelessWidget {
   const _NoEmulatorNotice();
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
+  Widget build(BuildContext context) => Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         color: AppTheme.bgPanel,
@@ -96,7 +93,6 @@ class _NoEmulatorNotice extends StatelessWidget {
         textAlign: TextAlign.center,
       ),
     );
-  }
 }
 
 class _CardGrid extends ConsumerWidget {

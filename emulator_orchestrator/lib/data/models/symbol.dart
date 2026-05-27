@@ -26,24 +26,18 @@ class Symbol {
   ///   "num_instructions": 42,
   ///   "called_symbols": {"function_a": 1, "function_b": 3}
   /// }
-  factory Symbol.fromJson(String name, Map<String, dynamic> json) {
-    return Symbol(
+  factory Symbol.fromJson(String name, Map<String, dynamic> json) => Symbol(
       name: name,
       numInstructions: json['num_instructions'] as int,
       calledSymbols: Map<String, int>.from(json['called_symbols'] ?? {}),
     );
-  }
 
   /// Convert Symbol back to JSON (for saving/caching)
-  Map<String, dynamic> toJson() {
-    return {
+  Map<String, dynamic> toJson() => {
       'num_instructions': numInstructions,
       'called_symbols': calledSymbols,
     };
-  }
 
   @override
-  String toString() {
-    return 'Symbol(name: $name, instructions: $numInstructions, calls: ${calledSymbols.length})';
-  }
+  String toString() => 'Symbol(name: $name, instructions: $numInstructions, calls: ${calledSymbols.length})';
 }

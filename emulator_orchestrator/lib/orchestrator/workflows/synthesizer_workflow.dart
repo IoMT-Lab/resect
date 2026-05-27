@@ -28,7 +28,7 @@ class SynthesizerWorkflow {
   Stream<SynthesizerEvent> get events => _eventController.stream;
 
   /// Whether a synthesis run is currently active.
-  bool _isRunning = false;
+  var _isRunning = false;
   bool get isRunning => _isRunning;
 
   SynthesizerWorkflow({
@@ -69,15 +69,13 @@ class SynthesizerWorkflow {
     final hookCache = <String, List<Artifact>>{}; // symbol → available hooks
     final definedHooks = <String, String>{};    // hookName → hookCode
 
-    int iteration = 0;
+    var iteration = 0;
 
-    Map<String, String> buildHookCodeMap() {
-      return {
+    Map<String, String> buildHookCodeMap() => {
         for (final entry in hookMap.entries)
           if (definedHooks.containsKey(entry.value))
             entry.key: definedHooks[entry.value]!,
       };
-    }
 
     // Pre-seed forced overrides (unconditional substitutions)
     final overriddenSymbols = <String>{};
@@ -307,12 +305,11 @@ class SynthesizerWorkflow {
   /// prior reset/load cycles. Only accepts pauses after the engine confirms
   /// execution actually began.
   Future<PausedEvent?> _startAndWaitForPause({
-    String? startFrom,
+    required bool pauseOnUnhandled, String? startFrom,
     List<String>? endAt,
-    required bool pauseOnUnhandled,
   }) async {
     final completer = Completer<PausedEvent?>();
-    bool executionStarted = false;
+    var executionStarted = false;
 
     late StreamSubscription<void> startedSub;
     startedSub = emulationController.onStarted.listen((_) {
@@ -392,7 +389,7 @@ class SynthesizerWorkflow {
     const retryDelay = Duration(seconds: 2);
 
     Object? lastError;
-    for (int attempt = 0; attempt < maxRetries; attempt++) {
+    for (var attempt = 0; attempt < maxRetries; attempt++) {
       try {
         await emulationController.load(baseImagePath, elfPath);
         return;

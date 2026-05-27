@@ -24,8 +24,8 @@ class EmulationWorkflow {
   final void Function(EmulationState) onStateChanged;
   final void Function(PausedEvent) onPauseEvent;
 
-  static const int maxLoadRetries = 3;
-  static const Duration retryDelay = Duration(seconds: 2);
+  static const maxLoadRetries = 3;
+  static const retryDelay = Duration(seconds: 2);
 
   StreamSubscription? _traceSubscription;
   StreamSubscription? _filteredTraceSubscription;
@@ -251,7 +251,7 @@ class EmulationWorkflow {
     print('Loading firmware: $baseImagePath and $elfPath');
 
     Object? lastError;
-    for (int attempt = 0; attempt < maxLoadRetries; attempt++) {
+    for (var attempt = 0; attempt < maxLoadRetries; attempt++) {
       try {
         await emulationController.load(baseImagePath, elfPath);
         return;
@@ -314,9 +314,8 @@ class EmulationWorkflow {
   }
 
   Future<void> _startEmulation({
-    String? startFrom,
+    required bool pauseOnUnhandled, String? startFrom,
     List<String>? endAt,
-    required bool pauseOnUnhandled,
   }) async {
     print('Starting emulation...');
     await emulationController.start(

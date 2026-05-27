@@ -40,6 +40,22 @@ class AppPaths {
     );
   }
 
+  /// Walk up from the current working directory to find the repo root —
+  /// identified by the presence of `install.sh`. Returns null if not found
+  /// (e.g. an installed app launched outside the source tree).
+  static String? findRepoRoot() {
+    var dir = Directory.current;
+    for (var i = 0; i < 8; i++) {
+      if (File(p.join(dir.path, 'install.sh')).existsSync()) {
+        return dir.path;
+      }
+      final parent = dir.parent;
+      if (parent.path == dir.path) break;
+      dir = parent;
+    }
+    return null;
+  }
+
   /// Ensure the projects directory exists, return its path.
   static Future<String> ensureProjectsDir() async {
     final dir = Directory(projectsDir);

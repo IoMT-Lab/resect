@@ -58,8 +58,7 @@ class _Header extends StatelessWidget {
   const _Header();
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
+  Widget build(BuildContext context) => Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: AppTheme.border)),
@@ -74,15 +73,13 @@ class _Header extends StatelessWidget {
         ),
       ),
     );
-  }
 }
 
 class _EmptyState extends StatelessWidget {
   const _EmptyState();
 
   @override
-  Widget build(BuildContext context) {
-    return const Center(
+  Widget build(BuildContext context) => const Center(
       child: Padding(
         padding: EdgeInsets.all(24),
         child: Text(
@@ -92,22 +89,19 @@ class _EmptyState extends StatelessWidget {
         ),
       ),
     );
-  }
 }
 
 class _CenteredSpinner extends StatelessWidget {
   const _CenteredSpinner();
 
   @override
-  Widget build(BuildContext context) {
-    return const Center(
+  Widget build(BuildContext context) => const Center(
       child: SizedBox(
         width: 18,
         height: 18,
         child: CircularProgressIndicator(strokeWidth: 1.5),
       ),
     );
-  }
 }
 
 class _ErrorBlock extends StatelessWidget {
@@ -115,8 +109,7 @@ class _ErrorBlock extends StatelessWidget {
   const _ErrorBlock(this.message);
 
   @override
-  Widget build(BuildContext context) {
-    return Center(
+  Widget build(BuildContext context) => Center(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Text(
@@ -126,7 +119,6 @@ class _ErrorBlock extends StatelessWidget {
         ),
       ),
     );
-  }
 }
 
 class _Details extends ConsumerWidget {
@@ -136,8 +128,7 @@ class _Details extends ConsumerWidget {
   const _Details({required this.symbol, required this.callers});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return ListView(
+  Widget build(BuildContext context, WidgetRef ref) => ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
         const _MutedLabel('FUNCTION'),
@@ -213,7 +204,6 @@ class _Details extends ConsumerWidget {
           ),
       ],
     );
-  }
 }
 
 class _MutedLabel extends StatelessWidget {
@@ -221,8 +211,7 @@ class _MutedLabel extends StatelessWidget {
   const _MutedLabel(this.text);
 
   @override
-  Widget build(BuildContext context) {
-    return Text(
+  Widget build(BuildContext context) => Text(
       text,
       style: const TextStyle(
         color: AppTheme.textMuted,
@@ -231,7 +220,6 @@ class _MutedLabel extends StatelessWidget {
         letterSpacing: 2,
       ),
     );
-  }
 }
 
 class _LinkRow extends StatelessWidget {
@@ -248,8 +236,7 @@ class _LinkRow extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    return InkWell(
+  Widget build(BuildContext context) => InkWell(
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
@@ -280,7 +267,6 @@ class _LinkRow extends StatelessWidget {
         ),
       ),
     );
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -374,8 +360,7 @@ class _HookDropdown extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    return Column(
+  Widget build(BuildContext context) => Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _MutedLabel(label),
@@ -460,7 +445,6 @@ class _HookDropdown extends StatelessWidget {
         ),
       ],
     );
-  }
 
   String _hookLabel(int index, String code) {
     final trimmed = code.trim();

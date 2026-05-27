@@ -15,14 +15,14 @@ class ArtifactLibraryService {
   ArtifactLibraryService(this._db);
 
   /// Renode hook code that sets register 0 to 0 and returns to caller.
-  static const String return0HookCode = '''
+  static const return0HookCode = '''
 from Antmicro.Renode.Peripherals.CPU import RegisterValue
 cpu.SetRegister(0, RegisterValue.Create(0, 64))
 cpu.PC = cpu.LR
 ''';
 
   /// Renode hook code that sets register 0 to 1 and returns to caller.
-  static const String return1HookCode = '''
+  static const return1HookCode = '''
 from Antmicro.Renode.Peripherals.CPU import RegisterValue
 cpu.SetRegister(0, RegisterValue.Create(1, 64))
 cpu.PC = cpu.LR

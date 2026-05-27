@@ -15,25 +15,21 @@ class UnsavedChangesDialog extends StatelessWidget {
   final String emulatorName;
 
   const UnsavedChangesDialog({
-    super.key,
-    required this.emulatorName,
+    required this.emulatorName, super.key,
   });
 
   /// Show the dialog and return user's choice
   static Future<UnsavedChangesAction?> show(
     BuildContext context, {
     required String emulatorName,
-  }) {
-    return showDialog<UnsavedChangesAction>(
+  }) => showDialog<UnsavedChangesAction>(
       context: context,
       barrierDismissible: false, // Require explicit choice
       builder: (context) => UnsavedChangesDialog(emulatorName: emulatorName),
     );
-  }
 
   @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
+  Widget build(BuildContext context) => AlertDialog(
       title: const Row(
         children: [
           Icon(Icons.warning_amber_rounded, color: Colors.orange),
@@ -51,7 +47,7 @@ class UnsavedChangesDialog extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Your changes will be lost if you don\'t save them.',
+            "Your changes will be lost if you don't save them.",
             style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
           ),
         ],
@@ -59,7 +55,7 @@ class UnsavedChangesDialog extends StatelessWidget {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(UnsavedChangesAction.discard),
-          child: const Text('Don\'t Save'),
+          child: const Text("Don't Save"),
         ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(UnsavedChangesAction.cancel),
@@ -71,5 +67,4 @@ class UnsavedChangesDialog extends StatelessWidget {
         ),
       ],
     );
-  }
 }

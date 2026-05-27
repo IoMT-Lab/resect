@@ -4,12 +4,11 @@ publish_to: 'none'
 version: 0.1.0
 
 environment:
-  sdk: ^3.5.0
+  sdk: ^3.9.0
 
 resolution: workspace
 
 dependencies:
-  socket_io_client: ^2.0.3+1
   uuid: ^4.0.0
   archive: ^3.4.0
   path: ^1.9.0
@@ -18,8 +17,22 @@ dependencies:
   crypto: ^3.0.3
   shelf: ^1.4.0
   shelf_router: ^1.1.0
+  # Engine modules — maintained in their own IoMT-Lab repos, pinned to a commit
+  # for reproducibility. For local co-development, a git-ignored
+  # pubspec_overrides.yaml at the workspace root redirects these to sibling
+  # checkouts (see that file).
+  renode:
+    git:
+      url: git@github.com:IoMT-Lab/renode-dart.git
+      ref: 9b2fd262d6e6edb00fadbd4e025a3ae546e6c47d
+  callgraph:
+    git:
+      url: git@github.com:IoMT-Lab/callgraph-dart.git
+      ref: e35507e3211df87331114b92ac00a18a6141496a
 
 dev_dependencies:
   test: ^1.24.0
   drift_dev: ^2.15.0
   build_runner: ^2.4.0
+  iomt_lab_lints:
+    git: git@github.com:IoMT-Lab/lints-dart.git

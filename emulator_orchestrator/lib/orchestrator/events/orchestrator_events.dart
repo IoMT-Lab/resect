@@ -1,6 +1,6 @@
 import '../../data/models/emulation_state.dart';
 import '../../data/models/emulator.dart';
-import '../../data/services/lifecycle_service.dart';
+import '../engine/paused_event.dart';
 
 /// Base class for all orchestration events.
 ///

@@ -78,7 +78,7 @@ class AnalysisWorkflow {
     final positions = <String, GraphPoint>{};
     final random = math.Random(42); // Fixed seed for reproducibility
 
-    for (var node in nodes) {
+    for (final node in nodes) {
       positions[node] = GraphPoint(
         random.nextDouble() * 400,
         random.nextDouble() * 400,
@@ -101,7 +101,7 @@ class AnalysisWorkflow {
   Map<String, GraphPoint> _applyCircularLayout(CallGraph callGraph, List<String> nodes) {
     // Placeholder: Circular arrangement
     final positions = <String, GraphPoint>{};
-    final radius = 200.0;
+    const radius = 200.0;
     final angleStep = (2 * math.pi) / nodes.length;
 
     for (var i = 0; i < nodes.length; i++) {

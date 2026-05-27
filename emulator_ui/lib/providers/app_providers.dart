@@ -1,94 +1,38 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:emulator_orchestrator/data/services/callgraph_service.dart';
-import 'package:emulator_orchestrator/data/services/lifecycle_service.dart';
-import 'package:emulator_orchestrator/data/services/trace_service.dart';
-import 'package:emulator_orchestrator/data/services/filtered_trace_service.dart';
-import 'package:emulator_orchestrator/data/services/artifact_library_service.dart';
+import 'package:emulator_orchestrator/api/api_server.dart';
+import 'package:emulator_orchestrator/data/database/artifact_database.dart';
 import 'package:emulator_orchestrator/data/models/call_graph.dart';
-import 'package:emulator_orchestrator/data/models/trace_activity_event.dart';
+import 'package:emulator_orchestrator/data/models/emulation_state.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
+import 'package:emulator_orchestrator/data/models/fidelity_result.dart';
 import 'package:emulator_orchestrator/data/models/firmware_record.dart';
 import 'package:emulator_orchestrator/data/models/recent_emulator.dart';
-import 'package:emulator_orchestrator/data/models/emulation_state.dart';
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
-import 'package:emulator_orchestrator/data/models/fidelity_result.dart';
-import 'package:emulator_orchestrator/data/services/fidelity_calculator.dart';
-export 'package:emulator_orchestrator/data/models/emulation_state.dart';
-import 'package:emulator_orchestrator/data/database/artifact_database.dart';
+import 'package:emulator_orchestrator/data/models/trace_activity_event.dart';
 import 'package:emulator_orchestrator/data/repositories/emulator_repository.dart';
+import 'package:emulator_orchestrator/data/services/artifact_library_service.dart';
+import 'package:emulator_orchestrator/data/services/fidelity_calculator.dart';
 import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/dart/dart_engine.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/paused_event.dart';
 import 'package:emulator_orchestrator/orchestrator/events/orchestrator_events.dart';
-import 'package:emulator_orchestrator/orchestrator/workflows/synthesizer_workflow.dart';
 import 'package:emulator_orchestrator/orchestrator/vagrant_test_event.dart';
+import 'package:emulator_orchestrator/orchestrator/workflows/synthesizer_workflow.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import 'config_providers.dart';
+
+export 'package:emulator_orchestrator/data/models/emulation_state.dart';
 export 'package:emulator_orchestrator/orchestrator/vagrant_test_event.dart';
-import 'package:emulator_orchestrator/api/api_server.dart';
-import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_call_graph_source.dart';
-import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_emulation_controller.dart';
-import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_engine_lifecycle.dart';
-import 'package:emulator_orchestrator/orchestrator/engine/renode/renode_trace_source.dart';
-
-/// Provider for the CallgraphService singleton.
-///
-/// This creates and manages the connection to the Python server.
-final callgraphServiceProvider = Provider<CallgraphService>((ref) {
-  final service = CallgraphService();
-
-  // Clean up when provider is disposed
-  ref.onDispose(() {
-    service.dispose();
-  });
-
-  return service;
-});
-
-/// Provider for the LifecycleService singleton.
-///
-/// This manages Renode emulation lifecycle (load, start, pause, etc).
-final lifecycleServiceProvider = Provider<LifecycleService>((ref) {
-  final service = LifecycleService();
-
-  // Clean up when provider is disposed
-  ref.onDispose(() {
-    service.dispose();
-  });
-
-  return service;
-});
-
-/// Provider for the TraceService singleton.
-///
-/// This tracks function execution during emulation.
-final traceServiceProvider = Provider<TraceService>((ref) {
-  final service = TraceService();
-
-  // Clean up when provider is disposed
-  ref.onDispose(() {
-    service.dispose();
-  });
-
-  return service;
-});
-
-/// Provider for the FilteredTraceService singleton.
-///
-/// This tracks FIRST function calls during emulation (filtered server-side).
-final filteredTraceServiceProvider = Provider<FilteredTraceService>((ref) {
-  final service = FilteredTraceService();
-
-  // Clean up when provider is disposed
-  ref.onDispose(() {
-    service.dispose();
-  });
-
-  return service;
-});
 
 /// Provider for connection status (true = connected, false = disconnected).
 ///
 /// This streams the current connection state from the service.
-final connectionStatusProvider = StreamProvider<bool>((ref) {
-  final service = ref.watch(callgraphServiceProvider);
-  return service.connectionStatus;
+final connectionStatusProvider = StreamProvider<bool>((ref) async* {
+  // Call-graph analysis is now in-process (objdump), so it's always available.
+  final source = ref.watch(emulationOrchestratorProvider).callGraphSource;
+  await source.connect();
+  yield true;
+  yield* source.connectionStatus;
 });
 
 /// Provider for the currently selected ELF file path.
@@ -108,19 +52,8 @@ final callgraphProvider = FutureProvider<CallGraph?>((ref) async {
     return null;
   }
 
-  // Get the service
-  final service = ref.watch(callgraphServiceProvider);
-
-  // Ensure we're connected
-  if (!service.isConnected) {
-    throw Exception('Not connected to server');
-  }
-
-  // Request call graph from Python backend
-  final response = await service.getCallgraph(elfPath);
-
-  // Parse response into CallGraph object
-  return CallGraph.fromJson(elfPath, response);
+  // In-process call-graph extraction (objdump) via the engine abstraction.
+  return ref.watch(emulationOrchestratorProvider).generateCallGraph(elfPath);
 });
 
 /// Provider for the currently selected symbol (function) in the graph.
@@ -203,7 +136,10 @@ final tabReadinessProvider = Provider.family<TabReadiness, ResectTab>((ref, tab)
     case ResectTab.callGraph:
       return hasEmulator ? TabReadiness.ready : TabReadiness.notReady;
     case ResectTab.comms:
-      return hasCallGraph ? TabReadiness.ready : TabReadiness.notReady;
+      final commsEnabled = ref.watch(moduleEnabledProvider('MODULE_COMMS_BUS'));
+      return (commsEnabled && hasCallGraph)
+          ? TabReadiness.ready
+          : TabReadiness.notReady;
     case ResectTab.synthesize:
       return hasCallGraph ? TabReadiness.ready : TabReadiness.notReady;
     case ResectTab.publish:
@@ -246,11 +182,10 @@ class SynthesisProgress {
   final bool success;
 
   const SynthesisProgress({
-    this.iteration = 0,
+    required this.countdownStart, this.iteration = 0,
     this.hooksApplied = 0,
     this.currentSymbol = '',
     this.status = 'Starting...',
-    required this.countdownStart,
     this.complete = false,
     this.success = false,
   });
@@ -263,8 +198,7 @@ class SynthesisProgress {
     DateTime? countdownStart,
     bool? complete,
     bool? success,
-  }) {
-    return SynthesisProgress(
+  }) => SynthesisProgress(
       iteration: iteration ?? this.iteration,
       hooksApplied: hooksApplied ?? this.hooksApplied,
       currentSymbol: currentSymbol ?? this.currentSymbol,
@@ -273,7 +207,6 @@ class SynthesisProgress {
       complete: complete ?? this.complete,
       success: success ?? this.success,
     );
-  }
 }
 
 final synthesisProgressProvider = StateProvider<SynthesisProgress?>((ref) => null);
@@ -326,9 +259,7 @@ final fidelityResultProvider = Provider<FidelityResult?>((ref) {
 /// Provider for the EmulatorRepository singleton.
 ///
 /// Handles all emulator file I/O operations.
-final emulatorRepositoryProvider = Provider<EmulatorRepository>((ref) {
-  return EmulatorRepository();
-});
+final emulatorRepositoryProvider = Provider<EmulatorRepository>((ref) => EmulatorRepository());
 
 // ============================================================================
 // ORCHESTRATOR PROVIDER
@@ -339,19 +270,21 @@ final emulatorRepositoryProvider = Provider<EmulatorRepository>((ref) {
 /// The orchestrator coordinates all business logic operations and emits
 /// events that update Riverpod providers. This separates business logic
 /// from UI concerns, making it testable independently.
+final dartEngineProvider = Provider<DartEngine>((ref) {
+  final engine = DartEngine();
+  ref.onDispose(engine.stopProcess);
+  return engine;
+});
+
 final emulationOrchestratorProvider = Provider<EmulationOrchestrator>((ref) {
-  // Wrap the concrete Socket.IO services in engine abstractions so the
-  // orchestrator stays engine-agnostic. The four service providers remain
-  // available for any UI surface that still needs the underlying service
-  // directly (e.g. connection-status indicators).
+  // The pure-Dart engine (renode-dart + callgraph-dart) supplies all four
+  // capabilities off a single shared client; no Python/Socket.IO server.
+  final engine = ref.watch(dartEngineProvider);
   final orchestrator = EmulationOrchestrator(
-    engineLifecycle: RenodeEngineLifecycle(),
-    emulationController: RenodeEmulationController(ref.watch(lifecycleServiceProvider)),
-    callGraphSource: RenodeCallGraphSource(ref.watch(callgraphServiceProvider)),
-    traceSource: RenodeTraceSource(
-      traceService: ref.watch(traceServiceProvider),
-      filteredTraceService: ref.watch(filteredTraceServiceProvider),
-    ),
+    engineLifecycle: engine.lifecycle,
+    emulationController: engine.controller,
+    callGraphSource: engine.callGraphSource,
+    traceSource: engine.traceSource,
     emulatorRepository: ref.watch(emulatorRepositoryProvider),
     artifactDb: ref.watch(artifactDatabaseProvider),
   );
@@ -389,9 +322,7 @@ final emulationOrchestratorProvider = Provider<EmulationOrchestrator>((ref) {
     }
   });
 
-  ref.onDispose(() {
-    orchestrator.dispose();
-  });
+  ref.onDispose(orchestrator.dispose);
 
   return orchestrator;
 });
@@ -412,9 +343,7 @@ final emulatorDirtyProvider = StateProvider<bool>((ref) => false);
 /// Loaded from the on-disk recents file the first time it's read; consumers
 /// should `ref.invalidate(recentEmulatorsProvider)` after any open/save so
 /// the list reflects the latest activity.
-final recentEmulatorsProvider = FutureProvider<List<RecentEmulator>>((ref) async {
-  return ref.watch(emulatorRepositoryProvider).getRecentEmulators();
-});
+final recentEmulatorsProvider = FutureProvider<List<RecentEmulator>>((ref) async => ref.watch(emulatorRepositoryProvider).getRecentEmulators());
 
 // ============================================================================
 // ARTIFACT LIBRARY PROVIDERS
@@ -425,7 +354,7 @@ final recentEmulatorsProvider = FutureProvider<List<RecentEmulator>>((ref) async
 /// Creates and manages the local SQLite database for firmware artifacts.
 final artifactDatabaseProvider = Provider<ArtifactDatabase>((ref) {
   final db = ArtifactDatabase();
-  ref.onDispose(() => db.close());
+  ref.onDispose(db.close);
   return db;
 });
 
@@ -518,9 +447,7 @@ final hookOverridesProvider = StateProvider<Map<String, int>>((ref) => {});
 /// Provider for the SynthesizerWorkflow.
 ///
 /// Exposes the synthesizer from the orchestrator for future UI integration.
-final synthesizerWorkflowProvider = Provider<SynthesizerWorkflow>((ref) {
-  return ref.watch(emulationOrchestratorProvider).synthesizerWorkflow;
-});
+final synthesizerWorkflowProvider = Provider<SynthesizerWorkflow>((ref) => ref.watch(emulationOrchestratorProvider).synthesizerWorkflow);
 
 // ============================================================================
 // API SERVER PROVIDER
@@ -530,14 +457,11 @@ final synthesizerWorkflowProvider = Provider<SynthesizerWorkflow>((ref) {
 ///
 /// Creates an ApiServer wrapping the orchestrator for programmatic access.
 /// The server must be started explicitly by calling `serve()`.
-final apiServerProvider = Provider<ApiServer>((ref) {
-  return ApiServer(
+final apiServerProvider = Provider<ApiServer>((ref) => ApiServer(
     orchestrator: ref.watch(emulationOrchestratorProvider),
-    callgraphService: ref.watch(callgraphServiceProvider),
-    lifecycleService: ref.watch(lifecycleServiceProvider),
+    callGraphSource: ref.watch(dartEngineProvider).callGraphSource,
     artifactLibraryService: ref.watch(artifactLibraryServiceProvider),
-  );
-});
+  ));
 
 // =============================================================================
 // VAGRANT CI/CD TEST STATE

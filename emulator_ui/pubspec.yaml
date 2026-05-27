@@ -4,7 +4,7 @@ publish_to: 'none'
 version: 0.1.0
 
 environment:
-  sdk: ^3.5.0
+  sdk: ^3.9.0
 
 resolution: workspace
 
@@ -24,7 +24,8 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^3.0.0
+  iomt_lab_lints:
+    git: git@github.com:IoMT-Lab/lints-dart.git
 
 flutter:
   uses-material-design: true

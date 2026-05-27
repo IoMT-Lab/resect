@@ -29,13 +29,11 @@ class SynthesizerResult {
     required this.success,
     required this.totalIterations,
     required this.resolvedHooks,
-    this.resolvedHookCode = const {},
+    required this.totalDuration, this.resolvedHookCode = const {},
     this.failedSymbol,
-    required this.totalDuration,
   });
 
-  Map<String, dynamic> toJson() {
-    return {
+  Map<String, dynamic> toJson() => {
       'success': success,
       'totalIterations': totalIterations,
       'resolvedHooks': resolvedHooks,
@@ -43,7 +41,6 @@ class SynthesizerResult {
       if (failedSymbol != null) 'failedSymbol': failedSymbol,
       'totalDurationMs': totalDuration.inMilliseconds,
     };
-  }
 
   @override
   String toString() {

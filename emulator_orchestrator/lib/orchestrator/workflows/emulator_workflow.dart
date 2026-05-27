@@ -13,7 +13,7 @@ class EmulatorWorkflow {
   final EmulatorRepository repository;
   final void Function(Emulator?) onEmulatorChanged;
 
-  bool _hasUnsavedChanges = false;
+  var _hasUnsavedChanges = false;
 
   EmulatorWorkflow({
     required this.repository,

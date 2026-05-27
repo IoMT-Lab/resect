@@ -43,3 +43,12 @@ app.*.map.json
 /test/
 /bin/
 /linux/
+
+# Machine-specific build/environment config (System Configuration UI)
+resect.config
+
+# Local pub dependency overrides (engine module co-development)
+pubspec_overrides.yaml
+
+# Local working scratch — outstanding TODOs
+TODO.txt

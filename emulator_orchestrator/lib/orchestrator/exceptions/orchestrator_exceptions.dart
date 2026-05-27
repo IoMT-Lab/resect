@@ -14,7 +14,7 @@ class OrchestrationException implements Exception {
 ///
 /// Thrown when emulation operations fail (start, pause, resume, reset).
 class EmulationException extends OrchestrationException {
-  EmulationException(String message, [dynamic cause]) : super(message, cause);
+  EmulationException(super.message, [super.cause]);
 
   @override
   String toString() =>
@@ -25,7 +25,7 @@ class EmulationException extends OrchestrationException {
 ///
 /// Thrown when analysis operations fail (call graph generation, layout).
 class AnalysisException extends OrchestrationException {
-  AnalysisException(String message, [dynamic cause]) : super(message, cause);
+  AnalysisException(super.message, [super.cause]);
 
   @override
   String toString() =>
@@ -37,7 +37,7 @@ class AnalysisException extends OrchestrationException {
 /// Thrown when attempting to close an emulator with unsaved changes.
 /// UI should prompt user for confirmation before proceeding.
 class UnsavedChangesException extends OrchestrationException {
-  UnsavedChangesException(String message) : super(message);
+  UnsavedChangesException(super.message);
 
   @override
   String toString() => 'UnsavedChangesException: $message';

@@ -13,8 +13,7 @@ class TabStrip extends ConsumerWidget {
   const TabStrip({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return Container(
+  Widget build(BuildContext context, WidgetRef ref) => Container(
       height: 44,
       color: AppTheme.bgChrome,
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -40,7 +39,6 @@ class TabStrip extends ConsumerWidget {
         ],
       ),
     );
-  }
 }
 
 class _TabLabel extends ConsumerWidget {

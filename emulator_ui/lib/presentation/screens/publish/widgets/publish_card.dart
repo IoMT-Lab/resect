@@ -22,11 +22,7 @@ class PublishCard extends StatelessWidget {
   final IconData? icon;
 
   const PublishCard({
-    super.key,
-    required this.title,
-    required this.description,
-    required this.actionLabel,
-    required this.onPressed,
+    required this.title, required this.description, required this.actionLabel, required this.onPressed, super.key,
     this.disabledHint,
     this.icon,
   });
@@ -34,8 +30,7 @@ class PublishCard extends StatelessWidget {
   bool get _enabled => onPressed != null;
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
+  Widget build(BuildContext context) => Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: AppTheme.bgPanel,
@@ -97,5 +92,4 @@ class PublishCard extends StatelessWidget {
         ],
       ),
     );
-  }
 }

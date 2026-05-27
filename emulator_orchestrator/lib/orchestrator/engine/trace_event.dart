@@ -8,10 +8,8 @@ class TraceEvent {
     required this.isEntry,
   });
 
-  factory TraceEvent.fromList(List data) {
-    return TraceEvent(
+  factory TraceEvent.fromList(List data) => TraceEvent(
       symbol: data[0] as String,
       isEntry: data[1] as bool,
     );
-  }
 }

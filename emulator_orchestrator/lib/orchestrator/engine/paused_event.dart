@@ -16,11 +16,9 @@ class PausedEvent {
     this.unhandledAccess,
   });
 
-  factory PausedEvent.fromList(List data) {
-    return PausedEvent(
+  factory PausedEvent.fromList(List data) => PausedEvent(
       user: data[0] as bool,
       symbol: data.length > 1 ? data[1] as String? : null,
       unhandledAccess: data.length > 2 ? data[2] as bool? : null,
     );
-  }
 }

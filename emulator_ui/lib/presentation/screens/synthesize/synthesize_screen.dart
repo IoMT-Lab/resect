@@ -19,8 +19,7 @@ class SynthesizeScreen extends ConsumerWidget {
   static const double _traceWidth = 280;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return Container(
+  Widget build(BuildContext context, WidgetRef ref) => Container(
       color: AppTheme.bgCanvas,
       child: const Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -31,7 +30,6 @@ class SynthesizeScreen extends ConsumerWidget {
         ],
       ),
     );
-  }
 }
 
 /// Fixed-width wrapper so the (intrinsically unbounded) TraceActivitySidebar
@@ -41,8 +39,7 @@ class _TraceRail extends StatelessWidget {
   const _TraceRail();
 
   @override
-  Widget build(BuildContext context) {
-    return const SizedBox(
+  Widget build(BuildContext context) => const SizedBox(
       width: SynthesizeScreen._traceWidth,
       child: DecoratedBox(
         decoration: BoxDecoration(
@@ -51,5 +48,4 @@ class _TraceRail extends StatelessWidget {
         child: TraceActivitySidebar(),
       ),
     );
-  }
 }

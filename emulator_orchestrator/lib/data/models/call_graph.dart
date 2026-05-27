@@ -60,9 +60,7 @@ class CallGraph {
   }
 
   /// Get a specific symbol by name, or null if not found
-  Symbol? getSymbol(String name) {
-    return symbols[name];
-  }
+  Symbol? getSymbol(String name) => symbols[name];
 
   /// Get all symbols that call the given function
   /// (reverse lookup - who calls this function?)
@@ -83,22 +81,18 @@ class CallGraph {
 
   /// Get total number of call relationships (edges in the graph)
   int get totalEdges {
-    int count = 0;
+    var count = 0;
     for (final symbol in symbols.values) {
       count += symbol.calledSymbols.length;
     }
     return count;
   }
 
-  Map<String, dynamic> toJson() {
-    return {
+  Map<String, dynamic> toJson() => {
       'elfPath': elfPath,
       'symbols': symbols.map((name, symbol) => MapEntry(name, symbol.toJson())),
     };
-  }
 
   @override
-  String toString() {
-    return 'CallGraph(elfPath: $elfPath, functions: $totalFunctions, edges: $totalEdges)';
-  }
+  String toString() => 'CallGraph(elfPath: $elfPath, functions: $totalFunctions, edges: $totalEdges)';
 }

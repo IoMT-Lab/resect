@@ -1,10 +1,10 @@
 import 'dart:io';
 
+import 'package:emulator_orchestrator/data/database/artifact_database.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../core/file_selection.dart';
-import 'package:emulator_orchestrator/data/database/artifact_database.dart';
 
+import '../../core/file_selection.dart';
 import '../../providers/app_providers.dart';
 
 /// Dialog for viewing, importing, and deleting hook artifacts.
@@ -14,12 +14,10 @@ import '../../providers/app_providers.dart';
 class HookDatabaseDialog extends ConsumerStatefulWidget {
   const HookDatabaseDialog({super.key});
 
-  static Future<void> show(BuildContext context) {
-    return showDialog<void>(
+  static Future<void> show(BuildContext context) => showDialog<void>(
       context: context,
       builder: (context) => const HookDatabaseDialog(),
     );
-  }
 
   @override
   ConsumerState<HookDatabaseDialog> createState() => _HookDatabaseDialogState();
@@ -27,15 +25,15 @@ class HookDatabaseDialog extends ConsumerStatefulWidget {
 
 class _HookDatabaseDialogState extends ConsumerState<HookDatabaseDialog> {
   final _searchController = TextEditingController();
-  String _searchQuery = '';
+  var _searchQuery = '';
 
   // Import form state
-  bool _importExpanded = false;
+  var _importExpanded = false;
   String? _importSymbol;
-  bool _importFromFile = false;
+  var _importFromFile = false;
   final _codeController = TextEditingController();
   String? _pickedFilePath;
-  bool _importing = false;
+  var _importing = false;
 
   // Expanded hook ID (for viewing code)
   int? _expandedHookId;
@@ -225,7 +223,7 @@ class _HookDatabaseDialogState extends ConsumerState<HookDatabaseDialog> {
               // Hook list
               Expanded(
                 child: allHooksAsync.when(
-                  data: (allHooks) => _buildHookList(allHooks),
+                  data: _buildHookList,
                   loading: () =>
                       const Center(child: CircularProgressIndicator()),
                   error: (e, _) => Center(child: Text('Error: $e')),
@@ -280,8 +278,7 @@ class _HookDatabaseDialogState extends ConsumerState<HookDatabaseDialog> {
     );
   }
 
-  Widget _buildSymbolHeader(String symbolName) {
-    return Container(
+  Widget _buildSymbolHeader(String symbolName) => Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       margin: const EdgeInsets.only(top: 4),
@@ -298,11 +295,9 @@ class _HookDatabaseDialogState extends ConsumerState<HookDatabaseDialog> {
         ),
       ),
     );
-  }
 
   Widget _buildHookRow(
-      Artifact artifact, String symbolName, bool isDefault, bool isExpanded) {
-    return Column(
+      Artifact artifact, String symbolName, bool isDefault, bool isExpanded) => Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         InkWell(
@@ -398,7 +393,6 @@ class _HookDatabaseDialogState extends ConsumerState<HookDatabaseDialog> {
           ),
       ],
     );
-  }
 
   Widget _buildImportPanel(dynamic firmwareRecord) {
     if (!_importExpanded) {
@@ -440,7 +434,7 @@ class _HookDatabaseDialogState extends ConsumerState<HookDatabaseDialog> {
 
         // Symbol selector
         DropdownButtonFormField<String>(
-          value: _importSymbol,
+          initialValue: _importSymbol,
           isExpanded: true,
           decoration: InputDecoration(
             labelText: 'Symbol',
@@ -450,9 +444,7 @@ class _HookDatabaseDialogState extends ConsumerState<HookDatabaseDialog> {
             border:
                 OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
           ),
-          items: symbolNames.map((name) {
-            return DropdownMenuItem(value: name, child: Text(name, style: const TextStyle(fontSize: 12)));
-          }).toList(),
+          items: symbolNames.map((name) => DropdownMenuItem(value: name, child: Text(name, style: const TextStyle(fontSize: 12)))).toList(),
           onChanged: (v) => setState(() => _importSymbol = v),
         ),
         const SizedBox(height: 8),

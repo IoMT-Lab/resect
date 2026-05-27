@@ -162,9 +162,9 @@ class SynthesisController {
   // ---------------------------------------------------------------------------
 
   void _subscribeTrace() {
-    final traceService = ref.read(traceServiceProvider);
+    final traceSource = ref.read(emulationOrchestratorProvider).traceSource;
     _traceSub?.cancel();
-    _traceSub = traceService.onTrace.listen((event) {
+    _traceSub = traceSource.traceStream.listen((event) {
       if (!event.isEntry) return;
       final executed = ref.read(executedSymbolsProvider);
       if (!executed.contains(event.symbol)) {
@@ -174,9 +174,8 @@ class SynthesisController {
       }
     });
 
-    final filteredTraceService = ref.read(filteredTraceServiceProvider);
     _filteredTraceSub?.cancel();
-    _filteredTraceSub = filteredTraceService.onTrace.listen((event) {
+    _filteredTraceSub = traceSource.filteredTraceStream.listen((event) {
       if (!event.isEntry) return;
       final current = ref.read(traceActivityEventsProvider);
       ref.read(traceActivityEventsProvider.notifier).state = [

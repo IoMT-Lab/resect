@@ -12,8 +12,7 @@ class LibraryEmptyState extends ConsumerWidget {
   const LibraryEmptyState({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return Container(
+  Widget build(BuildContext context, WidgetRef ref) => Container(
       color: AppTheme.bgCanvas,
       alignment: Alignment.center,
       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
@@ -81,7 +80,6 @@ class LibraryEmptyState extends ConsumerWidget {
         ),
       ),
     );
-  }
 }
 
 class _CtaCard extends StatelessWidget {
@@ -100,8 +98,7 @@ class _CtaCard extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
+  Widget build(BuildContext context) => Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: AppTheme.bgPanel,
@@ -149,5 +146,4 @@ class _CtaCard extends StatelessWidget {
         ],
       ),
     );
-  }
 }

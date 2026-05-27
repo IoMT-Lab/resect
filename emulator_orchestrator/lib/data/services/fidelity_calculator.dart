@@ -11,8 +11,8 @@ import '../models/fidelity_result.dart';
 /// outgoing edges lead to degraded children. The computation iterates
 /// until convergence, handling cycles via fixed-point iteration.
 class FidelityCalculator {
-  static const double _convergenceThreshold = 0.0001;
-  static const int _maxIterations = 100;
+  static const _convergenceThreshold = 0.0001;
+  static const _maxIterations = 100;
 
   /// Find all symbols on any path from [start] to [stop] in [callGraph].
   ///
@@ -103,10 +103,10 @@ class FidelityCalculator {
     }
 
     // Iterative convergence: recompute non-hooked functions until stable.
-    int iterations = 0;
-    for (int i = 0; i < _maxIterations; i++) {
+    var iterations = 0;
+    for (var i = 0; i < _maxIterations; i++) {
       iterations++;
-      double maxDelta = 0.0;
+      var maxDelta = 0.0;
 
       for (final entry in symbols.entries) {
         final name = entry.key;
@@ -121,8 +121,8 @@ class FidelityCalculator {
 
         // Compute degradation as average of children's degradation.
         // Only count children that exist in the call graph.
-        double degradationSum = 0.0;
-        int edgeCount = 0;
+        var degradationSum = 0.0;
+        var edgeCount = 0;
 
         for (final childName in calledSymbols.keys) {
           if (fidelity.containsKey(childName)) {
@@ -143,9 +143,9 @@ class FidelityCalculator {
     }
 
     // Compute summary counts.
-    int hooked = 0;
-    int degraded = 0;
-    int intact = 0;
+    var hooked = 0;
+    var degraded = 0;
+    var intact = 0;
 
     for (final entry in fidelity.entries) {
       if (hookedSymbols.contains(entry.key)) {
@@ -158,8 +158,8 @@ class FidelityCalculator {
     }
 
     // Compute weighted overall fidelity.
-    double weightedSum = 0.0;
-    double totalWeight = 0.0;
+    var weightedSum = 0.0;
+    var totalWeight = 0.0;
 
     for (final entry in fidelity.entries) {
       final w = weights[entry.key] ?? 1.0;
@@ -173,9 +173,9 @@ class FidelityCalculator {
     double? coverageRatio;
     // Compute coverage fidelity: average fidelity over only traversed symbols.
     double? covFidelity;
-    int travCount = 0;
+    var travCount = 0;
     if (traversedSymbols.isNotEmpty) {
-      double travSum = 0.0;
+      var travSum = 0.0;
       for (final name in traversedSymbols) {
         if (fidelity.containsKey(name)) {
           travSum += fidelity[name]!;
@@ -188,9 +188,9 @@ class FidelityCalculator {
 
     // Compute subgraph fidelity: average over start→stop path symbols.
     double? subFidelity;
-    int subCount = 0;
+    var subCount = 0;
     if (subgraphSymbols.isNotEmpty) {
-      double subSum = 0.0;
+      var subSum = 0.0;
       for (final name in subgraphSymbols) {
         if (fidelity.containsKey(name)) {
           subSum += fidelity[name]!;

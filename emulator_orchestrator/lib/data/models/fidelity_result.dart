@@ -46,21 +46,14 @@ class FidelityResult {
 
   const FidelityResult({
     required this.overallFidelity,
-    this.coverageFidelity,
+    required this.perFunction, required this.totalFunctions, required this.hookedFunctions, required this.degradedFunctions, required this.intactFunctions, required this.solverIterations, this.coverageFidelity,
     this.traversedFunctions = 0,
-    required this.perFunction,
-    required this.totalFunctions,
-    required this.hookedFunctions,
-    required this.degradedFunctions,
-    required this.intactFunctions,
-    required this.solverIterations,
     this.subgraphFidelity,
     this.subgraphFunctions = 0,
     this.coverage,
   });
 
-  Map<String, dynamic> toJson() {
-    return {
+  Map<String, dynamic> toJson() => {
       'overallFidelity': overallFidelity,
       if (coverageFidelity != null) 'coverageFidelity': coverageFidelity,
       if (coverage != null) 'coverage': coverage,
@@ -74,7 +67,6 @@ class FidelityResult {
       if (subgraphFunctions > 0) 'subgraphFunctions': subgraphFunctions,
       'perFunction': perFunction,
     };
-  }
 
   @override
   String toString() {

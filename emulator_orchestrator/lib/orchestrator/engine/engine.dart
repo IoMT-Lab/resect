@@ -12,9 +12,9 @@
 /// the same interfaces; nothing above this layer needs to change.
 library;
 
-export 'paused_event.dart';
-export 'trace_event.dart';
-export 'engine_lifecycle.dart';
 export 'call_graph_source.dart';
 export 'emulation_controller.dart';
+export 'engine_lifecycle.dart';
+export 'paused_event.dart';
+export 'trace_event.dart';
 export 'trace_source.dart';

@@ -8,14 +8,11 @@ class PlaceholderScreen extends StatelessWidget {
   final String subtitle;
 
   const PlaceholderScreen({
-    super.key,
-    required this.title,
-    required this.subtitle,
+    required this.title, required this.subtitle, super.key,
   });
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
+  Widget build(BuildContext context) => Container(
       color: AppTheme.bgCanvas,
       alignment: Alignment.center,
       child: Column(
@@ -38,5 +35,4 @@ class PlaceholderScreen extends StatelessWidget {
         ],
       ),
     );
-  }
 }
