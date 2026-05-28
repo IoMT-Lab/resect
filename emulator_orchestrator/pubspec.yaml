@@ -32,7 +32,7 @@ dependencies:
   hooks:
     git:
       url: git@github.com:IoMT-Lab/hooks-dart.git
-      ref: b170020175d6bdfd850b71471dfc5771e4e829c5
+      ref: eca72b7bf5e991f1036afb43ea3de3281d2a4bc3
 
 dev_dependencies:
   test: ^1.24.0
