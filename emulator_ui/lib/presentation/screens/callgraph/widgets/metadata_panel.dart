@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:emulator_orchestrator/data/database/artifact_database.dart' show Artifact;
+import 'package:emulator_orchestrator/data/models/comms_assignment.dart';
 import 'package:emulator_orchestrator/data/models/symbol.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -284,12 +285,14 @@ class _ForceOverrideDropdown extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final hooksAsync = ref.watch(hooksForSelectedSymbolProvider);
     final overrides = ref.watch(hookOverridesProvider);
+    final commsLockReason = _commsLockReasonFor(ref, symbolName);
 
     return _HookDropdown(
       label: 'FORCE OVERRIDE',
       hint: 'None (no override)',
       hooksAsync: hooksAsync,
       selectedId: overrides[symbolName],
+      disabledReason: commsLockReason,
       onChanged: (artifactId) {
         final next = Map<String, int>.from(overrides);
         if (artifactId == null) {
@@ -312,12 +315,14 @@ class _PreferredHookDropdown extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final hooksAsync = ref.watch(hooksForSelectedSymbolProvider);
     final prefs = ref.watch(hookPreferencesProvider);
+    final commsLockReason = _commsLockReasonFor(ref, symbolName);
 
     return _HookDropdown(
       label: 'PREFERRED HOOK',
       hint: 'Auto (default order)',
       hooksAsync: hooksAsync,
       selectedId: prefs[symbolName],
+      disabledReason: commsLockReason,
       onChanged: (artifactId) {
         final next = Map<String, int>.from(prefs);
         if (artifactId == null) {
@@ -329,6 +334,26 @@ class _PreferredHookDropdown extends ConsumerWidget {
         _persistEmulator(ref, hookPreferences: next);
       },
     );
+  }
+}
+
+/// Returns a tooltip explaining why the override/preferred dropdowns are
+/// locked for [symbolName], or `null` if the symbol is overridable normally.
+///
+/// Per the Workstream B precedence rule: a symbol classified into a real
+/// comms class (i2c / spi / uart, not `unclassified`) is non-overridable;
+/// the debug path is to reclassify it to `unclassified` in the Comms tab.
+String? _commsLockReasonFor(WidgetRef ref, String symbolName) {
+  final assignment = ref.watch(currentEmulatorProvider)?.commsAssignments[symbolName];
+  if (assignment == null) return null;
+  switch (assignment.protocol) {
+    case CommsClass.i2c:
+    case CommsClass.spi:
+    case CommsClass.uart:
+      return 'Comms-classified (${assignment.protocol.name}). '
+          'Reclassify to "unclassified" in the Comms tab to override.';
+    case CommsClass.unclassified:
+      return null;
   }
 }
 
@@ -355,12 +380,18 @@ class _HookDropdown extends StatelessWidget {
   final int? selectedId;
   final ValueChanged<int?> onChanged;
 
+  /// When non-null, the dropdown is rendered disabled (DropdownButton's
+  /// `onChanged: null` form) and wrapped in a tooltip showing this string.
+  /// Used to surface the Comms-classified non-overridable rule.
+  final String? disabledReason;
+
   const _HookDropdown({
     required this.label,
     required this.hint,
     required this.hooksAsync,
     required this.selectedId,
     required this.onChanged,
+    this.disabledReason,
   });
 
   @override
@@ -391,7 +422,8 @@ class _HookDropdown extends StatelessWidget {
               );
             }
 
-            return Container(
+            final isLocked = disabledReason != null;
+            final dropdown = Container(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               decoration: BoxDecoration(
                 color: AppTheme.bgCanvas,
@@ -404,6 +436,7 @@ class _HookDropdown extends StatelessWidget {
                 dropdownColor: AppTheme.bgPanel,
                 icon: const Icon(Icons.expand_more, size: 16),
                 iconEnabledColor: AppTheme.textMuted,
+                iconDisabledColor: AppTheme.textDisabled,
                 style: const TextStyle(
                   color: AppTheme.textPrimary,
                   fontSize: 12,
@@ -442,9 +475,13 @@ class _HookDropdown extends StatelessWidget {
                     );
                   }),
                 ],
-                onChanged: onChanged,
+                // null onChanged disables DropdownButton.
+                onChanged: isLocked ? null : onChanged,
               ),
             );
+            return isLocked
+                ? Tooltip(message: disabledReason!, child: dropdown)
+                : dropdown;
           },
         ),
       ],
