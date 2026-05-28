@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:emulator_orchestrator/core/app_paths.dart';
 import 'package:emulator_orchestrator/core/constants.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
@@ -220,3 +223,116 @@ String defaultSavePathFor(Emulator emulator) => p.join(
     AppPaths.projectsDir,
     '${emulator.name}${AppConstants.emulatorFileExtension}',
   );
+
+/// Prompt the user for a file, copy it into the emulator's documents
+/// directory, and attach it to [currentEmulatorProvider]. The repository
+/// handles filename collisions by appending a numeric suffix.
+Future<void> addDocumentToEmulator(BuildContext context, WidgetRef ref) async {
+  final emulator = ref.read(currentEmulatorProvider);
+  if (emulator == null) return;
+
+  final sourcePath = await ref.read(fileSelectorProvider).openFile(
+        dialogTitle: 'Add document to project',
+      );
+  if (sourcePath == null) return;
+  if (!context.mounted) return;
+
+  final repository = ref.read(emulatorRepositoryProvider);
+  try {
+    final entry = await repository.addDocument(emulator.id, sourcePath);
+    ref.read(currentEmulatorProvider.notifier).state = emulator.copyWith(
+      documents: [...emulator.documents, entry],
+      modifiedAt: DateTime.now(),
+    );
+    ref.read(emulatorDirtyProvider.notifier).state = true;
+    unawaited(ref.read(autosaveControllerProvider).trigger());
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to add document: $e')),
+      );
+    }
+  }
+}
+
+/// Confirm with the user, delete the on-disk file from the documents
+/// directory, and drop the entry from [currentEmulatorProvider].
+Future<void> removeDocumentFromEmulator(
+  BuildContext context,
+  WidgetRef ref,
+  DocumentEntry doc,
+) async {
+  final emulator = ref.read(currentEmulatorProvider);
+  if (emulator == null) return;
+
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Remove document'),
+      content: Text(
+        'Remove "${doc.displayName}" from this project? The file will be '
+        "deleted from the project's documents directory.",
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Remove'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true) return;
+  if (!context.mounted) return;
+
+  final repository = ref.read(emulatorRepositoryProvider);
+  try {
+    await repository.removeDocument(emulator.id, doc.filename);
+    ref.read(currentEmulatorProvider.notifier).state = emulator.copyWith(
+      documents: emulator.documents
+          .where((d) => d.filename != doc.filename)
+          .toList(),
+      modifiedAt: DateTime.now(),
+    );
+    ref.read(emulatorDirtyProvider.notifier).state = true;
+    unawaited(ref.read(autosaveControllerProvider).trigger());
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to remove document: $e')),
+      );
+    }
+  }
+}
+
+/// Open a project document in the OS's default application for the file
+/// type. Uses `xdg-open` on Linux, `open` on macOS, `start` on Windows.
+Future<void> openDocument(
+  BuildContext context,
+  WidgetRef ref,
+  DocumentEntry doc,
+) async {
+  final emulator = ref.read(currentEmulatorProvider);
+  if (emulator == null) return;
+  final repository = ref.read(emulatorRepositoryProvider);
+  final path = repository.getDocumentPath(emulator.id, doc.filename);
+
+  try {
+    if (Platform.isMacOS) {
+      await Process.run('open', [path]);
+    } else if (Platform.isWindows) {
+      await Process.run('cmd', ['/c', 'start', '', path]);
+    } else {
+      await Process.run('xdg-open', [path]);
+    }
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to open document: $e')),
+      );
+    }
+  }
+}
