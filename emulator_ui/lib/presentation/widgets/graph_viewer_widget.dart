@@ -1660,7 +1660,34 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
       );
     }
 
-    // Stopped — CTA that regenerates the call graph from the ELF.
+    // Stopped — CTA that regenerates the call graph from the ELF. While a
+    // regeneration is in flight (callgraphProvider is refreshing over an
+    // existing graph), surface a busy state so the click feels acknowledged.
+    final isRegenerating = ref.watch(callgraphProvider).isLoading;
+    if (isRegenerating) {
+      return ElevatedButton.icon(
+        onPressed: null,
+        icon: const SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: Colors.white,
+          ),
+        ),
+        label: const Text('Regenerating...'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppTheme.accent,
+          foregroundColor: Colors.white,
+          disabledBackgroundColor: AppTheme.accent.withValues(alpha: 0.6),
+          disabledForegroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      );
+    }
     return _buildActionButton(
       icon: Icons.refresh,
       label: 'Regenerate Call Graph',
