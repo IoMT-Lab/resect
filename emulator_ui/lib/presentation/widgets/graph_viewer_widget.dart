@@ -1166,6 +1166,17 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
   Widget build(BuildContext context) {
     final callgraphAsync = ref.watch(callgraphProvider);
 
+    // Frame the viewport on any externally-driven selection change (e.g., a
+    // symbols-panel click). In-viewer node taps already focus inline via
+    // onTapDown, but they also flow through [selectedSymbolProvider], so this
+    // listener acts as a single source of truth for the focus-on-select
+    // behavior. Gated by [_focusOnSelect] (the user-toggleable preference).
+    ref.listen<String?>(selectedSymbolProvider, (prev, next) {
+      if (next == null || !_focusOnSelect) return;
+      if (!_nodePositions.containsKey(next)) return;
+      _focusOnNode(next);
+    });
+
     return KeyboardListener(
       focusNode: _focusNode,
       autofocus: true,
@@ -1375,8 +1386,11 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
                 }
                 
                 if (hit) {
+                  // The selectedSymbolProvider listener at the top of build()
+                  // handles the focus-on-select behavior for any source —
+                  // panel click, in-viewer tap, programmatic — so the explicit
+                  // _focusOnNode call here is intentionally absent.
                   ref.read(selectedSymbolProvider.notifier).state = entry.key;
-                  if (_focusOnSelect) _focusOnNode(entry.key);
                   nodeWasTapped = true;
                   return;
                 }
