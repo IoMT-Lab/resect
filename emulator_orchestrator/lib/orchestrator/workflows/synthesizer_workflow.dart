@@ -5,6 +5,7 @@ import '../../data/models/synthesizer_result.dart';
 import '../engine/emulation_controller.dart';
 import '../engine/paused_event.dart';
 import '../events/synthesizer_events.dart';
+import '../hook_spec.dart';
 
 /// Automated hook substitution workflow for emulator creation.
 ///
@@ -54,6 +55,7 @@ class SynthesizerWorkflow {
     Map<String, int> hookPreferences = const {},
     Map<String, int> hookOverrides = const {},
     Map<String, String> resolvedHooks = const {},
+    Map<String, HookSpec> commsHooks = const {},
     String? memoryMapPath,
   }) async {
     if (_isRunning) {
@@ -68,6 +70,7 @@ class SynthesizerWorkflow {
     final hookIndex = <String, int>{};          // symbol → current hook index
     final hookCache = <String, List<Artifact>>{}; // symbol → available hooks
     final definedHooks = <String, String>{};    // hookName → hookCode
+    final hookScopes = <String, String?>{};     // hookName → optional Renode scope
 
     var iteration = 0;
 
@@ -90,7 +93,21 @@ class SynthesizerWorkflow {
       }
     }
 
-    // Pre-seed previously resolved hooks (warm start). Overrides take precedence.
+    // Pre-seed comms-bus hooks (one per virtualized/assigned symbol). Comms
+    // hooks carry a per-protocol scope so all hooks of a protocol share
+    // Python globals (Workstream B). They're marked overridden so the
+    // synthesizer never iterates alternatives for these symbols.
+    for (final entry in commsHooks.entries) {
+      if (overriddenSymbols.contains(entry.key)) continue; // forced override wins
+      final hookName = '${entry.key}_comms';
+      definedHooks[hookName] = entry.value.code;
+      hookScopes[hookName] = entry.value.scope;
+      hookMap[entry.key] = hookName;
+      overriddenSymbols.add(entry.key);
+      print('[Synthesizer] Pre-seeded comms hook for "${entry.key}" (scope ${entry.value.scope})');
+    }
+
+    // Pre-seed previously resolved hooks (warm start). Overrides + comms take precedence.
     for (final entry in resolvedHooks.entries) {
       if (!overriddenSymbols.contains(entry.key)) {
         final hookName = '${entry.key}_resolved';
@@ -124,7 +141,11 @@ class SynthesizerWorkflow {
 
         // (Re)define all hook code (including pre-seeded overrides on iter 1)
         for (final entry in definedHooks.entries) {
-          await emulationController.defineHook(entry.key, entry.value);
+          await emulationController.defineHook(
+            entry.key,
+            entry.value,
+            scope: hookScopes[entry.key],
+          );
         }
 
         if (hookMap.isNotEmpty) {

@@ -8,6 +8,7 @@ import '../engine/paused_event.dart';
 import '../engine/trace_event.dart';
 import '../engine/trace_source.dart';
 import '../exceptions/orchestrator_exceptions.dart';
+import '../hook_spec.dart';
 
 /// Handles the complex emulation lifecycle workflow.
 ///
@@ -61,6 +62,7 @@ class EmulationWorkflow {
     List<String>? endAt,
     bool pauseOnUnhandled = true,
     Map<String, String> resolvedOverrides = const {},
+    Map<String, HookSpec> commsHooks = const {},
     String? memoryMapPath,
   }) async {
     try {
@@ -78,6 +80,7 @@ class EmulationWorkflow {
       await _loadFirmwareWithRetry(baseImagePath, elfPath);
       await _applyMemoryMap(memoryMapPath);
       await _applyForcedOverrides(resolvedOverrides);
+      await _applyCommsHooks(commsHooks);
       await _setupTraceChannels();
       await _setupLifecycleListeners();
       await _startEmulation(
@@ -106,6 +109,7 @@ class EmulationWorkflow {
     List<String>? endAt,
     bool pauseOnUnhandled = true,
     Map<String, String> resolvedOverrides = const {},
+    Map<String, HookSpec> commsHooks = const {},
     String? memoryMapPath,
   }) async {
     if (!emulationController.isConnected) {
@@ -116,6 +120,7 @@ class EmulationWorkflow {
         endAt: endAt,
         pauseOnUnhandled: pauseOnUnhandled,
         resolvedOverrides: resolvedOverrides,
+        commsHooks: commsHooks,
         memoryMapPath: memoryMapPath,
       );
     }
@@ -137,6 +142,7 @@ class EmulationWorkflow {
       await _loadFirmwareWithRetry(baseImagePath, elfPath);
       await _applyMemoryMap(memoryMapPath);
       await _applyForcedOverrides(resolvedOverrides);
+      await _applyCommsHooks(commsHooks);
 
       // Reconnect trace channels for a clean slate.
       traceSource.disconnect();
@@ -245,6 +251,25 @@ class EmulationWorkflow {
       for (final key in overrides.keys) key: '${key}_override',
     });
     print('Applied ${overrides.length} forced hook overrides');
+  }
+
+  /// Install comms-bus hooks (one per assigned/virtualized symbol). Carries
+  /// the per-protocol scope into Renode's `AddHookAtSymbol` so all hooks of
+  /// a protocol share Python globals (see the Workstream B design intent).
+  Future<void> _applyCommsHooks(Map<String, HookSpec> commsHooks) async {
+    if (commsHooks.isEmpty) return;
+    for (final entry in commsHooks.entries) {
+      final hookName = '${entry.key}_comms';
+      await emulationController.defineHook(
+        hookName,
+        entry.value.code,
+        scope: entry.value.scope,
+      );
+    }
+    await emulationController.mapHooks({
+      for (final key in commsHooks.keys) key: '${key}_comms',
+    });
+    print('Applied ${commsHooks.length} comms-bus hooks');
   }
 
   Future<void> _loadFirmwareWithRetry(String baseImagePath, String elfPath) async {

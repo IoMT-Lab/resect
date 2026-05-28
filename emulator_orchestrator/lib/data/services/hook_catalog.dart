@@ -217,4 +217,38 @@ List<HookBuilderDescriptor> _systemDescriptors() => [
         build: (params) =>
             i2cWriteHook(params['port'] as int? ?? 1234, 'stm32_glue'),
       ),
+      HookBuilderDescriptor(
+        kindId: 'uart_read',
+        label: 'UART read (bus-virtualized)',
+        description:
+            'Forward a UART read transaction to the comms-bus UDP server on '
+            'the given port. Used by Workstream B (comms-bus virtualization).',
+        parameters: const [
+          HookParamSpec(
+            name: 'port',
+            label: 'UDP port',
+            type: HookParamType.intValue,
+            defaultValue: 1236,
+          ),
+        ],
+        build: (params) =>
+            uartReadHook(params['port'] as int? ?? 1236, 'stm32_glue'),
+      ),
+      HookBuilderDescriptor(
+        kindId: 'uart_write',
+        label: 'UART write (bus-virtualized)',
+        description:
+            'Forward a UART write transaction to the comms-bus UDP server on '
+            'the given port. Used by Workstream B (comms-bus virtualization).',
+        parameters: const [
+          HookParamSpec(
+            name: 'port',
+            label: 'UDP port',
+            type: HookParamType.intValue,
+            defaultValue: 1236,
+          ),
+        ],
+        build: (params) =>
+            uartWriteHook(params['port'] as int? ?? 1236, 'stm32_glue'),
+      ),
     ];

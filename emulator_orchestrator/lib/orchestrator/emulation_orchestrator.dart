@@ -14,6 +14,7 @@ import 'engine/engine_lifecycle.dart';
 import 'engine/trace_source.dart';
 
 import 'events/orchestrator_events.dart';
+import 'hook_spec.dart';
 import 'workflows/analysis_workflow.dart';
 import 'workflows/emulation_workflow.dart';
 import 'workflows/emulator_workflow.dart';
@@ -109,6 +110,7 @@ class EmulationOrchestrator {
     bool pauseOnUnhandled = true,
     Map<String, int> hookOverrides = const {},
     Map<String, String> resolvedHooks = const {},
+    Map<String, HookSpec> commsHooks = const {},
     String? memoryMapPath,
   }) async {
     final allHooks = await _resolveHookOverrides(resolvedHooks, hookOverrides);
@@ -119,6 +121,7 @@ class EmulationOrchestrator {
       endAt: endAt,
       pauseOnUnhandled: pauseOnUnhandled,
       resolvedOverrides: allHooks,
+      commsHooks: commsHooks,
       memoryMapPath: memoryMapPath,
     );
   }
@@ -136,6 +139,7 @@ class EmulationOrchestrator {
     bool pauseOnUnhandled = true,
     Map<String, int> hookOverrides = const {},
     Map<String, String> resolvedHooks = const {},
+    Map<String, HookSpec> commsHooks = const {},
     String? memoryMapPath,
   }) async {
     final allHooks = await _resolveHookOverrides(resolvedHooks, hookOverrides);
@@ -146,6 +150,7 @@ class EmulationOrchestrator {
       endAt: endAt,
       pauseOnUnhandled: pauseOnUnhandled,
       resolvedOverrides: allHooks,
+      commsHooks: commsHooks,
       memoryMapPath: memoryMapPath,
     );
   }
@@ -214,6 +219,7 @@ class EmulationOrchestrator {
     Map<String, int> hookPreferences = const {},
     Map<String, int> hookOverrides = const {},
     Map<String, String> resolvedHooks = const {},
+    Map<String, HookSpec> commsHooks = const {},
     String? memoryMapPath,
   }) async => synthesizerWorkflow.run(
       elfPath: elfPath,
@@ -225,6 +231,7 @@ class EmulationOrchestrator {
       hookPreferences: hookPreferences,
       hookOverrides: hookOverrides,
       resolvedHooks: resolvedHooks,
+      commsHooks: commsHooks,
       memoryMapPath: memoryMapPath,
     );
 

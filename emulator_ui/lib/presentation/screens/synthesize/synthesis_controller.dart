@@ -8,6 +8,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../providers/app_providers.dart';
 import '../../../providers/autosave_provider.dart';
+import '../../../providers/comms_bus_provider.dart';
+import '../../../providers/comms_config_providers.dart';
 
 /// Owns the synthesizer / emulation launch lifecycle.
 ///
@@ -57,6 +59,12 @@ class SynthesisController {
     _pauseSub?.cancel();
     _pauseSub = null;
 
+    final commsHooks = buildCommsHooks(
+      emulator: emulator,
+      configs: ref.read(commsProtocolConfigProvider),
+      catalog: ref.read(hookCatalogProvider),
+    );
+
     await orchestrator.restartEmulation(
       elfPath: elfPath,
       baseImagePath: baseImagePath,
@@ -64,6 +72,7 @@ class SynthesisController {
       pauseOnUnhandled: true,
       hookOverrides: hookOverrides,
       resolvedHooks: resolvedHooks,
+      commsHooks: commsHooks,
       memoryMapPath: config.memoryMapPath,
     );
 
@@ -93,6 +102,7 @@ class SynthesisController {
       hookPreferences: hookPreferences,
       hookOverrides: hookOverrides,
       resolvedHooks: resolvedHooks,
+      commsHooks: commsHooks,
       memoryMapPath: config.memoryMapPath,
     );
   }
@@ -120,6 +130,12 @@ class SynthesisController {
     _subscribeTrace();
     _subscribePauseEvents();
 
+    final commsHooks = buildCommsHooks(
+      emulator: emulator,
+      configs: ref.read(commsProtocolConfigProvider),
+      catalog: ref.read(hookCatalogProvider),
+    );
+
     await orchestrator.restartEmulation(
       elfPath: elfPath,
       baseImagePath: baseImagePath,
@@ -128,6 +144,7 @@ class SynthesisController {
       pauseOnUnhandled: config.pauseOnUnhandled,
       hookOverrides: hookOverrides,
       resolvedHooks: emulator.hooks,
+      commsHooks: commsHooks,
       memoryMapPath: config.memoryMapPath,
     );
   }

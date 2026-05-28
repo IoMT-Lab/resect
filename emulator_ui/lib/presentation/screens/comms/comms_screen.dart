@@ -357,10 +357,13 @@ class _PythonInterfacePane extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 8),
-          const Text(
-            'Bus-hook application and the in-process UDP server are wired up '
-            'in B3/B4. For now this toggle records intent only.',
-            style: TextStyle(
+          Text(
+            config.virtualized
+                ? 'Server running on UDP port ${config.port}. Bus hooks will '
+                    'be installed at the next emulation start.'
+                : 'Toggle on to start the UDP server and install bus hooks at '
+                    'the next emulation start.',
+            style: const TextStyle(
                 color: AppTheme.textMuted,
                 fontSize: 11,
                 fontStyle: FontStyle.italic),
