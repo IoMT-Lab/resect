@@ -1,6 +1,7 @@
 import 'package:uuid/uuid.dart';
 
 import 'call_graph.dart';
+import 'comms_assignment.dart';
 import 'synthesizer_result.dart';
 
 /// Represents an emulator configuration containing firmware files, settings,
@@ -68,6 +69,13 @@ class Emulator {
   /// fidelity calculation needs to reproduce its result on reopen.
   final Set<String> executedSymbols;
 
+  /// Comms-bus classification per symbol (i2c / spi / uart / unclassified +
+  /// optional read/write role). Populated by the classifier when a call
+  /// graph is generated and merged across regenerations; persisted so the
+  /// Comms tab survives project reopens. Symbols absent from this map are
+  /// not surfaced in the Comms tab.
+  final Map<String, CommsAssignment> commsAssignments;
+
   const Emulator({
     required this.id,
     required this.name,
@@ -82,6 +90,7 @@ class Emulator {
     this.cachedCallGraph,
     this.synthesisResult,
     this.executedSymbols = const {},
+    this.commsAssignments = const {},
   });
 
   /// Create a new emulator with default values
@@ -130,6 +139,10 @@ class Emulator {
     final executedSymbols = (json['executed_symbols'] as List<dynamic>?)
         ?.map((e) => e as String)
         .toSet() ?? <String>{};
+    final commsAssignments = (json['comms_assignments'] as Map<String, dynamic>?)
+            ?.map((k, v) =>
+                MapEntry(k, CommsAssignment.fromJson(v as Map<String, dynamic>))) ??
+        <String, CommsAssignment>{};
 
     return Emulator(
       id: emulatorData['id'] as String,
@@ -152,6 +165,7 @@ class Emulator {
           ? SynthesizerResult.fromJson(synthesisResultJson)
           : null,
       executedSymbols: executedSymbols,
+      commsAssignments: commsAssignments,
     );
   }
 
@@ -176,6 +190,8 @@ class Emulator {
       if (cachedCallGraph != null) 'call_graph': cachedCallGraph!.toJson(),
       if (synthesisResult != null) 'synthesis_result': synthesisResult!.toJson(),
       if (executedSymbols.isNotEmpty) 'executed_symbols': executedSymbols.toList(),
+      if (commsAssignments.isNotEmpty)
+        'comms_assignments': commsAssignments.map((k, v) => MapEntry(k, v.toJson())),
       'ui_state': uiState.toJson(),
       'metadata': metadata,
     };
@@ -201,6 +217,7 @@ class Emulator {
     SynthesizerResult? synthesisResult,
     bool clearSynthesisResult = false,
     Set<String>? executedSymbols,
+    Map<String, CommsAssignment>? commsAssignments,
   }) => Emulator(
       id: id ?? this.id,
       name: name ?? this.name,
@@ -221,6 +238,7 @@ class Emulator {
       synthesisResult:
           clearSynthesisResult ? null : (synthesisResult ?? this.synthesisResult),
       executedSymbols: executedSymbols ?? this.executedSymbols,
+      commsAssignments: commsAssignments ?? this.commsAssignments,
     );
 }
 

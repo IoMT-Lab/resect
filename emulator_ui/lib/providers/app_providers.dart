@@ -20,6 +20,7 @@ import 'package:emulator_orchestrator/orchestrator/workflows/synthesizer_workflo
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'autosave_provider.dart';
+import 'comms_classification_provider.dart';
 import 'config_providers.dart';
 
 export 'package:emulator_orchestrator/data/models/emulation_state.dart';
@@ -337,6 +338,11 @@ final emulationOrchestratorProvider = Provider<EmulationOrchestrator>((ref) {
   });
 
   ref.onDispose(orchestrator.dispose);
+
+  // Eager-instantiate side-effect controllers so their ref.listen()s on
+  // upstream providers (e.g. callgraphProvider) fire from app boot, not
+  // lazily on first widget read.
+  ref.read(commsClassificationControllerProvider);
 
   return orchestrator;
 });
