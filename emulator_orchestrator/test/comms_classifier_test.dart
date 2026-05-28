@@ -117,4 +117,100 @@ void main() {
     expect(r.values.any((a) => a.protocol == CommsClass.unclassified), isFalse);
     expect(r, isEmpty);
   });
+
+  group('false-positive rejection (token-aware matching)', () {
+    test('HAL_MspInit: "spi" only via Msp+Init overlap → no match', () {
+      // The original report: HAL_MspInit was being classified as SPI.
+      final r = classifier.classify(_graphOf(['HAL_MspInit']));
+      expect(r, isEmpty);
+    });
+
+    test('CamelCase symbols where the protocol substring spans tokens', () {
+      // 'Msp' + 'Init' → tokens [Msp, Init], no spi token.
+      // 'inspect' as a token by itself contains "spe" but not "spi" anyway;
+      // the realistic case is the 'Msp|Init' overlap above.
+      final r = classifier.classify(_graphOf([
+        'PostMspInit',           // Post + Msp + Init
+        'DispatchMspHandler',    // Dispatch + Msp + Handler
+      ]));
+      expect(r, isEmpty);
+    });
+
+    test('quartz_init / quarterly_callback: "uart" inside "quart" → no match', () {
+      final r = classifier.classify(_graphOf([
+        'quartz_init',
+        'quarterly_callback',
+      ]));
+      expect(r, isEmpty);
+    });
+
+    test('SPINNER and similar SPI-prefixed words → no match', () {
+      // All-uppercase, starts with SPI but doesn't end with SPI; the
+      // acronym-suffix rule requires the protocol literal at the END.
+      final r = classifier.classify(_graphOf([
+        'SPINNER',
+        'SPINNER_init',
+      ]));
+      expect(r, isEmpty);
+    });
+
+    test('LPSPI and friends: acronym-suffix rule matches NXP-style names', () {
+      // Vendor-prefixed all-caps acronyms (1–3 letter prefix) still match.
+      final r = classifier.classify(_graphOf([
+        'LPSPI_MasterTransmit',
+        'LPI2C_MasterReceive',
+        'LPUART_Init',
+        'HSI2C_Read',
+      ]));
+      expect(r['LPSPI_MasterTransmit']?.protocol, CommsClass.spi);
+      expect(r['LPI2C_MasterReceive']?.protocol, CommsClass.i2c);
+      expect(r['LPUART_Init']?.protocol, CommsClass.uart);
+      expect(r['HSI2C_Read']?.protocol, CommsClass.i2c);
+    });
+
+    test('peripheral-index suffixes are stripped: USART1 / SPI4 / I2C3 match', () {
+      final r = classifier.classify(_graphOf([
+        'USART1_IRQHandler',
+        'SPI4_Init',
+        'I2C3_Receive',
+      ]));
+      expect(r['USART1_IRQHandler']?.protocol, CommsClass.uart);
+      expect(r['SPI4_Init']?.protocol, CommsClass.spi);
+      expect(r['I2C3_Receive']?.protocol, CommsClass.i2c);
+    });
+
+    test('role: "Ready" does NOT count as read (was a substring false positive)', () {
+      // HAL_I2C_IsDeviceReady is i2c-classified but its role should be null —
+      // "Ready" is its own token, distinct from "Read".
+      final r = classifier.classify(_graphOf(['HAL_I2C_IsDeviceReady']));
+      expect(r['HAL_I2C_IsDeviceReady']?.protocol, CommsClass.i2c);
+      expect(r['HAL_I2C_IsDeviceReady']?.role, isNull);
+    });
+  });
+
+  group('tokenize', () {
+    test('snake_case splits on underscores', () {
+      expect(tokenize('foo_bar_baz'), ['foo', 'bar', 'baz']);
+    });
+
+    test('CamelCase splits on lower→Upper boundaries', () {
+      expect(tokenize('LcdSpiInit'), ['Lcd', 'Spi', 'Init']);
+    });
+
+    test('all-caps acronym followed by CamelCase: split before the new word', () {
+      expect(tokenize('LPSPIMasterTransmit'), ['LPSPI', 'Master', 'Transmit']);
+    });
+
+    test('mixed snake + CamelCase', () {
+      expect(
+        tokenize('HAL_I2C_MasterTransmit'),
+        ['HAL', 'I2C', 'Master', 'Transmit'],
+      );
+    });
+
+    test('runs of all-caps without a trailing lowercase stay intact', () {
+      expect(tokenize('LPSPI'), ['LPSPI']);
+      expect(tokenize('USART1'), ['USART1']);
+    });
+  });
 }
