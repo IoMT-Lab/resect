@@ -297,7 +297,12 @@ apt-get install -y \
   software-properties-common \
   libsqlite3-dev
 
-# Python (same as install.sh — read version from Pipfile)
+# Python — legacy. The app/CLI no longer use the Python engine (replaced by the
+# in-process Dart engine: renode-dart + callgraph-dart), but this Vagrant harness
+# still provisions it. This is the sole remaining consumer keeping
+# emulation_engine/{emulation_engine,Pipfile,run_client.py} alive; drop this
+# provisioning (and that Python tree) when the harness is reworked to test the
+# Dart CLI instead.
 PYTHON_VERSION=$(grep 'python_version' /resect/emulation_engine/Pipfile \
   | grep -oP '"\K[^"]+')
 add-apt-repository -y ppa:deadsnakes/ppa

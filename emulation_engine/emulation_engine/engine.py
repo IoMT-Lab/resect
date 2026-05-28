@@ -1,3 +1,12 @@
+# RETAINED — NOT USED BY THE APP.
+# This Python emulation engine has been superseded by the in-process Dart engine
+# (renode-dart + callgraph-dart); the resect app/CLI no longer launches it.
+# It is kept here for two reasons:
+#   1. it is vendored in the same directory as the Renode portable binary
+#      (../renode_1.16.0-dotnet_portable/), which the Dart engine still uses, and
+#   2. the Vagrant CI harness (emulator_orchestrator/lib/orchestrator/
+#      vagrant_test_runner.dart) still provisions it via this dir's Pipfile.
+# Safe to delete once that harness is reworked to exercise the Dart CLI instead.
 
 import asyncio
 import os

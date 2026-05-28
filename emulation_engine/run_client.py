@@ -1,3 +1,8 @@
+# RETAINED — NOT USED BY THE APP. Part of the legacy Python emulation engine,
+# superseded by the in-process Dart engine (renode-dart + callgraph-dart). Kept
+# only because this dir also holds the still-used Renode binary and the Vagrant
+# CI harness still provisions it. See emulation_engine/engine.py for details.
+
 from emulation_engine.memory import Snapshot
 from emulation_engine.transport.client import Client
 
