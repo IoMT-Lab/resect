@@ -36,7 +36,13 @@ abstract class EmulationController {
   Future<void> reset();
 
   /// Register a named hook implementation with the engine.
-  Future<void> defineHook(String hookName, String hookCode);
+  ///
+  /// [scope], when set, is the Renode Python execution context the hook runs
+  /// in — hooks tagged with the same scope share `globals()`, which is how
+  /// stateful read/write pairs and comms (i2c/spi/uart) hooks coordinate.
+  /// Honored only by the patched Renode portable; stock builds drop it. Default
+  /// `return0`/`return1` hooks pass `null` here and work on any build.
+  Future<void> defineHook(String hookName, String hookCode, {String? scope});
 
   /// Replace listed symbols with previously-defined hooks.
   Future<void> mapHooks(Map<String, String> symbolToHookName);

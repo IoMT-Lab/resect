@@ -3,30 +3,20 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import '../database/artifact_database.dart';
 import '../models/firmware_record.dart';
+import 'hook_catalog.dart';
 
 /// Service for managing the local artifact library.
 ///
 /// The artifact library indexes firmware images by their SHA-256 ELF hash
-/// and stores per-symbol records. This enables lookup of previously seen
-/// firmware and will eventually store Renode hooks and other artifacts.
+/// and stores per-symbol records. Default hooks are generated through
+/// [HookCatalog] (hooks-dart builders) rather than hand-written constants;
+/// the DB still stores the resulting code strings verbatim.
 class ArtifactLibraryService {
   final ArtifactDatabase _db;
+  final HookCatalog _catalog;
 
-  ArtifactLibraryService(this._db);
-
-  /// Renode hook code that sets register 0 to 0 and returns to caller.
-  static const return0HookCode = '''
-from Antmicro.Renode.Peripherals.CPU import RegisterValue
-cpu.SetRegister(0, RegisterValue.Create(0, 64))
-cpu.PC = cpu.LR
-''';
-
-  /// Renode hook code that sets register 0 to 1 and returns to caller.
-  static const return1HookCode = '''
-from Antmicro.Renode.Peripherals.CPU import RegisterValue
-cpu.SetRegister(0, RegisterValue.Create(1, 64))
-cpu.PC = cpu.LR
-''';
+  ArtifactLibraryService(this._db, {HookCatalog? catalog})
+      : _catalog = catalog ?? HookCatalog.system();
 
   /// Compute SHA-256 hash of an ELF file.
   ///
@@ -73,8 +63,8 @@ cpu.PC = cpu.LR
       elfHash: elfHash,
       fileName: fileName,
       symbolNames: symbolNames,
-      return0HookCode: return0HookCode,
-      return1HookCode: return1HookCode,
+      return0HookCode: _catalog.build('return', {'value': 0}).code,
+      return1HookCode: _catalog.build('return', {'value': 1}).code,
     );
 
     // Verify registration
@@ -142,12 +132,12 @@ cpu.PC = cpu.LR
         await _db.addArtifact(
           symbolId: symbol.id,
           artifactType: 'renode_hook',
-          artifactData: return0HookCode,
+          artifactData: _catalog.build('return', {'value': 0}).code,
         );
         await _db.addArtifact(
           symbolId: symbol.id,
           artifactType: 'renode_hook',
-          artifactData: return1HookCode,
+          artifactData: _catalog.build('return', {'value': 1}).code,
         );
       }
     }

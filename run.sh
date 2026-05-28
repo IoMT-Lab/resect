@@ -46,6 +46,23 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
+# hooks-dart: when the local override is active, keep its embedded Python
+# module constants (lib/src/system_modules.dart) in sync with the canonical
+# .py files. The generator uses only dart:io — no pub fetch, no SSH path.
+# ---------------------------------------------------------------------------
+HOOKS_DART_PATH="${HOOKS_DART_PATH:-$SCRIPT_DIR/../hooks-dart}"
+if [ -f "$SCRIPT_DIR/pubspec_overrides.yaml" ] \
+   && grep -q "^[[:space:]]*hooks:" "$SCRIPT_DIR/pubspec_overrides.yaml" \
+   && [ -f "$HOOKS_DART_PATH/tool/gen_system_modules.dart" ]; then
+    (cd "$HOOKS_DART_PATH" && dart run tool/gen_system_modules.dart --check >/dev/null) || {
+        echo "Regenerating hooks-dart embedded module constants..."
+        (cd "$HOOKS_DART_PATH" && dart run tool/gen_system_modules.dart)
+    }
+    echo "✓ hooks-dart embedded modules up to date"
+    echo ""
+fi
+
+# ---------------------------------------------------------------------------
 # Flutter app. The emulation engine (Renode + objdump) runs in-process via the
 # pure-Dart packages — there is no Python server to start.
 # ---------------------------------------------------------------------------

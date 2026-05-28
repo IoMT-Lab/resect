@@ -42,7 +42,10 @@ class DartEmulationController implements EmulationController {
   String? _lastUnhandledSymbol;
   var _pendingPause = false;
 
-  final _hooks = <String, String>{}; // hookName -> hookCode
+  // hookName -> (hookCode, optional Renode Python execution scope).
+  // Scope is honored only by the patched Renode portable; null elsewhere is
+  // equivalent to today's no-scope behavior.
+  final _hooks = <String, ({String code, String? scope})>{};
   final _hookMap = <String, String>{}; // symbol -> hookName
 
   RenodeClient get _client {
@@ -142,8 +145,8 @@ class DartEmulationController implements EmulationController {
   }
 
   @override
-  Future<void> defineHook(String hookName, String hookCode) async {
-    _hooks[hookName] = hookCode;
+  Future<void> defineHook(String hookName, String hookCode, {String? scope}) async {
+    _hooks[hookName] = (code: hookCode, scope: scope);
   }
 
   @override
@@ -155,13 +158,21 @@ class DartEmulationController implements EmulationController {
     if (_hooks.isEmpty && _hookMap.isEmpty) return;
     final cmds = <String>[];
     for (final entry in _hooks.entries) {
-      cmds.add('set ${entry.key} \n"""\n${entry.value}\n"""');
+      cmds.add('set ${entry.key} \n"""\n${entry.value.code}\n"""');
     }
     for (final entry in _hookMap.entries) {
-      cmds.add('sysbus AddHookAtSymbol "${entry.key}" \$${entry.value}');
+      final scope = _hooks[entry.value]?.scope;
+      cmds.add(addHookAtSymbolCommand(entry.key, entry.value, scope));
     }
     await _client.callMany(cmds);
   }
+
+  /// Build the `sysbus AddHookAtSymbol` line for the variable-reference form
+  /// (a previously-`set` hook variable referenced by `$name`). Public so it
+  /// can be unit-tested without spinning up an engine; see comment in this
+  /// class's header on why we keep the two-step `set var """..."""` strategy.
+  static String addHookAtSymbolCommand(String symbol, String hookName, String? scope) =>
+      'sysbus AddHookAtSymbol "$symbol" \$$hookName${scope != null ? ' "$scope"' : ''}';
 
   @override
   Stream<void> get onStarted => _startedController.stream;

@@ -24,11 +24,15 @@ dependencies:
   renode:
     git:
       url: git@github.com:IoMT-Lab/renode-dart.git
-      ref: 9b2fd262d6e6edb00fadbd4e025a3ae546e6c47d
+      ref: 0267af18a39e12cd2d898cc32681f01a696911c5
   callgraph:
     git:
       url: git@github.com:IoMT-Lab/callgraph-dart.git
       ref: e35507e3211df87331114b92ac00a18a6141496a
+  hooks:
+    git:
+      url: git@github.com:IoMT-Lab/hooks-dart.git
+      ref: 45f8b0e
 
 dev_dependencies:
   test: ^1.24.0
