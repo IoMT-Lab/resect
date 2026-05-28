@@ -149,8 +149,16 @@ final tabReadinessProvider = Provider.family<TabReadiness, ResectTab>((ref, tab)
     case ResectTab.callGraph:
       return hasEmulator ? TabReadiness.ready : TabReadiness.notReady;
     case ResectTab.comms:
+      // Ready when the call graph is loaded AND either the user has opted into
+      // the Comms module OR the classifier has actually found comms functions
+      // in this firmware. The second clause means a firmware with detected
+      // comms functions un-dims the tab even if the user never explicitly
+      // enabled the module in System Configuration.
       final commsEnabled = ref.watch(moduleEnabledProvider('MODULE_COMMS_BUS'));
-      return (commsEnabled && hasCallGraph)
+      final hasAssignments =
+          ref.watch(currentEmulatorProvider)?.commsAssignments.isNotEmpty ??
+              false;
+      return (hasCallGraph && (commsEnabled || hasAssignments))
           ? TabReadiness.ready
           : TabReadiness.notReady;
     case ResectTab.synthesize:

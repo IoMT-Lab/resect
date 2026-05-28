@@ -1,3 +1,4 @@
+import 'package:emulator_orchestrator/data/models/call_graph.dart';
 import 'package:emulator_orchestrator/data/models/comms_assignment.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -137,12 +138,18 @@ class _FunctionsPane extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final filtered = assignments.entries
-        .where((e) => e.value.protocol == selected)
-        .toList()
-      ..sort((a, b) => a.key.compareTo(b.key));
+    final graph = ref.watch(callgraphProvider).valueOrNull;
+    if (graph == null) {
+      return const _EmptyState(message: 'Call graph not loaded yet.');
+    }
 
-    if (filtered.isEmpty) {
+    final tree = _buildCommsTree(
+      graph: graph,
+      assignments: assignments,
+      selected: selected,
+    );
+
+    if (tree.isEmpty) {
       return _EmptyState(
         message: 'No functions in ${_classLabel(selected)}.',
       );
@@ -152,46 +159,166 @@ class _FunctionsPane extends ConsumerWidget {
       color: AppTheme.bgCanvas,
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(vertical: 8),
-        itemCount: filtered.length,
+        itemCount: tree.length,
         separatorBuilder: (_, _) =>
             const Divider(height: 1, color: AppTheme.border),
-        itemBuilder: (context, i) {
-          final entry = filtered[i];
-          return _FunctionRow(symbol: entry.key, assignment: entry.value);
-        },
+        itemBuilder: (context, i) => _TreeRow(entry: tree[i]),
       ),
     );
   }
 }
 
-class _FunctionRow extends ConsumerWidget {
+/// One row in the hierarchical functions list — either a top-level comms
+/// function or one called by another in-class comms function (indented).
+class _TreeEntry {
   final String symbol;
   final CommsAssignment assignment;
-  const _FunctionRow({required this.symbol, required this.assignment});
+
+  /// Depth in the in-class call tree (0 for roots).
+  final int depth;
+
+  /// True for the second-and-subsequent appearances of [symbol] in the
+  /// flattened tree (functions with multiple in-class parents appear under
+  /// each, per the design). The first appearance is the "canonical" one.
+  final bool isRepeat;
+
+  const _TreeEntry({
+    required this.symbol,
+    required this.assignment,
+    required this.depth,
+    required this.isRepeat,
+  });
+}
+
+/// Build the in-class call tree for [selected] as a flat depth-first list.
+///
+/// Construction:
+/// - Members = symbols whose `commsAssignments[sym].protocol == selected`.
+/// - In-class children of a member = its `calledSymbols` keys that are also
+///   members. Cycles are broken via a per-path visited set.
+/// - Roots = members with no in-class parent. If a cycle exists between
+///   members and there's no external entry, leftover members are emitted
+///   as additional roots after the main pass.
+/// - A symbol with multiple in-class parents appears under each — its
+///   second-and-subsequent appearances carry `isRepeat = true` for the UI
+///   to mark visually. The underlying state for all instances is one entry
+///   in `commsAssignments`, so a mapping change on any instance propagates
+///   automatically when the widget tree rebuilds.
+List<_TreeEntry> _buildCommsTree({
+  required CallGraph graph,
+  required Map<String, CommsAssignment> assignments,
+  required CommsClass selected,
+}) {
+  final inClass = <String>{
+    for (final e in assignments.entries)
+      if (e.value.protocol == selected) e.key,
+  };
+  if (inClass.isEmpty) return const [];
+
+  // Which in-class symbols have at least one in-class parent? (Reverse-edge
+  // scan: for each in-class symbol that's a *caller*, mark its in-class
+  // callees as having a parent.)
+  final hasInClassParent = <String>{};
+  for (final caller in inClass) {
+    final callerSym = graph.symbols[caller];
+    if (callerSym == null) continue;
+    for (final callee in callerSym.calledSymbols.keys) {
+      if (callee != caller && inClass.contains(callee)) {
+        hasInClassParent.add(callee);
+      }
+    }
+  }
+
+  final roots = inClass.difference(hasInClassParent).toList()..sort();
+  final out = <_TreeEntry>[];
+  final seen = <String>{};
+
+  void emit(String symbol, int depth, Set<String> path) {
+    final isRepeat = seen.contains(symbol);
+    seen.add(symbol);
+    out.add(_TreeEntry(
+      symbol: symbol,
+      assignment: assignments[symbol]!,
+      depth: depth,
+      isRepeat: isRepeat,
+    ));
+    final sym = graph.symbols[symbol];
+    if (sym == null) return;
+    final children = sym.calledSymbols.keys
+        .where((c) =>
+            c != symbol && inClass.contains(c) && !path.contains(c))
+        .toList()
+      ..sort();
+    for (final c in children) {
+      emit(c, depth + 1, {...path, c});
+    }
+  }
+
+  for (final r in roots) {
+    emit(r, 0, {r});
+  }
+  // Fallback: in-class cycle with no external entry — emit any unseen members
+  // as roots so they still show up.
+  for (final s in inClass.toList()..sort()) {
+    if (!seen.contains(s)) emit(s, 0, {s});
+  }
+
+  return out;
+}
+
+class _TreeRow extends ConsumerWidget {
+  final _TreeEntry entry;
+  const _TreeRow({required this.entry});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                symbol,
-                style: const TextStyle(
-                  color: AppTheme.textPrimary,
-                  fontSize: 12,
-                  fontFamily: 'monospace',
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
+  Widget build(BuildContext context, WidgetRef ref) {
+    final indent = entry.depth * 18.0;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(16 + indent, 10, 16, 10),
+      child: Row(
+        children: [
+          if (entry.depth > 0) ...[
+            const Icon(
+              Icons.subdirectory_arrow_right,
+              size: 14,
+              color: AppTheme.textMuted,
             ),
-            const SizedBox(width: 12),
-            _RoleControl(symbol: symbol, assignment: assignment),
-            const SizedBox(width: 12),
-            _ReassignButton(symbol: symbol, currentClass: assignment.protocol),
+            const SizedBox(width: 6),
           ],
-        ),
-      );
+          Expanded(
+            child: Text(
+              entry.symbol,
+              style: TextStyle(
+                color: entry.isRepeat
+                    ? AppTheme.textMuted
+                    : AppTheme.textPrimary,
+                fontSize: 12,
+                fontFamily: 'monospace',
+                fontStyle:
+                    entry.isRepeat ? FontStyle.italic : FontStyle.normal,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (entry.isRepeat) ...[
+            const SizedBox(width: 6),
+            const Tooltip(
+              message: 'Listed again — same function as earlier in the tree. '
+                  'Mapping is shared across all instances.',
+              child: Icon(Icons.link, size: 14, color: AppTheme.textMuted),
+            ),
+          ],
+          const SizedBox(width: 12),
+          _RoleControl(symbol: entry.symbol, assignment: entry.assignment),
+          const SizedBox(width: 12),
+          _ReassignButton(
+            symbol: entry.symbol,
+            currentClass: entry.assignment.protocol,
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _RoleControl extends ConsumerWidget {
