@@ -6,7 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme.dart';
 import '../../../../providers/app_providers.dart';
+import '../../library/library_actions.dart';
 import '../synthesis_controller.dart';
+import 'synthesis_report.dart';
 
 /// Center pane of the Synthesize tab.
 ///
@@ -324,66 +326,69 @@ class _CompleteView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final progress = ref.watch(synthesisProgressProvider)!;
-    final result = ref.watch(synthesisResultProvider);
-    final fidelity = ref.watch(fidelityResultProvider);
     final success = progress.success;
 
-    return _Centered(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            success ? Icons.check_circle_outline : Icons.error_outline,
-            size: 40,
-            color: success ? const Color(0xFF81C784) : const Color(0xFFE57373),
+    return Container(
+      color: AppTheme.bgCanvas,
+      alignment: Alignment.topCenter,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                success ? Icons.check_circle_outline : Icons.error_outline,
+                size: 40,
+                color: success
+                    ? const Color(0xFF81C784)
+                    : const Color(0xFFE57373),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                success ? 'SYNTHESIS COMPLETE' : 'SYNTHESIS FAILED',
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 3,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                progress.status,
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 13),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 20),
+              const SynthesisReport(),
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => ref
+                        .read(synthesisProgressProvider.notifier)
+                        .state = null,
+                    icon: const Icon(Icons.replay, size: 16),
+                    label: const Text('Run Again'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.textPrimary,
+                      side: const BorderSide(color: AppTheme.border),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  ElevatedButton.icon(
+                    onPressed: () => saveEmulator(context, ref),
+                    icon: const Icon(Icons.save, size: 16),
+                    label: const Text('Save'),
+                  ),
+                ],
+              ),
+            ],
           ),
-          const SizedBox(height: 16),
-          Text(
-            success ? 'SYNTHESIS COMPLETE' : 'SYNTHESIS FAILED',
-            style: const TextStyle(
-              color: AppTheme.textPrimary,
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 3,
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            progress.status,
-            style:
-                const TextStyle(color: AppTheme.textMuted, fontSize: 13),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 20),
-          if (result != null)
-            _StatRow(
-              label: 'Resolved hooks',
-              value: '${result.resolvedHooks.length}',
-            ),
-          if (result != null)
-            _StatRow(
-              label: 'Iterations',
-              value: '${result.totalIterations}',
-            ),
-          if (fidelity != null)
-            _StatRow(
-              label: 'Fidelity',
-              value: '${(fidelity.overallFidelity * 100).toStringAsFixed(1)}%',
-            ),
-          if (fidelity != null)
-            _StatRow(
-              label: 'Coverage',
-              value:
-                  '${fidelity.traversedFunctions}/${fidelity.totalFunctions} fns',
-            ),
-          const SizedBox(height: 24),
-          ElevatedButton.icon(
-            onPressed: () =>
-                ref.read(synthesisProgressProvider.notifier).state = null,
-            icon: const Icon(Icons.replay, size: 16),
-            label: const Text('Run Again'),
-          ),
-        ],
+        ),
       ),
     );
   }

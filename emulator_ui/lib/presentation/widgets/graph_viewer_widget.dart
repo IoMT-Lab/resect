@@ -1,19 +1,15 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:emulator_orchestrator/core/constants.dart';
 import 'package:emulator_orchestrator/data/models/call_graph.dart' as cg;
-import 'package:emulator_orchestrator/data/models/fidelity_result.dart';
-import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/file_selection.dart';
 import '../../core/theme.dart';
 import '../../providers/app_providers.dart';
+import '../../providers/autosave_provider.dart';
 import '../screens/synthesize/synthesis_controller.dart';
 
 /// Main graph viewer widget that displays the call graph.
@@ -1353,8 +1349,11 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
             onTapDown: (details) {
+              // Claim keyboard focus so shortcuts (e.g. Shift+Z to reframe)
+              // work — autofocus isn't reliable inside the tabbed IndexedStack.
+              _focusNode.requestFocus();
               final localPos = details.localPosition;
-              
+
               // Find node under tap
               var nodeWasTapped = false;
               for (final entry in adjustedPositions.entries) {
@@ -1586,219 +1585,9 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
             ),
           ),
         ),
-        // Synthesis report overlay (shown after synthesis completes)
-        _buildSynthesisReportOverlay(ref),
       ],
     );
   }
-
-  /// Build the synthesis report overlay that appears after synthesis completes.
-  Widget _buildSynthesisReportOverlay(WidgetRef ref) {
-    final result = ref.watch(synthesisResultProvider);
-    if (result == null) return const SizedBox.shrink();
-
-    final emulator = ref.watch(currentEmulatorProvider);
-    final fidelity = ref.watch(fidelityResultProvider);
-
-    return Positioned(
-      bottom: 16,
-      left: 16,
-      right: 16,
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Material(
-            elevation: 12,
-            borderRadius: BorderRadius.circular(10),
-            color: Colors.grey.shade900,
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: result.success ? Colors.green.withAlpha(100) : Colors.red.withAlpha(100),
-                  width: 1.5,
-                ),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Header row with title and close button
-                  Row(
-                    children: [
-                      Icon(
-                        result.success ? Icons.check_circle : Icons.error,
-                        color: result.success ? Colors.green : Colors.red,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          result.success
-                              ? 'Synthesis Complete'
-                              : 'Synthesis Failed',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                            color: result.success ? Colors.green.shade300 : Colors.red.shade300,
-                          ),
-                        ),
-                      ),
-                      // Close button
-                      InkWell(
-                        onTap: () => ref.read(synthesisResultProvider.notifier).state = null,
-                        borderRadius: BorderRadius.circular(12),
-                        child: const Padding(
-                          padding: EdgeInsets.all(4),
-                          child: Icon(Icons.close, size: 18, color: Colors.grey),
-                        ),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 8),
-
-                  // Summary stats
-                  Row(
-                    children: [
-                      _reportStat('Iterations', '${result.totalIterations}'),
-                      const SizedBox(width: 16),
-                      _reportStat('Hooks Applied', '${result.resolvedHooks.length}'),
-                      const SizedBox(width: 16),
-                      _reportStat('Duration', '${result.totalDuration.inSeconds}s'),
-                    ],
-                  ),
-
-                  // Prominent fidelity score + bar
-                  if (fidelity != null) ...[
-                    const SizedBox(height: 12),
-                    _buildFidelityDisplay(fidelity),
-                  ],
-
-                  if (!result.success && result.failedSymbol != null) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      'Failed at: ${result.failedSymbol}',
-                      style: TextStyle(fontSize: 11, color: Colors.red.shade300),
-                    ),
-                  ],
-
-                  // Hook substitution table
-                  if (result.resolvedHooks.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    const Text(
-                      'SUBSTITUTED FUNCTIONS',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey,
-                        letterSpacing: 0.8,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Container(
-                      constraints: const BoxConstraints(maxHeight: 160),
-                      decoration: BoxDecoration(
-                        color: Colors.black26,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Scrollbar(
-                        thumbVisibility: true,
-                        child: ListView.separated(
-                          shrinkWrap: true,
-                          padding: const EdgeInsets.all(8),
-                          itemCount: result.resolvedHooks.length,
-                          separatorBuilder: (_, _) => Divider(
-                            height: 1,
-                            color: Colors.grey.shade800,
-                          ),
-                          itemBuilder: (context, index) {
-                            final symbol = result.resolvedHooks.keys.elementAt(index);
-                            final hookName = result.resolvedHooks[symbol]!;
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 4),
-                              child: Row(
-                                children: [
-                                  Icon(Icons.functions, size: 12, color: Colors.red.shade400),
-                                  const SizedBox(width: 6),
-                                  Expanded(
-                                    child: Text(
-                                      symbol,
-                                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Icon(Icons.arrow_forward, size: 10, color: Colors.grey.shade600),
-                                  const SizedBox(width: 8),
-                                  Flexible(
-                                    child: Text(
-                                      hookName,
-                                      style: TextStyle(fontSize: 10, color: Colors.green.shade400),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                  ],
-
-                  const SizedBox(height: 12),
-
-                  // Export buttons
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
-                    children: [
-                      _exportButton(
-                        icon: Icons.save,
-                        label: 'Save Emulator',
-                        onPressed: emulator != null
-                            ? () => _exportSaveEmulator(context, ref, emulator)
-                            : null,
-                      ),
-                      _exportButton(
-                        icon: Icons.code,
-                        label: 'Export .resc',
-                        onPressed: emulator != null && emulator.hooks.isNotEmpty
-                            ? () => _exportResc(context, ref, emulator)
-                            : null,
-                      ),
-                      _exportButton(
-                        icon: Icons.data_object,
-                        label: 'Export JSON',
-                        onPressed: () => _exportResultJson(context, result, fidelity),
-                      ),
-                      _exportButton(
-                        icon: Icons.computer,
-                        label: 'Export Vagrant',
-                        onPressed: emulator != null && emulator.hooks.isNotEmpty
-                            ? () => _exportVagrant(context, ref, emulator)
-                            : null,
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _reportStat(String label, String value) => Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: const TextStyle(fontSize: 9, color: Colors.grey)),
-        Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-      ],
-    );
 
   String _layoutLabel(GraphLayout layout) {
     switch (layout) {
@@ -1817,317 +1606,6 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
       case NodeStyle.box: return 'Box';
       case NodeStyle.labeledBox: return 'Labeled Box';
       case NodeStyle.dot: return 'Dot';
-    }
-  }
-
-  /// Prominent fidelity display with large score, progress bar, and breakdown.
-  Color _fidelityColor(double pct) {
-    if (pct >= 0.8) return Colors.green;
-    if (pct >= 0.5) return Colors.orange;
-    return Colors.red;
-  }
-
-  Widget _buildFidelityDisplay(FidelityResult fidelity) {
-    final pct = fidelity.overallFidelity;
-    final pctString = (pct * 100).toStringAsFixed(1);
-    final scoreColor = _fidelityColor(pct);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.black26,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Primary: overall fidelity — large and prominent
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              Text(
-                '$pctString%',
-                style: TextStyle(
-                  fontSize: 36,
-                  fontWeight: FontWeight.bold,
-                  color: scoreColor,
-                  height: 1.0,
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Text(
-                'FIDELITY',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey,
-                  letterSpacing: 1.2,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          // Overall progress bar (thicker for prominence)
-          ClipRRect(
-            borderRadius: BorderRadius.circular(3),
-            child: SizedBox(
-              height: 8,
-              child: LinearProgressIndicator(
-                value: pct,
-                backgroundColor: Colors.grey.shade800,
-                valueColor: AlwaysStoppedAnimation<Color>(scoreColor),
-              ),
-            ),
-          ),
-          // Secondary metrics row: coverage + coverage fidelity
-          if (fidelity.coverage != null || fidelity.coverageFidelity != null) ...[
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                // Coverage metric
-                if (fidelity.coverage != null) ...[
-                  _secondaryMetric(
-                    value: fidelity.coverage!,
-                    label: 'COVERAGE',
-                    detail: '${fidelity.traversedFunctions}/${fidelity.totalFunctions}',
-                  ),
-                ],
-                // Coverage fidelity metric
-                if (fidelity.coverageFidelity != null) ...[
-                  if (fidelity.coverage != null) const SizedBox(width: 20),
-                  _secondaryMetric(
-                    value: fidelity.coverageFidelity!,
-                    label: 'COVERAGE FIDELITY',
-                  ),
-                ],
-                // Subgraph fidelity (if available)
-                if (fidelity.subgraphFidelity != null) ...[
-                  const SizedBox(width: 20),
-                  _secondaryMetric(
-                    value: fidelity.subgraphFidelity!,
-                    label: 'SUBGRAPH FIDELITY',
-                    detail: '${fidelity.subgraphFunctions}',
-                  ),
-                ],
-              ],
-            ),
-          ],
-          const SizedBox(height: 6),
-          // Breakdown counts
-          Text(
-            '${fidelity.intactFunctions} intact · '
-            '${fidelity.degradedFunctions} degraded · '
-            '${fidelity.hookedFunctions} hooked',
-            style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// A compact secondary metric (used for coverage, coverage fidelity, subgraph).
-  Widget _secondaryMetric({
-    required double value,
-    required String label,
-    String? detail,
-  }) {
-    final color = _fidelityColor(value);
-    final pctStr = (value * 100).toStringAsFixed(1);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.baseline,
-          textBaseline: TextBaseline.alphabetic,
-          children: [
-            Text(
-              '$pctStr%',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: color,
-                height: 1.0,
-              ),
-            ),
-            const SizedBox(width: 4),
-            Text(
-              detail != null ? '$label ($detail)' : label,
-              style: const TextStyle(
-                fontSize: 9,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey,
-                letterSpacing: 1.0,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 3),
-        SizedBox(
-          width: 100,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(2),
-            child: SizedBox(
-              height: 3,
-              child: LinearProgressIndicator(
-                value: value,
-                backgroundColor: Colors.grey.shade800,
-                valueColor: AlwaysStoppedAnimation<Color>(color),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _exportButton({
-    required IconData icon,
-    required String label,
-    required VoidCallback? onPressed,
-  }) => SizedBox(
-      height: 30,
-      child: ElevatedButton.icon(
-        onPressed: onPressed,
-        icon: Icon(icon, size: 14),
-        label: Text(label, style: const TextStyle(fontSize: 11)),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.grey.shade800,
-          foregroundColor: Colors.white,
-          disabledBackgroundColor: Colors.grey.shade800.withAlpha(100),
-          disabledForegroundColor: Colors.grey.shade600,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-        ),
-      ),
-    );
-
-  /// Save the emulator .emu file (with hooks baked in).
-  Future<void> _exportSaveEmulator(BuildContext context, WidgetRef ref, dynamic emulator) async {
-    final repository = ref.read(emulatorRepositoryProvider);
-
-    String? savePath = emulator.emulatorPath;
-    if (savePath == null) {
-      final result = await ref.read(fileSelectorProvider).saveFile(
-            dialogTitle: 'Save Emulator',
-            suggestedName: '${emulator.name}.emu',
-            extensions: ['emu'],
-          );
-      if (result == null) return;
-      savePath = result;
-    }
-
-    try {
-      final updated = emulator.copyWith(emulatorPath: savePath, modifiedAt: DateTime.now());
-      await repository.saveEmulator(updated, savePath);
-      ref.read(currentEmulatorProvider.notifier).state = updated;
-      ref.read(emulatorDirtyProvider.notifier).state = false;
-      await repository.addToRecentEmulators(savePath, emulator.name);
-
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Saved: $savePath'),
-          backgroundColor: Colors.green.shade700,
-          duration: const Duration(seconds: 2),
-        ),
-      );
-    } catch (e) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Save failed: $e'), backgroundColor: Colors.red),
-      );
-    }
-  }
-
-  /// Export a standalone Renode .resc script.
-  Future<void> _exportResc(BuildContext context, WidgetRef ref, dynamic emulator) async {
-    final result = await ref.read(fileSelectorProvider).saveFile(
-          dialogTitle: 'Export Renode Script',
-          suggestedName: '${emulator.name}.resc',
-          extensions: ['resc'],
-        );
-    if (result == null) return;
-
-    try {
-      final repository = ref.read(emulatorRepositoryProvider);
-      await repository.exportResc(emulator, result);
-
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Exported: $result'),
-          backgroundColor: Colors.green.shade700,
-          duration: const Duration(seconds: 2),
-        ),
-      );
-    } catch (e) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Export failed: $e'), backgroundColor: Colors.red),
-      );
-    }
-  }
-
-  /// Export a self-contained Vagrant bundle (.zip).
-  Future<void> _exportVagrant(BuildContext context, WidgetRef ref, dynamic emulator) async {
-    final result = await ref.read(fileSelectorProvider).saveFile(
-          dialogTitle: 'Export Vagrant Bundle',
-          suggestedName: '${emulator.name}_vagrant.zip',
-          extensions: ['zip'],
-        );
-    if (result == null) return;
-
-    try {
-      final repository = ref.read(emulatorRepositoryProvider);
-      await repository.exportVagrant(emulator, result);
-
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Exported: $result'),
-          backgroundColor: Colors.green.shade700,
-          duration: const Duration(seconds: 2),
-        ),
-      );
-    } catch (e) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Export failed: $e'), backgroundColor: Colors.red),
-      );
-    }
-  }
-
-  /// Export the raw SynthesizerResult as JSON.
-  Future<void> _exportResultJson(BuildContext context, SynthesizerResult result, FidelityResult? fidelity) async {
-    final savePath = await ref.read(fileSelectorProvider).saveFile(
-          dialogTitle: 'Export Synthesis Result',
-          suggestedName: 'synthesis_result.json',
-          extensions: ['json'],
-        );
-    if (savePath == null) return;
-
-    try {
-      final exportData = <String, dynamic>{
-        ...result.toJson(),
-        if (fidelity != null) 'fidelity': fidelity.toJson(),
-      };
-      final jsonString = const JsonEncoder.withIndent('  ').convert(exportData);
-      await File(savePath).writeAsString(jsonString);
-
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Exported: $savePath'),
-          backgroundColor: Colors.green.shade700,
-          duration: const Duration(seconds: 2),
-        ),
-      );
-    } catch (e) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Export failed: $e'), backgroundColor: Colors.red),
-      );
     }
   }
 
@@ -2168,14 +1646,28 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
       );
     }
 
-    // Stopped — CTA that opens the Synthesize tab.
+    // Stopped — CTA that regenerates the call graph from the ELF.
     return _buildActionButton(
-      icon: Icons.auto_fix_high,
-      label: 'Open in Synthesize',
+      icon: Icons.refresh,
+      label: 'Regenerate Call Graph',
       color: AppTheme.accent,
-      onPressed: () =>
-          ref.read(activeTabProvider.notifier).state = ResectTab.synthesize,
+      onPressed: () => _regenerateCallGraph(ref),
     );
+  }
+
+  /// Force a fresh objdump extraction: clear the project's cached graph so
+  /// [callgraphProvider] won't return it, invalidate to re-run, then (once the
+  /// new graph lands) autosave. Waiting on the future ensures the
+  /// after-regeneration autosave fires only on a real regeneration.
+  Future<void> _regenerateCallGraph(WidgetRef ref) async {
+    final emu = ref.read(currentEmulatorProvider);
+    if (emu != null) {
+      ref.read(currentEmulatorProvider.notifier).state =
+          emu.copyWith(clearCachedCallGraph: true);
+    }
+    ref.invalidate(callgraphProvider);
+    await ref.read(callgraphProvider.future);
+    await ref.read(autosaveControllerProvider).trigger();
   }
 
   /// Helper to build a simple action button (PAUSE, RESET)

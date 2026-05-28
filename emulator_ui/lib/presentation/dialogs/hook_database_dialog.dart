@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/file_selection.dart';
 import '../../providers/app_providers.dart';
+import '../../providers/autosave_provider.dart';
 
 /// Dialog for viewing, importing, and deleting hook artifacts.
 ///
@@ -81,6 +83,7 @@ class _HookDatabaseDialogState extends ConsumerState<HookDatabaseDialog> {
         modifiedAt: DateTime.now(),
       );
       ref.read(emulatorDirtyProvider.notifier).state = true;
+      unawaited(ref.read(autosaveControllerProvider).trigger());
     }
 
     // Refresh providers

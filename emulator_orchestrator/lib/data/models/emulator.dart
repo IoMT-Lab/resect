@@ -1,5 +1,8 @@
 import 'package:uuid/uuid.dart';
 
+import 'call_graph.dart';
+import 'synthesizer_result.dart';
+
 /// Represents an emulator configuration containing firmware files, settings,
 /// and UI state.
 ///
@@ -53,6 +56,18 @@ class Emulator {
   /// Files are stored in ~/.config/call_graph_viewer/projects/<id>/documents/
   final List<DocumentEntry> documents;
 
+  /// Cached call graph for this project's ELF. Persisted so reopening the
+  /// project restores it without re-running objdump. Null until generated.
+  final CallGraph? cachedCallGraph;
+
+  /// Last synthesis result. Persisted alongside [executedSymbols] so the
+  /// fidelity report can be reconstructed on reopen without re-running.
+  final SynthesizerResult? synthesisResult;
+
+  /// Symbols executed during the last synthesis/run — the coverage input the
+  /// fidelity calculation needs to reproduce its result on reopen.
+  final Set<String> executedSymbols;
+
   const Emulator({
     required this.id,
     required this.name,
@@ -64,6 +79,9 @@ class Emulator {
     this.hookOverrides = const {},
     this.metadata = const {},
     this.documents = const [],
+    this.cachedCallGraph,
+    this.synthesisResult,
+    this.executedSymbols = const {},
   });
 
   /// Create a new emulator with default values
@@ -107,6 +125,11 @@ class Emulator {
     final documents = (json['documents'] as List<dynamic>?)
         ?.map((d) => DocumentEntry.fromJson(d as Map<String, dynamic>))
         .toList() ?? [];
+    final callGraphJson = json['call_graph'] as Map<String, dynamic>?;
+    final synthesisResultJson = json['synthesis_result'] as Map<String, dynamic>?;
+    final executedSymbols = (json['executed_symbols'] as List<dynamic>?)
+        ?.map((e) => e as String)
+        .toSet() ?? <String>{};
 
     return Emulator(
       id: emulatorData['id'] as String,
@@ -123,6 +146,12 @@ class Emulator {
       hookOverrides: hookOverrides,
       metadata: metadata,
       documents: documents,
+      cachedCallGraph:
+          callGraphJson != null ? CallGraph.fromSerializedJson(callGraphJson) : null,
+      synthesisResult: synthesisResultJson != null
+          ? SynthesizerResult.fromJson(synthesisResultJson)
+          : null,
+      executedSymbols: executedSymbols,
     );
   }
 
@@ -144,6 +173,9 @@ class Emulator {
       if (hookPreferences.isNotEmpty) 'hook_preferences': hookPreferences,
       if (hookOverrides.isNotEmpty) 'hook_overrides': hookOverrides,
       if (documents.isNotEmpty) 'documents': documents.map((d) => d.toJson()).toList(),
+      if (cachedCallGraph != null) 'call_graph': cachedCallGraph!.toJson(),
+      if (synthesisResult != null) 'synthesis_result': synthesisResult!.toJson(),
+      if (executedSymbols.isNotEmpty) 'executed_symbols': executedSymbols.toList(),
       'ui_state': uiState.toJson(),
       'metadata': metadata,
     };
@@ -164,6 +196,11 @@ class Emulator {
     Map<String, int>? hookOverrides,
     Map<String, dynamic>? metadata,
     List<DocumentEntry>? documents,
+    CallGraph? cachedCallGraph,
+    bool clearCachedCallGraph = false,
+    SynthesizerResult? synthesisResult,
+    bool clearSynthesisResult = false,
+    Set<String>? executedSymbols,
   }) => Emulator(
       id: id ?? this.id,
       name: name ?? this.name,
@@ -179,6 +216,11 @@ class Emulator {
       hookOverrides: hookOverrides ?? this.hookOverrides,
       metadata: metadata ?? this.metadata,
       documents: documents ?? this.documents,
+      cachedCallGraph:
+          clearCachedCallGraph ? null : (cachedCallGraph ?? this.cachedCallGraph),
+      synthesisResult:
+          clearSynthesisResult ? null : (synthesisResult ?? this.synthesisResult),
+      executedSymbols: executedSymbols ?? this.executedSymbols,
     );
 }
 

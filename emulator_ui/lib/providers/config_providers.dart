@@ -92,6 +92,12 @@ final systemConfigProvider =
 /// True when the first-run setup wizard has not yet been completed.
 final firstRunProvider = Provider<bool>((ref) => !ref.watch(systemConfigProvider).setupComplete);
 
+/// Whether autosave is enabled (Tools ▸ Preferences). Backed by the
+/// `PREF_AUTOSAVE` key in the repo-local `resect.config`.
+final autosaveEnabledProvider = Provider<bool>(
+  (ref) => ref.watch(systemConfigProvider).values['PREF_AUTOSAVE'] == '1',
+);
+
 /// The optional-module registry.
 final componentRegistryProvider = Provider<List<Component>>(
   (ref) => buildComponentRegistry(),

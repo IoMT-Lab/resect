@@ -19,6 +19,7 @@ import 'package:emulator_orchestrator/orchestrator/vagrant_test_event.dart';
 import 'package:emulator_orchestrator/orchestrator/workflows/synthesizer_workflow.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'autosave_provider.dart';
 import 'config_providers.dart';
 
 export 'package:emulator_orchestrator/data/models/emulation_state.dart';
@@ -50,6 +51,16 @@ final callgraphProvider = FutureProvider<CallGraph?>((ref) async {
   // No file selected, return null
   if (elfPath == null || elfPath.isEmpty) {
     return null;
+  }
+
+  // Reuse the open project's saved graph when it matches the loaded ELF, so
+  // reopening a project doesn't re-run objdump. `ref.read` (not watch) is
+  // intentional — the graph must not recompute when the emulator mutates for
+  // other reasons (hooks, etc.). Regenerate Call Graph clears the cache and
+  // invalidates this provider to force a fresh extraction.
+  final cached = ref.read(currentEmulatorProvider)?.cachedCallGraph;
+  if (cached != null && cached.elfPath == elfPath) {
+    return cached;
   }
 
   // In-process call-graph extraction (objdump) via the engine abstraction.
@@ -313,6 +324,9 @@ final emulationOrchestratorProvider = Provider<EmulationOrchestrator>((ref) {
           Map<String, int>.from(event.emulator?.hookOverrides ?? {});
       ref.read(hookedSymbolsProvider.notifier).state =
           event.emulator?.hooks.keys.toSet() ?? {};
+      // Restore persisted synthesis artifacts so the fidelity report can be
+      // reconstructed without re-running (see also library_actions.openEmulator).
+      ref.read(autosaveControllerProvider).restoreArtifacts(event.emulator);
     } else if (event is SymbolExecutedEvent && event.isEntry) {
       ref.read(executedSymbolsProvider.notifier).update((state) =>
         {...state, event.symbol}

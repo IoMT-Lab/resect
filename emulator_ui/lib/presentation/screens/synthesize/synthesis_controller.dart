@@ -7,6 +7,7 @@ import 'package:emulator_orchestrator/orchestrator/events/synthesizer_events.dar
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../providers/app_providers.dart';
+import '../../../providers/autosave_provider.dart';
 
 /// Owns the synthesizer / emulation launch lifecycle.
 ///
@@ -251,6 +252,7 @@ class SynthesisController {
           );
           ref.read(emulatorDirtyProvider.notifier).state = true;
         }
+        unawaited(ref.read(autosaveControllerProvider).trigger());
       }
     });
   }

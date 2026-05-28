@@ -5,6 +5,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../core/theme.dart';
 import '../../providers/app_providers.dart';
+import '../dialogs/preferences_dialog.dart';
 import '../dialogs/system_config_dialog.dart';
 import '../dialogs/unsaved_changes_dialog.dart';
 import '../screens/library/library_actions.dart';
@@ -76,6 +77,10 @@ class MenuBarWidget extends ConsumerWidget {
               _MenuItem(
                 title: 'System Configuration...',
                 onTap: () => SystemConfigDialog.show(context),
+              ),
+              _MenuItem(
+                title: 'Preferences...',
+                onTap: () => PreferencesDialog.show(context),
               ),
             ],
           ),

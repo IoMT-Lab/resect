@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 
 import '../../../core/file_selection.dart';
 import '../../../providers/app_providers.dart';
+import '../../../providers/autosave_provider.dart';
 import '../../dialogs/new_emulator_dialog.dart';
 import '../../dialogs/unsaved_changes_dialog.dart';
 
@@ -54,6 +55,7 @@ Future<void> createNewEmulator(BuildContext context, WidgetRef ref) async {
 
   ref.read(currentEmulatorProvider.notifier).state = emulator;
   ref.read(emulatorDirtyProvider.notifier).state = true;
+  ref.read(autosaveControllerProvider).restoreArtifacts(null);
   if (emulator.elfFilePath != null) {
     ref.read(selectedElfPathProvider.notifier).state = emulator.elfFilePath;
   }
@@ -103,6 +105,7 @@ Future<void> openEmulator(
         Map<String, int>.from(emulator.hookOverrides);
     ref.read(hookedSymbolsProvider.notifier).state =
         emulator.hooks.keys.toSet();
+    ref.read(autosaveControllerProvider).restoreArtifacts(emulator);
 
     await repository.addToRecentEmulators(emulatorPath, emulator.name);
     ref.invalidate(recentEmulatorsProvider);
@@ -126,7 +129,7 @@ Future<bool> saveEmulator(BuildContext context, WidgetRef ref) async {
   }
 
   final repository = ref.read(emulatorRepositoryProvider);
-  final updated = _gatherEmulatorState(ref, emulator);
+  final updated = ref.read(autosaveControllerProvider).gatherState(emulator);
 
   try {
     await repository.saveEmulator(updated, emulator.emulatorPath!);
@@ -173,7 +176,7 @@ Future<bool> saveEmulatorAs(BuildContext context, WidgetRef ref) async {
       : '$result${AppConstants.emulatorFileExtension}';
 
   final repository = ref.read(emulatorRepositoryProvider);
-  final updated = _gatherEmulatorState(ref, emulator)
+  final updated = ref.read(autosaveControllerProvider).gatherState(emulator)
       .copyWith(emulatorPath: savePath);
 
   try {
@@ -208,21 +211,8 @@ Future<void> closeEmulator(BuildContext context, WidgetRef ref) async {
   ref.read(hookPreferencesProvider.notifier).state = const {};
   ref.read(hookOverridesProvider.notifier).state = const {};
   ref.read(hookedSymbolsProvider.notifier).state = const {};
+  ref.read(autosaveControllerProvider).restoreArtifacts(null);
 }
-
-/// Snapshot the providers that contribute to persisted emulator state into
-/// the [Emulator] before writing it to disk.
-Emulator _gatherEmulatorState(WidgetRef ref, Emulator emulator) => emulator.copyWith(
-    modifiedAt: DateTime.now(),
-    elfFilePath: ref.read(selectedElfPathProvider) ?? emulator.elfFilePath,
-    uiState: UiState(
-      leftSidebarExpanded: ref.read(leftSidebarExpandedProvider),
-      rightSidebarExpanded: ref.read(rightSidebarExpandedProvider),
-      selectedSymbol: ref.read(selectedSymbolProvider),
-    ),
-    hookPreferences: Map<String, int>.from(ref.read(hookPreferencesProvider)),
-    hookOverrides: Map<String, int>.from(ref.read(hookOverridesProvider)),
-  );
 
 /// Resolve the path that "Save" would use for a never-saved emulator —
 /// used in disabled-button hover tooltips and similar copy.

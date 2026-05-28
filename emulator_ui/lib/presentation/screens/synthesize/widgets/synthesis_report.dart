@@ -1,0 +1,291 @@
+import 'package:emulator_orchestrator/data/models/fidelity_result.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../../../core/theme.dart';
+import '../../../../providers/app_providers.dart';
+
+/// Post-synthesis metrics report for the Synthesize tab.
+///
+/// Surfaces the full fidelity breakdown (overall, coverage, coverage fidelity,
+/// subgraph, and the intact/degraded/hooked counts) plus a run summary and the
+/// list of substituted functions. Exporting lives in the Publish tab — this
+/// report is metrics-only.
+class SynthesisReport extends ConsumerWidget {
+  const SynthesisReport({super.key});
+
+  static Color _fidelityColor(double pct) {
+    if (pct >= 0.8) return const Color(0xFF66BB6A);
+    if (pct >= 0.5) return const Color(0xFFFFA726);
+    return const Color(0xFFE57373);
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final result = ref.watch(synthesisResultProvider);
+    final fidelity = ref.watch(fidelityResultProvider);
+    if (result == null) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Run summary
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _SummaryStat(label: 'Iterations', value: '${result.totalIterations}'),
+            const SizedBox(width: 28),
+            _SummaryStat(
+                label: 'Hooks Applied',
+                value: '${result.resolvedHooks.length}'),
+            const SizedBox(width: 28),
+            _SummaryStat(
+                label: 'Duration', value: '${result.totalDuration.inSeconds}s'),
+          ],
+        ),
+
+        if (fidelity != null) ...[
+          const SizedBox(height: 16),
+          _buildFidelityDisplay(fidelity),
+        ],
+
+        if (!result.success && result.failedSymbol != null) ...[
+          const SizedBox(height: 10),
+          Text(
+            'Failed at: ${result.failedSymbol}',
+            style: TextStyle(fontSize: 12, color: Colors.red.shade300),
+          ),
+        ],
+
+        if (result.resolvedHooks.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          const Text(
+            'SUBSTITUTED FUNCTIONS',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textMuted,
+              letterSpacing: 2,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: AppTheme.bgCanvas,
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: AppTheme.border),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final entry in result.resolvedHooks.entries)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        Icon(Icons.functions,
+                            size: 12, color: Colors.red.shade400),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            entry.key,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontFamily: 'monospace',
+                              color: AppTheme.textPrimary,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Icon(Icons.arrow_forward,
+                            size: 10, color: AppTheme.textDisabled),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            entry.value,
+                            style: TextStyle(
+                                fontSize: 11, color: Colors.green.shade400),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildFidelityDisplay(FidelityResult fidelity) {
+    final pct = fidelity.overallFidelity;
+    final color = _fidelityColor(pct);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppTheme.bgCanvas,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Text(
+                '${(pct * 100).toStringAsFixed(1)}%',
+                style: TextStyle(
+                  fontSize: 36,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                  height: 1,
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                'FIDELITY',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.textMuted,
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(3),
+            child: SizedBox(
+              height: 8,
+              child: LinearProgressIndicator(
+                value: pct,
+                backgroundColor: AppTheme.border,
+                valueColor: AlwaysStoppedAnimation<Color>(color),
+              ),
+            ),
+          ),
+          if (fidelity.coverage != null ||
+              fidelity.coverageFidelity != null ||
+              fidelity.subgraphFidelity != null) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 24,
+              runSpacing: 10,
+              children: [
+                if (fidelity.coverage != null)
+                  _SecondaryMetric(
+                    value: fidelity.coverage!,
+                    label: 'COVERAGE',
+                    detail:
+                        '${fidelity.traversedFunctions}/${fidelity.totalFunctions}',
+                  ),
+                if (fidelity.coverageFidelity != null)
+                  _SecondaryMetric(
+                    value: fidelity.coverageFidelity!,
+                    label: 'COVERAGE FIDELITY',
+                  ),
+                if (fidelity.subgraphFidelity != null)
+                  _SecondaryMetric(
+                    value: fidelity.subgraphFidelity!,
+                    label: 'SUBGRAPH FIDELITY',
+                    detail: '${fidelity.subgraphFunctions}',
+                  ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 10),
+          Text(
+            '${fidelity.intactFunctions} intact · '
+            '${fidelity.degradedFunctions} degraded · '
+            '${fidelity.hookedFunctions} hooked',
+            style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryStat extends StatelessWidget {
+  final String label;
+  final String value;
+  const _SummaryStat({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) => Column(
+        children: [
+          Text(value,
+              style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.textPrimary)),
+          Text(label,
+              style: const TextStyle(fontSize: 10, color: AppTheme.textMuted)),
+        ],
+      );
+}
+
+class _SecondaryMetric extends StatelessWidget {
+  final double value;
+  final String label;
+  final String? detail;
+  const _SecondaryMetric({required this.value, required this.label, this.detail});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = SynthesisReport._fidelityColor(value);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '${(value * 100).toStringAsFixed(1)}%',
+              style: TextStyle(
+                  fontSize: 16, fontWeight: FontWeight.bold, color: color),
+            ),
+            const SizedBox(width: 4),
+            Text(
+              detail != null ? '$label ($detail)' : label,
+              style: const TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.bold,
+                color: AppTheme.textMuted,
+                letterSpacing: 1,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 3),
+        SizedBox(
+          width: 100,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: SizedBox(
+              height: 3,
+              child: LinearProgressIndicator(
+                value: value,
+                backgroundColor: AppTheme.border,
+                valueColor: AlwaysStoppedAnimation<Color>(color),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}

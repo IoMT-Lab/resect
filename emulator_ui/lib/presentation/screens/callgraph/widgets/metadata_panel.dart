@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:emulator_orchestrator/data/database/artifact_database.dart' show Artifact;
 import 'package:emulator_orchestrator/data/models/symbol.dart';
 import 'package:flutter/material.dart';
@@ -5,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme.dart';
 import '../../../../providers/app_providers.dart';
+import '../../../../providers/autosave_provider.dart';
 
 /// Right-rail metadata panel for the Call Graph tab.
 ///
@@ -342,6 +345,7 @@ void _persistEmulator(
     modifiedAt: DateTime.now(),
   );
   ref.read(emulatorDirtyProvider.notifier).state = true;
+  unawaited(ref.read(autosaveControllerProvider).trigger());
 }
 
 class _HookDropdown extends StatelessWidget {

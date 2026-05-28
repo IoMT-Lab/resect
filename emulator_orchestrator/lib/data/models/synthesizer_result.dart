@@ -33,6 +33,19 @@ class SynthesizerResult {
     this.failedSymbol,
   });
 
+  factory SynthesizerResult.fromJson(Map<String, dynamic> json) => SynthesizerResult(
+      success: json['success'] as bool,
+      totalIterations: json['totalIterations'] as int,
+      resolvedHooks: (json['resolvedHooks'] as Map<String, dynamic>?)
+              ?.map((k, v) => MapEntry(k, v as String)) ??
+          {},
+      resolvedHookCode: (json['resolvedHookCode'] as Map<String, dynamic>?)
+              ?.map((k, v) => MapEntry(k, v as String)) ??
+          {},
+      failedSymbol: json['failedSymbol'] as String?,
+      totalDuration: Duration(milliseconds: json['totalDurationMs'] as int? ?? 0),
+    );
+
   Map<String, dynamic> toJson() => {
       'success': success,
       'totalIterations': totalIterations,
