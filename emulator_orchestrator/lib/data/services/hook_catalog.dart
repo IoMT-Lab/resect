@@ -194,7 +194,11 @@ List<HookBuilderDescriptor> _systemDescriptors() => [
             defaultValue: 1234,
           ),
         ],
-        build: (params) => i2cReadHook(params['port'] as int? ?? 1234),
+        // v1: hardcode the arch glue to 'stm32_glue'. Per the arch-aware
+        // TODO in the plan, this becomes a parameter once non-STM glues
+        // (nordic_glue.py, esp_idf_glue.py, …) exist.
+        build: (params) =>
+            i2cReadHook(params['port'] as int? ?? 1234, 'stm32_glue'),
       ),
       HookBuilderDescriptor(
         kindId: 'i2c_write',
@@ -210,6 +214,7 @@ List<HookBuilderDescriptor> _systemDescriptors() => [
             defaultValue: 1234,
           ),
         ],
-        build: (params) => i2cWriteHook(params['port'] as int? ?? 1234),
+        build: (params) =>
+            i2cWriteHook(params['port'] as int? ?? 1234, 'stm32_glue'),
       ),
     ];
