@@ -100,6 +100,8 @@ class SynthesisReport extends ConsumerWidget {
                           ),
                         ),
                         const SizedBox(width: 8),
+                        _HookSourceTag.fromHookName(entry.value),
+                        const SizedBox(width: 8),
                         const Icon(Icons.arrow_forward,
                             size: 10, color: AppTheme.textDisabled),
                         const SizedBox(width: 8),
@@ -232,6 +234,68 @@ class _SummaryStat extends StatelessWidget {
           Text(label,
               style: const TextStyle(fontSize: 10, color: AppTheme.textMuted)),
         ],
+      );
+}
+
+/// Small colored pill that labels where a resolved hook came from.
+///
+/// The synthesizer pre-seeds hooks with stable suffixed aliases (see
+/// [SynthesizerWorkflow]) — this widget keys off those suffixes:
+/// - `_override`  → forced override (user set via metadata sidebar)
+/// - `_comms`     → comms-bus virtualization (bus hook or return0 fill-in)
+/// - `_resolved`  → warm-start cache (a previous successful synthesis run)
+/// - `_hook_<n>`  → discovered by the synthesizer this run
+///
+/// Showing the source per row is the easiest way to see, at a glance,
+/// whether Virtualize-i2c (or any other gate) actually changed the
+/// hook set on a given run.
+class _HookSourceTag extends StatelessWidget {
+  final String label;
+  final Color color;
+  const _HookSourceTag({required this.label, required this.color});
+
+  factory _HookSourceTag.fromHookName(String hookName) {
+    if (hookName.endsWith('_override')) {
+      return const _HookSourceTag(
+        label: 'OVERRIDE',
+        color: Color(0xFFFFB74D),
+      );
+    }
+    if (hookName.endsWith('_comms')) {
+      return const _HookSourceTag(
+        label: 'COMMS',
+        color: Color(0xFF4FC3F7),
+      );
+    }
+    if (hookName.endsWith('_resolved')) {
+      return const _HookSourceTag(
+        label: 'CACHED',
+        color: Color(0xFFA5D6A7),
+      );
+    }
+    return const _HookSourceTag(
+      label: 'SYNTH',
+      color: Color(0xFF81C784),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(3),
+          border: Border.all(color: color.withValues(alpha: 0.5), width: 1),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 9,
+            fontWeight: FontWeight.w700,
+            color: color,
+            letterSpacing: 1,
+          ),
+        ),
       );
 }
 
