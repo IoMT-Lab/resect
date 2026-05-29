@@ -177,23 +177,34 @@ class _IdleView extends ConsumerWidget {
       mode = chosen;
     }
 
+    // The view will swap from _IdleView to _RunningView as soon as the
+    // controller mutates `synthesisProgressProvider` non-null. Once that
+    // happens this widget is disposed and `ref` becomes unusable. Capture
+    // the root ProviderContainer so the catch block can still touch
+    // providers after the swap.
+    final container = ProviderScope.containerOf(context, listen: false);
+
     try {
       if (mode == 'run') {
         await controller.runWithResolvedHooks(emulator);
       } else {
         // Clear stale resolved hooks so the run starts fresh.
         if (emulator.hooks.isNotEmpty) {
-          ref.read(currentEmulatorProvider.notifier).state =
+          container.read(currentEmulatorProvider.notifier).state =
               emulator.copyWith(hooks: {}, modifiedAt: DateTime.now());
-          ref.read(emulatorDirtyProvider.notifier).state = true;
+          container.read(emulatorDirtyProvider.notifier).state = true;
         }
         await controller.startSynthesis(
-          ref.read(currentEmulatorProvider)!,
+          container.read(currentEmulatorProvider)!,
         );
       }
-    } catch (e) {
-      if (ref.read(synthesisProgressProvider) == null) return; // user stopped
-      ref.read(synthesisProgressProvider.notifier).state = null;
+    } catch (e, st) {
+      // Surface the real error to stdout so it's visible regardless of
+      // whether the widget is still mounted by the time we land here.
+      // ignore: avoid_print
+      print('[Synthesis] launch failed: $e\n$st');
+      if (container.read(synthesisProgressProvider) == null) return;
+      container.read(synthesisProgressProvider.notifier).state = null;
       if (!context.mounted) return;
       showDialog<void>(
         context: context,
