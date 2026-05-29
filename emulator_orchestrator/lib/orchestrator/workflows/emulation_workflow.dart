@@ -61,7 +61,7 @@ class EmulationWorkflow {
     String? startFrom,
     List<String>? endAt,
     bool pauseOnUnhandled = true,
-    Map<String, String> resolvedOverrides = const {},
+    Map<String, HookSpec> resolvedOverrides = const {},
     Map<String, HookSpec> commsHooks = const {},
     String? memoryMapPath,
   }) async {
@@ -108,7 +108,7 @@ class EmulationWorkflow {
     String? startFrom,
     List<String>? endAt,
     bool pauseOnUnhandled = true,
-    Map<String, String> resolvedOverrides = const {},
+    Map<String, HookSpec> resolvedOverrides = const {},
     Map<String, HookSpec> commsHooks = const {},
     String? memoryMapPath,
   }) async {
@@ -241,11 +241,15 @@ class EmulationWorkflow {
     print('Memory map applied successfully');
   }
 
-  Future<void> _applyForcedOverrides(Map<String, String> overrides) async {
+  Future<void> _applyForcedOverrides(Map<String, HookSpec> overrides) async {
     if (overrides.isEmpty) return;
     for (final entry in overrides.entries) {
       final hookName = '${entry.key}_override';
-      await emulationController.defineHook(hookName, entry.value);
+      await emulationController.defineHook(
+        hookName,
+        entry.value.code,
+        scope: entry.value.scope,
+      );
     }
     await emulationController.mapHooks({
       for (final key in overrides.keys) key: '${key}_override',

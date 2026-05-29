@@ -332,6 +332,8 @@ final emulationOrchestratorProvider = Provider<EmulationOrchestrator>((ref) {
           Map<String, int>.from(event.emulator?.hookPreferences ?? {});
       ref.read(hookOverridesProvider.notifier).state =
           Map<String, int>.from(event.emulator?.hookOverrides ?? {});
+      ref.read(hookOverrideScopesProvider.notifier).state =
+          Map<String, String>.from(event.emulator?.hookOverrideScopes ?? {});
       ref.read(hookedSymbolsProvider.notifier).state =
           event.emulator?.hooks.keys.toSet() ?? {};
       // Restore persisted synthesis artifacts so the fidelity report can be
@@ -469,6 +471,16 @@ final hookPreferencesProvider = StateProvider<Map<String, int>>((ref) => {});
 /// overrides are applied unconditionally before emulation starts.
 /// The function is always substituted, whether or not it causes an error.
 final hookOverridesProvider = StateProvider<Map<String, int>>((ref) => {});
+
+/// Per-override Renode scope: symbol name → scope string.
+///
+/// Paired with [hookOverridesProvider]. Missing key or empty string means
+/// "no scope" — the hook is applied without a 3rd-arg to `AddHookAtSymbol`,
+/// so it lands in the unscoped Python global namespace. Stateful hook
+/// builders (read/write/increment) need a non-empty scope to coordinate
+/// across symbols.
+final hookOverrideScopesProvider =
+    StateProvider<Map<String, String>>((ref) => {});
 
 // ============================================================================
 // SYNTHESIZER PROVIDERS

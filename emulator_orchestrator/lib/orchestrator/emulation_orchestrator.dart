@@ -109,11 +109,13 @@ class EmulationOrchestrator {
     List<String>? endAt,
     bool pauseOnUnhandled = true,
     Map<String, int> hookOverrides = const {},
+    Map<String, String> hookOverrideScopes = const {},
     Map<String, String> resolvedHooks = const {},
     Map<String, HookSpec> commsHooks = const {},
     String? memoryMapPath,
   }) async {
-    final allHooks = await _resolveHookOverrides(resolvedHooks, hookOverrides);
+    final allHooks = await _resolveHookOverrides(
+        resolvedHooks, hookOverrides, hookOverrideScopes);
     await emulationWorkflow.start(
       elfPath: elfPath,
       baseImagePath: baseImagePath,
@@ -138,11 +140,13 @@ class EmulationOrchestrator {
     List<String>? endAt,
     bool pauseOnUnhandled = true,
     Map<String, int> hookOverrides = const {},
+    Map<String, String> hookOverrideScopes = const {},
     Map<String, String> resolvedHooks = const {},
     Map<String, HookSpec> commsHooks = const {},
     String? memoryMapPath,
   }) async {
-    final allHooks = await _resolveHookOverrides(resolvedHooks, hookOverrides);
+    final allHooks = await _resolveHookOverrides(
+        resolvedHooks, hookOverrides, hookOverrideScopes);
     await emulationWorkflow.restart(
       elfPath: elfPath,
       baseImagePath: baseImagePath,
@@ -218,6 +222,7 @@ class EmulationOrchestrator {
     int maxIterations = 100,
     Map<String, int> hookPreferences = const {},
     Map<String, int> hookOverrides = const {},
+    Map<String, String> hookOverrideScopes = const {},
     Map<String, String> resolvedHooks = const {},
     Map<String, HookSpec> commsHooks = const {},
     String? memoryMapPath,
@@ -230,6 +235,7 @@ class EmulationOrchestrator {
       maxIterations: maxIterations,
       hookPreferences: hookPreferences,
       hookOverrides: hookOverrides,
+      hookOverrideScopes: hookOverrideScopes,
       resolvedHooks: resolvedHooks,
       commsHooks: commsHooks,
       memoryMapPath: memoryMapPath,
@@ -257,20 +263,31 @@ class EmulationOrchestrator {
     _eventController.add(event);
   }
 
-  /// Resolve hookOverrides (symbol → artifactId) into hook code and merge
-  /// with resolvedHooks (symbol → hookCode). Overrides win on conflict.
-  Future<Map<String, String>> _resolveHookOverrides(
+  /// Resolve hookOverrides (symbol → artifactId) into [HookSpec]s carrying
+  /// the artifact's code body plus the user's per-override scope (from
+  /// [Emulator.hookOverrideScopes]). Merges with [resolvedHooks] (symbol →
+  /// hookCode, warm-start hooks from a previous synthesis run — no scope).
+  /// Overrides win on conflict.
+  Future<Map<String, HookSpec>> _resolveHookOverrides(
     Map<String, String> resolvedHooks,
     Map<String, int> hookOverrides,
+    Map<String, String> hookOverrideScopes,
   ) async {
-    final resolvedOverrides = <String, String>{};
+    final merged = <String, HookSpec>{
+      for (final entry in resolvedHooks.entries)
+        entry.key: (code: entry.value, scope: null),
+    };
     for (final entry in hookOverrides.entries) {
       final artifact = await artifactDb.getArtifactById(entry.value);
       if (artifact != null) {
-        resolvedOverrides[entry.key] = artifact.artifactData;
+        final scope = hookOverrideScopes[entry.key];
+        merged[entry.key] = (
+          code: artifact.artifactData,
+          scope: (scope == null || scope.isEmpty) ? null : scope,
+        );
       }
     }
-    return {...resolvedHooks, ...resolvedOverrides};
+    return merged;
   }
 
   // =========================================================================

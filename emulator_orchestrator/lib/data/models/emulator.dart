@@ -50,6 +50,13 @@ class Emulator {
   /// regardless of whether the function causes an unhandled access.
   final Map<String, int> hookOverrides;
 
+  /// Per-override Renode scope (symbol name → scope string). Missing key
+  /// or empty string means "no scope" — `AddHookAtSymbol` gets no 3rd arg
+  /// and the hook lands in the unscoped Python global namespace. Paired
+  /// with [hookOverrides]; entries here without a corresponding
+  /// [hookOverrides] entry are ignored at apply time.
+  final Map<String, String> hookOverrideScopes;
+
   /// Open-ended metadata for future expansion
   final Map<String, dynamic> metadata;
 
@@ -85,6 +92,7 @@ class Emulator {
     this.hooks = const {},
     this.hookPreferences = const {},
     this.hookOverrides = const {},
+    this.hookOverrideScopes = const {},
     this.metadata = const {},
     this.documents = const [],
     this.cachedCallGraph,
@@ -130,6 +138,10 @@ class Emulator {
         ?.map((k, v) => MapEntry(k, v as int)) ?? {};
     final hookOverrides = (json['hook_overrides'] as Map<String, dynamic>?)
         ?.map((k, v) => MapEntry(k, v as int)) ?? {};
+    final hookOverrideScopes =
+        (json['hook_override_scopes'] as Map<String, dynamic>?)
+                ?.map((k, v) => MapEntry(k, v as String)) ??
+            {};
     final metadata = json['metadata'] as Map<String, dynamic>? ?? {};
     final documents = (json['documents'] as List<dynamic>?)
         ?.map((d) => DocumentEntry.fromJson(d as Map<String, dynamic>))
@@ -157,6 +169,7 @@ class Emulator {
       hooks: hooks,
       hookPreferences: hookPreferences,
       hookOverrides: hookOverrides,
+      hookOverrideScopes: hookOverrideScopes,
       metadata: metadata,
       documents: documents,
       cachedCallGraph:
@@ -186,6 +199,8 @@ class Emulator {
       if (hooks.isNotEmpty) 'hooks': hooks,
       if (hookPreferences.isNotEmpty) 'hook_preferences': hookPreferences,
       if (hookOverrides.isNotEmpty) 'hook_overrides': hookOverrides,
+      if (hookOverrideScopes.isNotEmpty)
+        'hook_override_scopes': hookOverrideScopes,
       if (documents.isNotEmpty) 'documents': documents.map((d) => d.toJson()).toList(),
       if (cachedCallGraph != null) 'call_graph': cachedCallGraph!.toJson(),
       if (synthesisResult != null) 'synthesis_result': synthesisResult!.toJson(),
@@ -210,6 +225,7 @@ class Emulator {
     Map<String, String>? hooks,
     Map<String, int>? hookPreferences,
     Map<String, int>? hookOverrides,
+    Map<String, String>? hookOverrideScopes,
     Map<String, dynamic>? metadata,
     List<DocumentEntry>? documents,
     CallGraph? cachedCallGraph,
@@ -231,6 +247,7 @@ class Emulator {
       hooks: hooks ?? this.hooks,
       hookPreferences: hookPreferences ?? this.hookPreferences,
       hookOverrides: hookOverrides ?? this.hookOverrides,
+      hookOverrideScopes: hookOverrideScopes ?? this.hookOverrideScopes,
       metadata: metadata ?? this.metadata,
       documents: documents ?? this.documents,
       cachedCallGraph:

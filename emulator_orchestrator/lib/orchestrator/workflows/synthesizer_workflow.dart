@@ -54,6 +54,7 @@ class SynthesizerWorkflow {
     int maxIterations = 100,
     Map<String, int> hookPreferences = const {},
     Map<String, int> hookOverrides = const {},
+    Map<String, String> hookOverrideScopes = const {},
     Map<String, String> resolvedHooks = const {},
     Map<String, HookSpec> commsHooks = const {},
     String? memoryMapPath,
@@ -80,16 +81,22 @@ class SynthesizerWorkflow {
             entry.key: definedHooks[entry.value]!,
       };
 
-    // Pre-seed forced overrides (unconditional substitutions)
+    // Pre-seed forced overrides (unconditional substitutions). Each override
+    // may carry a user-supplied Renode scope (plan C2) — empty / missing is
+    // treated as no-scope.
     final overriddenSymbols = <String>{};
     for (final entry in hookOverrides.entries) {
       final artifact = await artifactDb.getArtifactById(entry.value);
       if (artifact != null) {
         final hookName = '${entry.key}_override';
+        final rawScope = hookOverrideScopes[entry.key];
+        final scope = (rawScope == null || rawScope.isEmpty) ? null : rawScope;
         definedHooks[hookName] = artifact.artifactData;
+        hookScopes[hookName] = scope;
         hookMap[entry.key] = hookName;
         overriddenSymbols.add(entry.key);
-        print('[Synthesizer] Pre-seeded override for "${entry.key}" (artifact #${entry.value})');
+        print('[Synthesizer] Pre-seeded override for "${entry.key}" '
+            '(artifact #${entry.value}, scope ${scope ?? "—"})');
       }
     }
 

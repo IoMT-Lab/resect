@@ -41,6 +41,7 @@ class SynthesisController {
     final baseImagePath = emulator.baseImagePath!;
     final config = emulator.emulationConfig;
     final hookOverrides = ref.read(hookOverridesProvider);
+    final hookOverrideScopes = ref.read(hookOverrideScopesProvider);
 
     // Reset visual state so highlights start fresh.
     ref.read(executedSymbolsProvider.notifier).state = {};
@@ -71,6 +72,7 @@ class SynthesisController {
       startFrom: config.startFrom,
       pauseOnUnhandled: true,
       hookOverrides: hookOverrides,
+      hookOverrideScopes: hookOverrideScopes,
       resolvedHooks: resolvedHooks,
       commsHooks: commsHooks,
       memoryMapPath: config.memoryMapPath,
@@ -101,6 +103,7 @@ class SynthesisController {
       endAt: config.endAt,
       hookPreferences: hookPreferences,
       hookOverrides: hookOverrides,
+      hookOverrideScopes: hookOverrideScopes,
       resolvedHooks: resolvedHooks,
       commsHooks: commsHooks,
       memoryMapPath: config.memoryMapPath,
@@ -116,6 +119,7 @@ class SynthesisController {
     final baseImagePath = emulator.baseImagePath!;
     final config = emulator.emulationConfig;
     final hookOverrides = ref.read(hookOverridesProvider);
+    final hookOverrideScopes = ref.read(hookOverrideScopesProvider);
 
     ref.read(executedSymbolsProvider.notifier).state = {};
     ref.read(synthesisResultProvider.notifier).state = null;
@@ -143,6 +147,7 @@ class SynthesisController {
       endAt: config.endAt,
       pauseOnUnhandled: config.pauseOnUnhandled,
       hookOverrides: hookOverrides,
+      hookOverrideScopes: hookOverrideScopes,
       resolvedHooks: emulator.hooks,
       commsHooks: commsHooks,
       memoryMapPath: config.memoryMapPath,
