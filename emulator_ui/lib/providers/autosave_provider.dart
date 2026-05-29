@@ -30,6 +30,8 @@ class AutosaveController {
         ),
         hookPreferences: Map<String, int>.from(ref.read(hookPreferencesProvider)),
         hookOverrides: Map<String, int>.from(ref.read(hookOverridesProvider)),
+        hookOverrideScopes:
+            Map<String, String>.from(ref.read(hookOverrideScopesProvider)),
         cachedCallGraph:
             ref.read(callgraphProvider).valueOrNull ?? base.cachedCallGraph,
         synthesisResult: ref.read(synthesisResultProvider) ?? base.synthesisResult,
