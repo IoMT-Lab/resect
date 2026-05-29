@@ -110,17 +110,17 @@ class CommsBusController {
               prevCfg.handler != nextCfg.handler);
 
       if (shouldRun && (!isRunning || settingsChanged)) {
-        try {
-          await service.start(cls, nextCfg.port, _makeHandler(nextCfg.handler));
-        } on PortInUseException catch (e) {
-          // Bounce the toggle back to false so the UI reflects reality.
-          // ignore: avoid_print
-          print('Comms bus ($cls): $e — disabling Virtualize.');
-          final current = _ref.read(commsProtocolConfigProvider);
-          final updated = Map<CommsClass, CommsProtocolConfig>.from(current);
-          updated[cls] = nextCfg.copyWith(virtualized: false);
-          _ref.read(commsProtocolConfigProvider.notifier).state = updated;
-        }
+        // try {
+        //   await service.start(cls, nextCfg.port, _makeHandler(nextCfg.handler));
+        // } on PortInUseException catch (e) {
+        //   // Bounce the toggle back to false so the UI reflects reality.
+        //   // ignore: avoid_print
+        //   print('Comms bus ($cls): $e — disabling Virtualize.');
+        //   final current = _ref.read(commsProtocolConfigProvider);
+        //   final updated = Map<CommsClass, CommsProtocolConfig>.from(current);
+        //   updated[cls] = nextCfg.copyWith(virtualized: false);
+        //   _ref.read(commsProtocolConfigProvider.notifier).state = updated;
+        // }
       } else if (!shouldRun && isRunning) {
         await service.stop(cls);
       }
