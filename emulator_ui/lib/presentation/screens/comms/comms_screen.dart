@@ -143,10 +143,13 @@ class _FunctionsPane extends ConsumerWidget {
       return const _EmptyState(message: 'Call graph not loaded yet.');
     }
 
+    final collapsed = ref.watch(collapsedCommsSymbolsProvider)[selected]
+        ?? const <String>{};
     final tree = _buildCommsTree(
       graph: graph,
       assignments: assignments,
       selected: selected,
+      collapsed: collapsed,
     );
 
     if (tree.isEmpty) {
@@ -182,11 +185,19 @@ class _TreeEntry {
   /// each, per the design). The first appearance is the "canonical" one.
   final bool isRepeat;
 
+  /// Whether this node has in-class children (drives chevron rendering).
+  final bool hasChildren;
+
+  /// Whether this node's subtree is currently collapsed in the UI.
+  final bool isCollapsed;
+
   const _TreeEntry({
     required this.symbol,
     required this.assignment,
     required this.depth,
     required this.isRepeat,
+    required this.hasChildren,
+    required this.isCollapsed,
   });
 }
 
@@ -208,6 +219,7 @@ List<_TreeEntry> _buildCommsTree({
   required CallGraph graph,
   required Map<String, CommsAssignment> assignments,
   required CommsClass selected,
+  required Set<String> collapsed,
 }) {
   final inClass = <String>{
     for (final e in assignments.entries)
@@ -236,19 +248,25 @@ List<_TreeEntry> _buildCommsTree({
   void emit(String symbol, int depth, Set<String> path) {
     final isRepeat = seen.contains(symbol);
     seen.add(symbol);
+    final sym = graph.symbols[symbol];
+    final children = sym == null
+        ? const <String>[]
+        : (sym.calledSymbols.keys
+            .where((c) =>
+                c != symbol && inClass.contains(c) && !path.contains(c))
+            .toList()
+          ..sort());
+    final hasChildren = children.isNotEmpty;
+    final isCollapsed = hasChildren && collapsed.contains(symbol);
     out.add(_TreeEntry(
       symbol: symbol,
       assignment: assignments[symbol]!,
       depth: depth,
       isRepeat: isRepeat,
+      hasChildren: hasChildren,
+      isCollapsed: isCollapsed,
     ));
-    final sym = graph.symbols[symbol];
-    if (sym == null) return;
-    final children = sym.calledSymbols.keys
-        .where((c) =>
-            c != symbol && inClass.contains(c) && !path.contains(c))
-        .toList()
-      ..sort();
+    if (isCollapsed) return;
     for (final c in children) {
       emit(c, depth + 1, {...path, c});
     }
@@ -277,14 +295,28 @@ class _TreeRow extends ConsumerWidget {
       padding: EdgeInsets.fromLTRB(16 + indent, 10, 16, 10),
       child: Row(
         children: [
-          if (entry.depth > 0) ...[
-            const Icon(
-              Icons.subdirectory_arrow_right,
-              size: 14,
-              color: AppTheme.textMuted,
-            ),
-            const SizedBox(width: 6),
-          ],
+          if (entry.hasChildren)
+            InkWell(
+              onTap: () => _toggleCollapsed(
+                ref,
+                entry.assignment.protocol,
+                entry.symbol,
+              ),
+              borderRadius: BorderRadius.circular(2),
+              child: Padding(
+                padding: const EdgeInsets.all(2),
+                child: Icon(
+                  entry.isCollapsed
+                      ? Icons.chevron_right
+                      : Icons.expand_more,
+                  size: 16,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
+            )
+          else
+            const SizedBox(width: 20),
+          const SizedBox(width: 4),
           Expanded(
             child: Text(
               entry.symbol,
@@ -398,6 +430,25 @@ class _PythonInterfacePane extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final configs = ref.watch(commsProtocolConfigProvider);
     final config = configs[selected] ?? const CommsProtocolConfig();
+    final emulator = ref.watch(currentEmulatorProvider);
+    final assignments = emulator?.commsAssignments ?? const {};
+
+    var readCount = 0;
+    var writeCount = 0;
+    var unmappedCount = 0;
+    for (final a in assignments.values) {
+      if (a.protocol != selected) continue;
+      switch (a.role) {
+        case CommsRole.read:
+          readCount++;
+        case CommsRole.write:
+          writeCount++;
+        case null:
+          unmappedCount++;
+      }
+    }
+    final fillCount = config.fillUnmappedWithReturnZero ? unmappedCount : 0;
+    final stagedTotal = readCount + writeCount + fillCount;
 
     return Container(
       color: AppTheme.bgPanel,
@@ -483,18 +534,168 @@ class _PythonInterfacePane extends ConsumerWidget {
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            config.virtualized
-                ? 'Server running on UDP port ${config.port}. Bus hooks will '
-                    'be installed at the next emulation start.'
-                : 'Toggle on to start the UDP server and install bus hooks at '
-                    'the next emulation start.',
-            style: const TextStyle(
-                color: AppTheme.textMuted,
-                fontSize: 11,
-                fontStyle: FontStyle.italic),
+          const SizedBox(height: 12),
+          _StagedHooksPanel(
+            virtualized: config.virtualized,
+            port: config.port,
+            readCount: readCount,
+            writeCount: writeCount,
+            fillCount: fillCount,
+            unmappedCount: unmappedCount,
+            fillEnabled: config.fillUnmappedWithReturnZero,
+            stagedTotal: stagedTotal,
           ),
+          const SizedBox(height: 20),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 24,
+                height: 24,
+                child: Checkbox(
+                  value: config.fillUnmappedWithReturnZero,
+                  onChanged: (v) => _updateConfig(
+                    ref,
+                    selected,
+                    config.copyWith(fillUnmappedWithReturnZero: v ?? true),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Fill unmapped functions with return0',
+                      style: TextStyle(
+                          color: AppTheme.textPrimary, fontSize: 12),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Functions in this class with no read/write role get a '
+                      'return0 hook instead of being left to run the '
+                      "firmware's real implementation. Recommended.",
+                      style: TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: 11,
+                          fontStyle: FontStyle.italic,
+                          height: 1.4),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Status readout for the currently-selected protocol: whether the UDP
+/// server is up, and the breakdown of hooks that will be installed at the
+/// next emulation start (read / write / return0 fill-in). Reads from
+/// the synthesis-side preview so the user can verify Virtualize is
+/// actually doing something before running synthesis.
+class _StagedHooksPanel extends StatelessWidget {
+  final bool virtualized;
+  final int port;
+  final int readCount;
+  final int writeCount;
+  final int fillCount;
+  final int unmappedCount;
+  final bool fillEnabled;
+  final int stagedTotal;
+
+  const _StagedHooksPanel({
+    required this.virtualized,
+    required this.port,
+    required this.readCount,
+    required this.writeCount,
+    required this.fillCount,
+    required this.unmappedCount,
+    required this.fillEnabled,
+    required this.stagedTotal,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final dotColor =
+        virtualized ? const Color(0xFF66BB6A) : AppTheme.textDisabled;
+    final serverLine = virtualized
+        ? 'Server: listening on UDP :$port'
+        : 'Server: not running';
+
+    final breakdownParts = <String>[
+      if (readCount > 0) '$readCount read',
+      if (writeCount > 0) '$writeCount write',
+      if (fillCount > 0) '$fillCount fill-in',
+    ];
+    final breakdown = breakdownParts.isEmpty ? '—' : breakdownParts.join(' · ');
+
+    final stagedLine = virtualized
+        ? 'Staging $stagedTotal hook${stagedTotal == 1 ? '' : 's'}: $breakdown'
+        : 'Would stage $stagedTotal hook${stagedTotal == 1 ? '' : 's'} on '
+            'virtualize: $breakdown';
+
+    // Surface the case where there are unmapped symbols but the fill-in
+    // toggle is off — those will go un-hooked even with Virtualize on.
+    final showFillWarning = !fillEnabled && unmappedCount > 0;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppTheme.bgCanvas,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: dotColor,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                serverLine,
+                style: const TextStyle(
+                    color: AppTheme.textPrimary, fontSize: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.only(left: 16),
+            child: Text(
+              stagedLine,
+              style: const TextStyle(
+                  color: AppTheme.textMuted, fontSize: 11, height: 1.4),
+            ),
+          ),
+          if (showFillWarning) ...[
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.only(left: 16),
+              child: Text(
+                '$unmappedCount unmapped symbol${unmappedCount == 1 ? '' : 's'} '
+                "will run the firmware's real implementation (fill-in off).",
+                style: TextStyle(
+                  color: Colors.orange.shade300,
+                  fontSize: 11,
+                  fontStyle: FontStyle.italic,
+                  height: 1.4,
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -572,4 +773,13 @@ void _updateConfig(
   final updated = Map<CommsClass, CommsProtocolConfig>.from(current);
   updated[cls] = next;
   ref.read(commsProtocolConfigProvider.notifier).state = updated;
+}
+
+void _toggleCollapsed(WidgetRef ref, CommsClass cls, String symbol) {
+  final current = ref.read(collapsedCommsSymbolsProvider);
+  final classSet = Set<String>.from(current[cls] ?? const <String>{});
+  if (!classSet.remove(symbol)) classSet.add(symbol);
+  final updated = Map<CommsClass, Set<String>>.from(current);
+  updated[cls] = classSet;
+  ref.read(collapsedCommsSymbolsProvider.notifier).state = updated;
 }

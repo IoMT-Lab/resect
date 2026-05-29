@@ -10,11 +10,19 @@ import 'comms_config_providers.dart';
 
 /// Build the `commsHooks` map the orchestrator expects: for every comms-
 /// classified-and-virtualized symbol with a known role, return a [HookSpec]
-/// (code + scope) generated through the [HookCatalog]. Symbols whose
-/// protocol isn't virtualized, role is null, or whose builder isn't in
-/// the catalog yet (e.g. spi) are silently skipped — they'll fall through
-/// to whatever the synthesizer does for them (which for comms-classified
-/// symbols is "bail out" via the overridden-symbol guard).
+/// (code + scope) generated through the [HookCatalog].
+///
+/// Symbols whose protocol isn't virtualized, or whose role-specific builder
+/// isn't in the catalog yet (e.g. spi), are silently skipped — they'll fall
+/// through to whatever the synthesizer does for them (which for comms-
+/// classified symbols is "bail out" via the overridden-symbol guard).
+///
+/// Symbols with no role but a known protocol get the catalog's default
+/// return0 hook when [CommsProtocolConfig.fillUnmappedWithReturnZero] is
+/// on (default) — so half-classified symbols (`HAL_I2C_StateGet`, MSP
+/// init/deinit helpers, etc.) don't crash the firmware when a protocol is
+/// virtualized. The fill-in hook has no scope; it doesn't participate in
+/// the protocol's shared `globals()` context.
 Map<String, HookSpec> buildCommsHooks({
   required Emulator emulator,
   required Map<CommsClass, CommsProtocolConfig> configs,
@@ -25,12 +33,19 @@ Map<String, HookSpec> buildCommsHooks({
     final symbol = entry.key;
     final assignment = entry.value;
     if (assignment.protocol == CommsClass.unclassified) continue;
-    if (assignment.role == null) continue;
 
     final config = configs[assignment.protocol];
     if (config == null || !config.virtualized) continue;
 
-    final kindId = '${assignment.protocol.name}_${assignment.role!.name}';
+    final role = assignment.role;
+    if (role == null) {
+      if (!config.fillUnmappedWithReturnZero) continue;
+      final hook = catalog.build('return', const {'value': 0});
+      hooks[symbol] = (code: hook.code, scope: hook.scope);
+      continue;
+    }
+
+    final kindId = '${assignment.protocol.name}_${role.name}';
     if (catalog.descriptor(kindId) == null) continue;
 
     final hook = catalog.build(kindId, {'port': config.port});
