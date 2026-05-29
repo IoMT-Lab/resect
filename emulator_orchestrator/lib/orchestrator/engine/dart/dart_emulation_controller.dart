@@ -156,6 +156,23 @@ class DartEmulationController implements EmulationController {
 
   Future<void> _applyHooks() async {
     if (_hooks.isEmpty && _hookMap.isEmpty) return;
+
+    // Log every hook being applied (symbol → hook name + scope + code body)
+    // so it's possible to verify *what* actually got installed without
+    // shimming through Renode. One block per symbol; indented code body.
+    for (final entry in _hookMap.entries) {
+      final symbol = entry.key;
+      final hookName = entry.value;
+      final hook = _hooks[hookName];
+      if (hook == null) continue;
+      final scope = hook.scope ?? '(none)';
+      final indented = hook.code
+          .split('\n')
+          .map((line) => '    $line')
+          .join('\n');
+      print('[Hook applied] $symbol → $hookName (scope: $scope)\n$indented');
+    }
+
     final cmds = <String>[];
     for (final entry in _hooks.entries) {
       cmds.add('set ${entry.key} \n"""\n${entry.value.code}\n"""');
