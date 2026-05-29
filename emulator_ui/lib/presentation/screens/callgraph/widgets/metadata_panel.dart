@@ -3,12 +3,14 @@ import 'dart:async';
 import 'package:emulator_orchestrator/data/database/artifact_database.dart' show Artifact;
 import 'package:emulator_orchestrator/data/models/comms_assignment.dart';
 import 'package:emulator_orchestrator/data/models/symbol.dart';
+import 'package:emulator_orchestrator/data/services/scope_suggester.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme.dart';
 import '../../../../providers/app_providers.dart';
 import '../../../../providers/autosave_provider.dart';
+import '../../../../providers/comms_config_providers.dart';
 
 /// Right-rail metadata panel for the Call Graph tab.
 ///
@@ -283,28 +285,178 @@ class _ForceOverrideDropdown extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final hooksAsync = ref.watch(hooksForSelectedSymbolProvider);
-    final overrides = ref.watch(hookOverridesProvider);
     final commsLockReason = _commsLockReasonFor(ref, symbolName);
 
-    return _HookDropdown(
-      label: 'FORCE OVERRIDE',
-      hint: 'None (no override)',
-      hooksAsync: hooksAsync,
-      selectedId: overrides[symbolName],
-      disabledReason: commsLockReason,
-      onChanged: (artifactId) {
-        final next = Map<String, int>.from(overrides);
-        if (artifactId == null) {
-          next.remove(symbolName);
-        } else {
-          next[symbolName] = artifactId;
-        }
-        ref.read(hookOverridesProvider.notifier).state = next;
-        _persistEmulator(ref, hookOverrides: next);
-      },
+    // Comms-classified symbols: show the effective override the Comms tab
+    // is configuring for this symbol, read-only. The dropdown would just
+    // sit empty + disabled here, which is misleading because the symbol
+    // *is* being overridden — just not via this control.
+    if (commsLockReason != null) {
+      final emulator = ref.watch(currentEmulatorProvider);
+      final assignment = emulator?.commsAssignments[symbolName];
+      final configs = ref.watch(commsProtocolConfigProvider);
+      final config =
+          assignment == null ? null : configs[assignment.protocol];
+      final label = assignment == null || config == null
+          ? '—'
+          : _commsHookLabel(assignment, config);
+      return _ReadOnlyHookSlot(
+        label: 'FORCE OVERRIDE',
+        value: label,
+        tooltip: commsLockReason,
+      );
+    }
+
+    final hooksAsync = ref.watch(hooksForSelectedSymbolProvider);
+    final overrides = ref.watch(hookOverridesProvider);
+    final overrideScopes = ref.watch(hookOverrideScopesProvider);
+    final hasOverride = overrides[symbolName] != null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _HookDropdown(
+          label: 'FORCE OVERRIDE',
+          hint: 'None (no override)',
+          hooksAsync: hooksAsync,
+          selectedId: overrides[symbolName],
+          disabledReason: null,
+          onChanged: (artifactId) {
+            final nextOverrides = Map<String, int>.from(overrides);
+            final nextScopes = Map<String, String>.from(overrideScopes);
+            if (artifactId == null) {
+              nextOverrides.remove(symbolName);
+              nextScopes.remove(symbolName);
+            } else {
+              nextOverrides[symbolName] = artifactId;
+              // When picking an override fresh (no prior scope), pre-fill
+              // the per-override scope with the name-derived suggestion so
+              // what the user sees in the text field == what's saved.
+              if (!nextScopes.containsKey(symbolName)) {
+                final suggested = suggestScopeFromSymbol(symbolName);
+                if (suggested.isNotEmpty) {
+                  nextScopes[symbolName] = suggested;
+                }
+              }
+            }
+            ref.read(hookOverridesProvider.notifier).state = nextOverrides;
+            ref.read(hookOverrideScopesProvider.notifier).state = nextScopes;
+            _persistEmulator(
+              ref,
+              hookOverrides: nextOverrides,
+              hookOverrideScopes: nextScopes,
+            );
+          },
+        ),
+        if (hasOverride) ...[
+          const SizedBox(height: 10),
+          _ScopeField(
+            symbolName: symbolName,
+            value: overrideScopes[symbolName] ?? '',
+          ),
+        ],
+      ],
     );
   }
+}
+
+/// Per-override Renode scope text field. Visible only when an override is
+/// selected. Persists every keystroke through [_persistEmulator]; empty
+/// text removes the entry from [hookOverrideScopesProvider] (== no-scope
+/// at apply time).
+class _ScopeField extends ConsumerStatefulWidget {
+  final String symbolName;
+  final String value;
+
+  const _ScopeField({required this.symbolName, required this.value});
+
+  @override
+  ConsumerState<_ScopeField> createState() => _ScopeFieldState();
+}
+
+class _ScopeFieldState extends ConsumerState<_ScopeField> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.value);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ScopeField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // External writes (e.g. picking a different override → suggestion is
+    // pre-filled) — sync the controller without disturbing the user's
+    // cursor when the value is unchanged.
+    if (widget.value != _controller.text) {
+      _controller.text = widget.value;
+      _controller.selection =
+          TextSelection.collapsed(offset: widget.value.length);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _onChanged(String text) {
+    final current = ref.read(hookOverrideScopesProvider);
+    final next = Map<String, String>.from(current);
+    if (text.isEmpty) {
+      next.remove(widget.symbolName);
+    } else {
+      next[widget.symbolName] = text;
+    }
+    ref.read(hookOverrideScopesProvider.notifier).state = next;
+    _persistEmulator(ref, hookOverrideScopes: next);
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _MutedLabel('SCOPE'),
+          const SizedBox(height: 6),
+          Container(
+            decoration: BoxDecoration(
+              color: AppTheme.bgCanvas,
+              border: Border.all(color: AppTheme.border),
+            ),
+            child: TextField(
+              controller: _controller,
+              onChanged: _onChanged,
+              style: const TextStyle(
+                color: AppTheme.textPrimary,
+                fontSize: 12,
+                fontFamily: 'monospace',
+              ),
+              decoration: const InputDecoration(
+                isDense: true,
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                border: InputBorder.none,
+                hintText: 'unscoped',
+                hintStyle: TextStyle(
+                  color: AppTheme.textDisabled,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Renode hook scope. Empty = unscoped.',
+            style: TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 10,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ],
+      );
 }
 
 class _PreferredHookDropdown extends ConsumerWidget {
@@ -313,16 +465,30 @@ class _PreferredHookDropdown extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final commsLockReason = _commsLockReasonFor(ref, symbolName);
+
+    // Comms-classified symbols skip synthesis iteration entirely (see B3) —
+    // there's nothing for a preferred hook to influence. Surface that
+    // directly rather than leaving a misleading empty disabled dropdown.
+    if (commsLockReason != null) {
+      return _ReadOnlyHookSlot(
+        label: 'PREFERRED HOOK',
+        value: 'Not applicable — comms-classified symbols skip synthesis '
+            'iteration.',
+        tooltip: commsLockReason,
+        italic: true,
+      );
+    }
+
     final hooksAsync = ref.watch(hooksForSelectedSymbolProvider);
     final prefs = ref.watch(hookPreferencesProvider);
-    final commsLockReason = _commsLockReasonFor(ref, symbolName);
 
     return _HookDropdown(
       label: 'PREFERRED HOOK',
       hint: 'Auto (default order)',
       hooksAsync: hooksAsync,
       selectedId: prefs[symbolName],
-      disabledReason: commsLockReason,
+      disabledReason: null,
       onChanged: (artifactId) {
         final next = Map<String, int>.from(prefs);
         if (artifactId == null) {
@@ -357,23 +523,103 @@ String? _commsLockReasonFor(WidgetRef ref, String symbolName) {
   }
 }
 
+/// Human-readable summary of the effective override for a comms-classified
+/// symbol — derived from the symbol's assignment and the protocol's current
+/// Comms-tab config. Matches the table in plan section B3.1.
+String _commsHookLabel(CommsAssignment assignment, CommsProtocolConfig config) {
+  final proto = assignment.protocol.name;
+  if (!config.virtualized) {
+    return 'none — $proto not virtualized';
+  }
+  switch (assignment.role) {
+    case CommsRole.read:
+      return '$proto read · UDP :${config.port}';
+    case CommsRole.write:
+      return '$proto write · UDP :${config.port}';
+    case null:
+      return config.fillUnmappedWithReturnZero
+          ? 'return0 (fill-in)'
+          : 'none — fill-in off';
+  }
+}
+
+/// Static read-only slot used in place of the FORCE OVERRIDE / PREFERRED
+/// HOOK dropdowns for comms-classified symbols. Reuses the existing slot
+/// chrome (muted label + bordered container) so the layout is unchanged,
+/// but the value is a plain text line — no chevron, no hover affordance.
+/// The lock tooltip explains why it isn't interactive.
+class _ReadOnlyHookSlot extends StatelessWidget {
+  final String label;
+  final String value;
+  final String tooltip;
+  final bool italic;
+
+  const _ReadOnlyHookSlot({
+    required this.label,
+    required this.value,
+    required this.tooltip,
+    this.italic = false,
+  });
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _MutedLabel(label),
+          const SizedBox(height: 6),
+          Tooltip(
+            message: tooltip,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.bgCanvas,
+                border: Border.all(color: AppTheme.border),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.lock_outline,
+                      size: 13, color: AppTheme.textDisabled),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      value,
+                      style: TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 12,
+                        fontStyle:
+                            italic ? FontStyle.italic : FontStyle.normal,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+}
+
 void _persistEmulator(
   WidgetRef ref, {
   Map<String, int>? hookOverrides,
   Map<String, int>? hookPreferences,
+  Map<String, String>? hookOverrideScopes,
 }) {
   final emulator = ref.read(currentEmulatorProvider);
   if (emulator == null) return;
   ref.read(currentEmulatorProvider.notifier).state = emulator.copyWith(
     hookOverrides: hookOverrides ?? emulator.hookOverrides,
     hookPreferences: hookPreferences ?? emulator.hookPreferences,
+    hookOverrideScopes:
+        hookOverrideScopes ?? emulator.hookOverrideScopes,
     modifiedAt: DateTime.now(),
   );
   ref.read(emulatorDirtyProvider.notifier).state = true;
   unawaited(ref.read(autosaveControllerProvider).trigger());
 }
 
-class _HookDropdown extends StatelessWidget {
+class _HookDropdown extends ConsumerWidget {
   final String label;
   final String hint;
   final AsyncValue<List<Artifact>> hooksAsync;
@@ -395,7 +641,65 @@ class _HookDropdown extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => Column(
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Distinguish loading/error states from genuinely-empty so the slot
+    // doesn't claim "No hooks available" while the artifact library is
+    // still topping up. The hooksAsync FutureProvider is gated on
+    // artifactProcessingProvider; if that upstream hasn't resolved yet
+    // (or errored), surface that directly. Only fall through to the
+    // hooksAsync branches when the library has finished loading.
+    final libraryAsync = ref.watch(artifactProcessingProvider);
+    final libraryNotice = libraryAsync.when<Widget?>(
+      loading: () => const Row(
+        children: [
+          SizedBox(
+            height: 14,
+            width: 14,
+            child: CircularProgressIndicator(strokeWidth: 1.5),
+          ),
+          SizedBox(width: 8),
+          Text(
+            'Loading artifact library…',
+            style: TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 11,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ],
+      ),
+      error: (e, _) => Text(
+        'Artifact library failed: $e',
+        style: TextStyle(
+          color: Colors.red.shade300,
+          fontSize: 11,
+          fontStyle: FontStyle.italic,
+        ),
+      ),
+      data: (record) => record == null
+          ? const Text(
+              'No artifact library record for this firmware yet.',
+              style: TextStyle(
+                color: AppTheme.textMuted,
+                fontSize: 11,
+                fontStyle: FontStyle.italic,
+              ),
+            )
+          : null,
+    );
+
+    if (libraryNotice != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _MutedLabel(label),
+          const SizedBox(height: 6),
+          libraryNotice,
+        ],
+      );
+    }
+
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _MutedLabel(label),
@@ -421,6 +725,20 @@ class _HookDropdown extends StatelessWidget {
                 ),
               );
             }
+
+            // Collapse rows with identical artifactData so the dropdown
+            // shows one entry per distinct hook body. Earlier topup runs
+            // may have left duplicate rows for a (symbol, body) pair; we
+            // keep the lowest-id row as the canonical one.
+            final byBody = <String, Artifact>{};
+            for (final a in hooks) {
+              final existing = byBody[a.artifactData];
+              if (existing == null || a.id < existing.id) {
+                byBody[a.artifactData] = a;
+              }
+            }
+            final uniqueHooks = byBody.values.toList()
+              ..sort((a, b) => a.id.compareTo(b.id));
 
             final isLocked = disabledReason != null;
             final dropdown = Container(
@@ -459,21 +777,17 @@ class _HookDropdown extends StatelessWidget {
                       ),
                     ),
                   ),
-                  ...hooks.asMap().entries.map((entry) {
-                    final index = entry.key;
-                    final artifact = entry.value;
-                    return DropdownMenuItem<int?>(
-                      value: artifact.id,
-                      child: Text(
-                        _hookLabel(index, artifact.artifactData),
-                        style: const TextStyle(
-                          color: AppTheme.textPrimary,
-                          fontSize: 12,
+                  ...uniqueHooks.map((artifact) => DropdownMenuItem<int?>(
+                        value: artifact.id,
+                        child: Text(
+                          _hookLabel(artifact.artifactData),
+                          style: const TextStyle(
+                            color: AppTheme.textPrimary,
+                            fontSize: 12,
+                          ),
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    );
-                  }),
+                      )),
                 ],
                 // null onChanged disables DropdownButton.
                 onChanged: isLocked ? null : onChanged,
@@ -486,15 +800,47 @@ class _HookDropdown extends StatelessWidget {
         ),
       ],
     );
+  }
 
-  String _hookLabel(int index, String code) {
+  String _hookLabel(String code) {
     final trimmed = code.trim();
-    if (trimmed.contains('Create(0,')) return 'Hook ${index + 1}: return 0';
-    if (trimmed.contains('Create(1,')) return 'Hook ${index + 1}: return 1';
+
+    // Stateful variants from hooks-dart simple_hooks.dart (plan C1). Extract
+    // the literal numeric parameter from the call site so the dropdown
+    // distinguishes value=0 vs value=1 etc. Order matters: increment first
+    // (its body also defines setVariable/getVariable), then write, then read.
+    final incMatch =
+        RegExp(r"incrementVariable\('value',\s*(-?\d+)").firstMatch(trimmed);
+    if (incMatch != null) {
+      return 'Stateful increment (from ${incMatch.group(1)})';
+    }
+
+    final setMatch =
+        RegExp(r"setVariable\('value',\s*(-?\d+)\)").firstMatch(trimmed);
+    if (setMatch != null) {
+      return 'Stateful write (value ${setMatch.group(1)})';
+    }
+
+    final getMatch =
+        RegExp(r"getVariable\('value',\s*(-?\d+)\)").firstMatch(trimmed);
+    if (getMatch != null) {
+      return 'Stateful read (default ${getMatch.group(1)})';
+    }
+
+    // Legacy pre-A2 `RegisterValue.Create(N, 64)` and the post-A2
+    // `setReturnValue(cpu, N)` form are behaviorally identical — surface
+    // them under the same label so the user isn't asked to distinguish
+    // two rows that do the same thing.
+    if (trimmed.contains('Create(0,')) return 'Return 0';
+    if (trimmed.contains('Create(1,')) return 'Return 1';
+    final returnMatch = RegExp(r'setReturnValue\(cpu,\s*(-?\d+)\)')
+        .firstMatch(trimmed);
+    if (returnMatch != null) {
+      return 'Return ${returnMatch.group(1)}';
+    }
+
+    // Unrecognized — show a short preview of the last meaningful line.
     final lastLine = trimmed.split('\n').last.trim();
-    final preview = lastLine.length > 40
-        ? '${lastLine.substring(0, 37)}...'
-        : lastLine;
-    return 'Hook ${index + 1}: $preview';
+    return lastLine.length > 40 ? '${lastLine.substring(0, 37)}...' : lastLine;
   }
 }
