@@ -63,8 +63,7 @@ class ArtifactLibraryService {
       elfHash: elfHash,
       fileName: fileName,
       symbolNames: symbolNames,
-      return0HookCode: _catalog.build('return', {'value': 0}).code,
-      return1HookCode: _catalog.build('return', {'value': 1}).code,
+      defaultHookCodes: _defaultHookCodes(),
     );
 
     // Verify registration
@@ -97,14 +96,17 @@ class ArtifactLibraryService {
     required String elfFilePath,
     required List<String> symbolNames,
   }) async {
+    stderr.writeln('[ArtifactLibrary] processElfFile: $elfFilePath '
+        '(${symbolNames.length} symbols)');
     final elfHash = await hashElfFile(elfFilePath);
     final fileName = p.basename(elfFilePath);
 
     // Check local library
     final existing = await lookupFirmware(elfHash);
     if (existing != null) {
-      // Ensure default hooks exist (may be missing if a previous run
-      // registered firmware but crashed before creating hooks)
+      stderr.writeln(
+          '[ArtifactLibrary] Existing firmware ${elfHash.substring(0, 8)}… — '
+          'topping up default hooks if missing');
       await _ensureDefaultHooks(elfHash);
       return existing;
     }
@@ -112,7 +114,9 @@ class ArtifactLibraryService {
     // Check remote library (stub - always returns null for now)
     await checkRemoteLibrary(elfHash);
 
-    // Register new firmware
+    stderr.writeln(
+        '[ArtifactLibrary] New firmware ${elfHash.substring(0, 8)}… — '
+        'registering with ${_defaultHookCodes().length} default hooks');
     return registerFirmware(
       elfHash: elfHash,
       fileName: fileName,
@@ -120,28 +124,72 @@ class ArtifactLibraryService {
     );
   }
 
-  /// Ensure every symbol for this firmware has default hooks.
-  ///
-  /// This handles the case where firmware was registered but hook creation
-  /// was interrupted, or where the firmware existed from a previous run.
+  /// Ensure every symbol for this firmware has the full set of default
+  /// hooks. Idempotent: only inserts codes that aren't already present
+  /// (exact string match against existing `artifactData`). Handles both:
+  /// - registration crashed before hooks were written (existing == empty),
+  /// - firmware was registered under an older default set (e.g. only
+  ///   return-0/return-1) and now needs the new stateful variants topped up.
   Future<void> _ensureDefaultHooks(String elfHash) async {
-    final symbols = await _db.getSymbolsForFirmware(elfHash);
-    for (final symbol in symbols) {
-      final existing = await _db.getArtifactsForSymbol(symbol.id);
-      if (existing.isEmpty) {
-        await _db.addArtifact(
-          symbolId: symbol.id,
-          artifactType: 'renode_hook',
-          artifactData: _catalog.build('return', {'value': 0}).code,
-        );
-        await _db.addArtifact(
-          symbolId: symbol.id,
-          artifactType: 'renode_hook',
-          artifactData: _catalog.build('return', {'value': 1}).code,
-        );
+    await _db.transaction(() async {
+      final symbols = await _db.getSymbolsForFirmware(elfHash);
+      final expected = _defaultHookCodes();
+      var added = 0;
+      for (final symbol in symbols) {
+        final existing = await _db.getArtifactsForSymbol(symbol.id);
+        final present = existing.map((a) => a.artifactData).toSet();
+        for (final code in expected) {
+          if (present.contains(code)) continue;
+          await _db.addArtifact(
+            symbolId: symbol.id,
+            artifactType: 'renode_hook',
+            artifactData: code,
+          );
+          added++;
+        }
       }
-    }
+      stderr.writeln('[ArtifactLibrary] _ensureDefaultHooks: '
+          '${symbols.length} symbols, $added new artifacts inserted');
+    });
   }
+
+  /// Pre-A2 hardcoded return0/return1 hook bodies. Kept available alongside
+  /// the catalog-built variants so the FORCE OVERRIDE dropdown surfaces both
+  /// the legacy direct-`RegisterValue.Create` form and the new
+  /// `setReturnValue`-via-helper form — per the user's directive to keep
+  /// the "old and new both available" workflow.
+  static const _legacyReturn0HookCode = '''
+from Antmicro.Renode.Peripherals.CPU import RegisterValue
+cpu.SetRegister(0, RegisterValue.Create(0, 64))
+cpu.PC = cpu.LR
+''';
+  static const _legacyReturn1HookCode = '''
+from Antmicro.Renode.Peripherals.CPU import RegisterValue
+cpu.SetRegister(0, RegisterValue.Create(1, 64))
+cpu.PC = cpu.LR
+''';
+
+  /// Default hook code bodies seeded for every symbol in a freshly-registered
+  /// firmware. Seven entries: the two legacy return-0/return-1 bodies, then
+  /// the five catalog-built variants from hooks-dart's `simple_hooks.dart`.
+  /// The stateful builders take a `scope` arg but their Python bodies don't
+  /// reference it — passing the empty string here is intentional, scope is
+  /// supplied at apply time from the user's per-override scope field
+  /// (plan C2).
+  List<String> _defaultHookCodes() => [
+        _legacyReturn0HookCode,
+        _legacyReturn1HookCode,
+        _catalog.build('return', {'value': 0}).code,
+        _catalog.build('return', {'value': 1}).code,
+        _catalog.build('read', {'scope': '', 'defaultValue': 0}).code,
+        _catalog.build('read', {'scope': '', 'defaultValue': 1}).code,
+        _catalog.build(
+            'write', {'scope': '', 'value': 0, 'returnValue': 0}).code,
+        _catalog.build(
+            'write', {'scope': '', 'value': 1, 'returnValue': 0}).code,
+        _catalog.build('increment', {'scope': '', 'defaultValue': 0}).code,
+        _catalog.build('increment', {'scope': '', 'defaultValue': 1}).code,
+      ];
 
   /// Check the remote community artifact library for this firmware.
   ///

@@ -74,8 +74,7 @@ class ArtifactDatabase extends _$ArtifactDatabase {
     required String elfHash,
     required String fileName,
     required List<String> symbolNames,
-    required String return0HookCode,
-    required String return1HookCode,
+    required List<String> defaultHookCodes,
   }) => transaction(() async {
       await into(firmwareImages).insert(FirmwareImagesCompanion.insert(
         elfHash: elfHash,
@@ -88,16 +87,13 @@ class ArtifactDatabase extends _$ArtifactDatabase {
           symbolName: name,
         ));
 
-        await into(artifacts).insert(ArtifactsCompanion.insert(
-          symbolId: symbolId,
-          artifactType: 'renode_hook',
-          artifactData: return0HookCode,
-        ));
-        await into(artifacts).insert(ArtifactsCompanion.insert(
-          symbolId: symbolId,
-          artifactType: 'renode_hook',
-          artifactData: return1HookCode,
-        ));
+        for (final code in defaultHookCodes) {
+          await into(artifacts).insert(ArtifactsCompanion.insert(
+            symbolId: symbolId,
+            artifactType: 'renode_hook',
+            artifactData: code,
+          ));
+        }
       }
     });
 
