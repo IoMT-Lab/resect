@@ -56,7 +56,12 @@ class EmulatorRepository {
             'Unsupported emulator file version: $version');
       }
 
-      // Parse emulator
+      // Parse emulator. `hookOverrides` / `hookPreferences` may reference
+      // artifact ids that no longer exist (e.g. after a destructive
+      // schema migration). Stale ids are tolerated downstream: the
+      // synthesizer's pre-seed branch and the metadata sidebar both
+      // null-check via `getArtifactById` and silently skip. No explicit
+      // scrub here.
       final emulator = Emulator.fromJson(json);
 
       // Set emulator path

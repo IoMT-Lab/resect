@@ -5,6 +5,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../../core/theme.dart';
 import '../../providers/app_providers.dart';
+import '../dialogs/hook_database_dialog.dart';
 import '../dialogs/preferences_dialog.dart';
 import '../dialogs/system_config_dialog.dart';
 import '../dialogs/unsaved_changes_dialog.dart';
@@ -81,6 +82,11 @@ class MenuBarWidget extends ConsumerWidget {
               _MenuItem(
                 title: 'Preferences...',
                 onTap: () => PreferencesDialog.show(context),
+              ),
+              const _MenuDivider(),
+              _MenuItem(
+                title: 'Hook Database...',
+                onTap: () => HookDatabaseDialog.show(context),
               ),
             ],
           ),

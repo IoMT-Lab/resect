@@ -20,6 +20,8 @@ dependencies:
   path: ^1.9.0
   emulator_orchestrator:
     path: ../emulator_orchestrator
+  callgraph:
+    git: git@github.com:IoMT-Lab/callgraph-dart.git
 
 dev_dependencies:
   flutter_test:

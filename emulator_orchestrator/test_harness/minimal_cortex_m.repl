@@ -1,0 +1,23 @@
+// Minimal Cortex-M4 platform for the hook test harness.
+//
+// CPU + NVIC + flash + SRAM, nothing else. No peripherals, no clocks,
+// no UART. Enough to execute the bootstrap in minimal_firmware.c and
+// run the hook under test.
+//
+// Memory layout matches minimal_firmware.ld:
+//   0x00000000  flash  (4 KB)
+//   0x20000000  sram   (4 KB)
+//   0xE000E000  NVIC   (Cortex-M standard)
+
+nvic: IRQControllers.NVIC @ sysbus 0xE000E000
+    -> cpu@0
+
+cpu: CPU.CortexM @ sysbus
+    cpuType: "cortex-m4"
+    nvic: nvic
+
+flash: Memory.MappedMemory @ sysbus 0x0
+    size: 0x1000
+
+sram: Memory.MappedMemory @ sysbus 0x20000000
+    size: 0x1000

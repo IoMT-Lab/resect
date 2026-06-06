@@ -79,6 +79,35 @@ class HookCatalog {
     final descriptors = _systemDescriptors();
     return HookCatalog._({for (final d in descriptors) d.kindId: d});
   }
+
+  /// Canonical default-hook code bodies, in the same order as
+  /// [ArtifactLibraryService._defaultHookCodes]. Includes the two legacy
+  /// `RegisterValue.Create(N, 64)` return bodies plus the catalog-built
+  /// returnHook / readHook / writeHook / incrementHook variants. The UI
+  /// uses this set to identify which DB rows are write-protected defaults.
+  Set<String> defaultCodes() => {
+        _legacyReturn0,
+        _legacyReturn1,
+        build('return', const {'value': 0}).code,
+        build('return', const {'value': 1}).code,
+        build('read', const {'scope': '', 'defaultValue': 0}).code,
+        build('read', const {'scope': '', 'defaultValue': 1}).code,
+        build('write', const {'scope': '', 'value': 0, 'returnValue': 0}).code,
+        build('write', const {'scope': '', 'value': 1, 'returnValue': 0}).code,
+        build('increment', const {'scope': '', 'defaultValue': 0}).code,
+        build('increment', const {'scope': '', 'defaultValue': 1}).code,
+      };
+
+  static const _legacyReturn0 = '''
+from Antmicro.Renode.Peripherals.CPU import RegisterValue
+cpu.SetRegister(0, RegisterValue.Create(0, 64))
+cpu.PC = cpu.LR
+''';
+  static const _legacyReturn1 = '''
+from Antmicro.Renode.Peripherals.CPU import RegisterValue
+cpu.SetRegister(0, RegisterValue.Create(1, 64))
+cpu.PC = cpu.LR
+''';
 }
 
 List<HookBuilderDescriptor> _systemDescriptors() => [

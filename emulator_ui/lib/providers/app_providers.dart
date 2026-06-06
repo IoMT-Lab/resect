@@ -11,6 +11,7 @@ import 'package:emulator_orchestrator/data/models/trace_activity_event.dart';
 import 'package:emulator_orchestrator/data/repositories/emulator_repository.dart';
 import 'package:emulator_orchestrator/data/services/artifact_library_service.dart';
 import 'package:emulator_orchestrator/data/services/fidelity_calculator.dart';
+import 'package:emulator_orchestrator/data/services/hook_test_harness.dart';
 import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
 import 'package:emulator_orchestrator/orchestrator/engine/dart/dart_engine.dart';
 import 'package:emulator_orchestrator/orchestrator/engine/paused_event.dart';
@@ -398,6 +399,12 @@ final artifactLibraryServiceProvider = Provider<ArtifactLibraryService>((ref) {
   return ArtifactLibraryService(db);
 });
 
+/// Singleton harness for running a hook against a minimal Renode
+/// machine. Used by the Hook DB dialog's ▶ Test button. See
+/// [HookTestHarness] for behavior.
+final hookTestHarnessProvider =
+    Provider<HookTestHarness>((ref) => HookTestHarness());
+
 /// Provider that automatically processes the current ELF file through
 /// the artifact library when a call graph is generated.
 ///
@@ -432,10 +439,12 @@ final artifactProcessingProvider = FutureProvider<FirmwareRecord?>((ref) async {
 
 /// Fetches ALL hook artifacts for the current firmware (all symbols).
 ///
-/// Returns a flat list of (symbolName, artifact) records. Used by the
-/// Hook Database Viewer dialog. Invalidate after add/delete to refresh.
+/// Returns the artifact pool relevant to the loaded firmware: every
+/// global template + every user-authored artifact targeted at this
+/// firmware. Used by the Hook Database Viewer dialog. Invalidate after
+/// add/delete/reseed to refresh.
 final allHooksForFirmwareProvider =
-    FutureProvider<List<({String symbolName, Artifact artifact})>>((ref) async {
+    FutureProvider<List<Artifact>>((ref) async {
   final firmwareRecord = ref.watch(artifactProcessingProvider).valueOrNull;
   if (firmwareRecord == null) return [];
 
