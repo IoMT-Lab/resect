@@ -1,3 +1,5 @@
+import 'synthesis_manifest.dart';
+
 /// Result of a synthesizer run.
 ///
 /// Contains the outcome of the automated hook substitution process,
@@ -25,12 +27,22 @@ class SynthesizerResult {
   /// Total time the synthesis process took.
   final Duration totalDuration;
 
+  /// Per-run decision record — populated by the synthesizer when an
+  /// elfHash + elfFileName were available. Captures what hook was
+  /// applied to each symbol, the decision kind (override / comms /
+  /// warm-start / binding / iteration-fallback / llm-on-demand),
+  /// provenance, fidelity, prior failed attempts, and any LLM
+  /// telemetry. Null on synth runs that aren't carrying a firmware
+  /// context (e.g. legacy tests).
+  final SynthesisManifest? manifest;
+
   const SynthesizerResult({
     required this.success,
     required this.totalIterations,
     required this.resolvedHooks,
     required this.totalDuration, this.resolvedHookCode = const {},
     this.failedSymbol,
+    this.manifest,
   });
 
   factory SynthesizerResult.fromJson(Map<String, dynamic> json) => SynthesizerResult(
@@ -44,6 +56,9 @@ class SynthesizerResult {
           {},
       failedSymbol: json['failedSymbol'] as String?,
       totalDuration: Duration(milliseconds: json['totalDurationMs'] as int? ?? 0),
+      manifest: json['manifest'] == null
+          ? null
+          : SynthesisManifest.fromJson(json['manifest'] as Map<String, dynamic>),
     );
 
   Map<String, dynamic> toJson() => {
@@ -53,6 +68,7 @@ class SynthesizerResult {
       'resolvedHookCode': resolvedHookCode,
       if (failedSymbol != null) 'failedSymbol': failedSymbol,
       'totalDurationMs': totalDuration.inMilliseconds,
+      if (manifest != null) 'manifest': manifest!.toJson(),
     };
 
   @override

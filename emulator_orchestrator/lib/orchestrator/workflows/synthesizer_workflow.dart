@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:path/path.dart' as p;
 import 'package:signatures/signatures.dart' show FunctionSignature;
 
 import '../../data/database/artifact_database.dart';
 import '../../data/models/hook_binding.dart';
+import '../../data/models/synthesis_manifest.dart';
 import '../../data/models/synthesizer_result.dart';
 import '../../data/services/llm_hook_generator.dart' show LlmHookGenerator, PlatformFacts;
 import '../engine/emulation_controller.dart';
@@ -88,6 +90,17 @@ class SynthesizerWorkflow {
     // Prevents an infinite retry loop on a generated hook that itself
     // causes an unhandled access at the same symbol.
     final triedLlm = <String>{};
+    // Manifest accumulator — per-symbol ordered list of hook
+    // applications. Pre-seeded layers contribute exactly one entry;
+    // iteration adds another entry per attempt. At result time the
+    // LAST entry becomes the applied_hook and the earlier ones become
+    // previous_attempts.
+    final attempts = <String, List<_ManifestAttempt>>{};
+    void recordAttempt(String symbol, _ManifestAttempt a) =>
+        (attempts[symbol] ??= []).add(a);
+    final runStart = DateTime.now();
+    final runId = runStart.toIso8601String();
+    final elfFileName = p.basename(elfPath);
 
     var iteration = 0;
 
@@ -96,6 +109,31 @@ class SynthesizerWorkflow {
           if (definedHooks.containsKey(entry.value))
             entry.key: definedHooks[entry.value]!,
       };
+
+    SynthesizerResult buildResult({
+      required bool success,
+      String? failedSymbol,
+    }) {
+      final manifest = _buildManifest(
+        elfHash: elfHash,
+        elfFileName: elfFileName,
+        runId: runId,
+        success: success,
+        totalIterations: iteration,
+        duration: stopwatch.elapsed,
+        failedSymbol: failedSymbol,
+        attempts: attempts,
+      );
+      return SynthesizerResult(
+        success: success,
+        totalIterations: iteration,
+        resolvedHooks: Map.unmodifiable(hookMap),
+        resolvedHookCode: Map.unmodifiable(buildHookCodeMap()),
+        failedSymbol: failedSymbol,
+        totalDuration: stopwatch.elapsed,
+        manifest: manifest,
+      );
+    }
 
     // Pre-seed forced overrides (unconditional substitutions). Each override
     // may carry a user-supplied Renode scope (plan C2) — empty / missing is
@@ -111,6 +149,15 @@ class SynthesizerWorkflow {
         hookScopes[hookName] = scope;
         hookMap[entry.key] = hookName;
         overriddenSymbols.add(entry.key);
+        recordAttempt(
+            entry.key,
+            _ManifestAttempt(
+              code: artifact.artifactData,
+              kind: ManifestDecisionKind.forcedOverride,
+              source: 'user.hookOverrides',
+              artifactId: artifact.id,
+              scope: scope,
+            ));
         print('[Synthesizer] Pre-seeded override for "${entry.key}" '
             '(artifact #${entry.value}, scope ${scope ?? "—"})');
       }
@@ -127,6 +174,14 @@ class SynthesizerWorkflow {
       hookScopes[hookName] = entry.value.scope;
       hookMap[entry.key] = hookName;
       overriddenSymbols.add(entry.key);
+      recordAttempt(
+          entry.key,
+          _ManifestAttempt(
+            code: entry.value.code,
+            kind: ManifestDecisionKind.comms,
+            source: 'comms:${entry.value.scope ?? "unscoped"}',
+            scope: entry.value.scope,
+          ));
       print('[Synthesizer] Pre-seeded comms hook for "${entry.key}" (scope ${entry.value.scope})');
     }
 
@@ -136,6 +191,13 @@ class SynthesizerWorkflow {
         final hookName = '${entry.key}_resolved';
         definedHooks[hookName] = entry.value;
         hookMap[entry.key] = hookName;
+        recordAttempt(
+            entry.key,
+            _ManifestAttempt(
+              code: entry.value,
+              kind: ManifestDecisionKind.warmStart,
+              source: 'warm_start',
+            ));
         print('[Synthesizer] Pre-seeded resolved hook for "${entry.key}"');
       }
     }
@@ -184,13 +246,7 @@ class SynthesizerWorkflow {
         if (pauseEvent == null) {
           // Firmware ran cleanly — success.
           stopwatch.stop();
-          final result = SynthesizerResult(
-            success: true,
-            totalIterations: iteration,
-            resolvedHooks: Map.unmodifiable(hookMap),
-            resolvedHookCode: Map.unmodifiable(buildHookCodeMap()),
-            totalDuration: stopwatch.elapsed,
-          );
+          final result = buildResult(success: true);
           _eventController.add(SynthesizerCompleted(
             iteration: iteration,
             result: result,
@@ -216,14 +272,7 @@ class SynthesizerWorkflow {
             iteration: iteration,
             symbol: symbol,
           ));
-          final result = SynthesizerResult(
-            success: false,
-            totalIterations: iteration,
-            resolvedHooks: Map.unmodifiable(hookMap),
-            resolvedHookCode: Map.unmodifiable(buildHookCodeMap()),
-            failedSymbol: symbol,
-            totalDuration: stopwatch.elapsed,
-          );
+          final result = buildResult(success: false, failedSymbol: symbol);
           _eventController.add(SynthesizerCompleted(
             iteration: iteration,
             result: result,
@@ -285,14 +334,7 @@ class SynthesizerWorkflow {
             iteration: iteration,
             symbol: symbol,
           ));
-          final result = SynthesizerResult(
-            success: false,
-            totalIterations: iteration,
-            resolvedHooks: Map.unmodifiable(hookMap),
-            resolvedHookCode: Map.unmodifiable(buildHookCodeMap()),
-            failedSymbol: symbol,
-            totalDuration: stopwatch.elapsed,
-          );
+          final result = buildResult(success: false, failedSymbol: symbol);
           _eventController.add(SynthesizerCompleted(
             iteration: iteration,
             result: result,
@@ -337,14 +379,7 @@ class SynthesizerWorkflow {
             iteration: iteration,
             symbol: symbol,
           ));
-          final result = SynthesizerResult(
-            success: false,
-            totalIterations: iteration,
-            resolvedHooks: Map.unmodifiable(hookMap),
-            resolvedHookCode: Map.unmodifiable(buildHookCodeMap()),
-            failedSymbol: symbol,
-            totalDuration: stopwatch.elapsed,
-          );
+          final result = buildResult(success: false, failedSymbol: symbol);
           _eventController.add(SynthesizerCompleted(
             iteration: iteration,
             result: result,
@@ -360,6 +395,52 @@ class SynthesizerWorkflow {
         hookMap[symbol] = hookName;
         hookIndex[symbol] = currentIndex + 1;
 
+        // Classify the attempt for the manifest: binding-driven when
+        // the chosen artifact matches an active binding for the
+        // symbol (covers classifier-seeded, LLM-seeded, and
+        // user-Replacement-back-fill bindings); llm_on_demand when
+        // the LLM was just invoked for this symbol and produced the
+        // chosen artifact; iteration_fallback otherwise.
+        final binding = activeBindings[symbol];
+        final bindingMatches =
+            binding != null && binding.artifactId == hookArtifact.id;
+        final ManifestDecisionKind attemptKind;
+        final String attemptSource;
+        final LlmInvocation? llmInvocation;
+        if (triedLlm.contains(symbol) && bindingMatches) {
+          attemptKind = ManifestDecisionKind.llmOnDemand;
+          attemptSource = binding.provenance;
+          // Token-count telemetry isn't plumbed through the LLM
+          // generator yet. Record the model tag now; tokens can land
+          // later without a schema bump.
+          llmInvocation = LlmInvocation(
+            model: binding.provenance.startsWith('llm:')
+                ? binding.provenance.substring(4)
+                : binding.provenance,
+          );
+        } else if (bindingMatches) {
+          attemptKind = ManifestDecisionKind.binding;
+          attemptSource = binding.provenance;
+          llmInvocation = null;
+        } else {
+          attemptKind = ManifestDecisionKind.iterationFallback;
+          attemptSource = hookArtifact.origin == 'default'
+              ? 'default_template:#${hookArtifact.id}'
+              : 'user_artifact:#${hookArtifact.id}';
+          llmInvocation = null;
+        }
+        recordAttempt(
+            symbol,
+            _ManifestAttempt(
+              code: hookCode,
+              kind: attemptKind,
+              source: attemptSource,
+              artifactId: hookArtifact.id,
+              fidelity: bindingMatches ? binding.fidelity : null,
+              iterationIndex: currentIndex,
+              llmInvocation: llmInvocation,
+            ));
+
         _eventController.add(SynthesizerHookApplied(
           iteration: iteration,
           symbol: symbol,
@@ -373,13 +454,9 @@ class SynthesizerWorkflow {
       }
 
       stopwatch.stop();
-      final result = SynthesizerResult(
+      final result = buildResult(
         success: false,
-        totalIterations: iteration,
-        resolvedHooks: Map.unmodifiable(hookMap),
-        resolvedHookCode: Map.unmodifiable(buildHookCodeMap()),
         failedSymbol: _isRunning ? 'MAX_ITERATIONS_REACHED' : 'CANCELLED',
-        totalDuration: stopwatch.elapsed,
       );
       _eventController.add(SynthesizerCompleted(
         iteration: iteration,
@@ -621,6 +698,89 @@ class SynthesizerWorkflow {
   }
 }
 
+
+/// Per-symbol, per-attempt scratchpad the manifest builder uses.
+/// One of these gets recorded each time the synthesizer applies a
+/// hook to a symbol (pre-seeded or iteration-driven). The last
+/// entry in a symbol's list becomes the manifest's `applied_hook`;
+/// earlier entries become `previous_attempts`.
+class _ManifestAttempt {
+  _ManifestAttempt({
+    required this.code,
+    required this.kind,
+    required this.source,
+    this.artifactId,
+    this.scope,
+    this.fidelity,
+    this.iterationIndex,
+    this.llmInvocation,
+  });
+
+  final String code;
+  final ManifestDecisionKind kind;
+  final String source;
+  final int? artifactId;
+  final String? scope;
+  final double? fidelity;
+  final int? iterationIndex;
+  final LlmInvocation? llmInvocation;
+}
+
+/// Build a [SynthesisManifest] from the recorded per-symbol attempts.
+SynthesisManifest _buildManifest({
+  required String elfHash,
+  required String elfFileName,
+  required String runId,
+  required bool success,
+  required int totalIterations,
+  required Duration duration,
+  required String? failedSymbol,
+  required Map<String, List<_ManifestAttempt>> attempts,
+}) {
+  final decisions = <ManifestDecision>[];
+  final symbols = attempts.keys.toList()..sort();
+  for (final symbol in symbols) {
+    final list = attempts[symbol]!;
+    if (list.isEmpty) continue;
+    final applied = list.last;
+    final priors = list.length > 1
+        ? list
+            .sublist(0, list.length - 1)
+            .map((a) => PreviousAttempt(
+                  artifactId: a.artifactId ?? -1,
+                  outcome: 'unhandled_access_repeat',
+                ))
+            .toList()
+        : null;
+    decisions.add(ManifestDecision(
+      symbol: symbol,
+      appliedHook: AppliedHook(
+        artifactId: applied.artifactId,
+        bodyHash: AppliedHook.hashBody(applied.code),
+        scope: applied.scope,
+      ),
+      decisionKind: applied.kind,
+      decisionSource: applied.source,
+      fidelityAtDecision: applied.fidelity,
+      iterationIndex: applied.iterationIndex,
+      previousAttempts: priors,
+      llmInvocation: applied.llmInvocation,
+    ));
+  }
+  return SynthesisManifest(
+    manifestVersion: 1,
+    elfHash: elfHash,
+    elfFileName: elfFileName,
+    synthesizerRunId: runId,
+    result: ManifestRunResult(
+      success: success,
+      totalIterations: totalIterations,
+      durationSeconds: duration.inMilliseconds / 1000.0,
+    ),
+    decisions: decisions,
+    failedSymbol: failedSymbol,
+  );
+}
 
 /// Exception thrown when synthesizer operations fail.
 class SynthesizerException implements Exception {

@@ -1,4 +1,5 @@
 import 'package:emulator_orchestrator/data/models/fidelity_result.dart';
+import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -55,6 +56,11 @@ class SynthesisReport extends ConsumerWidget {
             'Failed at: ${result.failedSymbol}',
             style: TextStyle(fontSize: 12, color: Colors.red.shade300),
           ),
+        ],
+
+        if (result.manifest != null && result.manifest!.decisions.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          _ManifestSection(manifest: result.manifest!),
         ],
 
         if (result.resolvedHooks.isNotEmpty) ...[
@@ -297,6 +303,177 @@ class _HookSourceTag extends StatelessWidget {
           ),
         ),
       );
+}
+
+/// "Decision provenance" panel — renders the per-symbol decisions
+/// from the synthesis manifest with kind + source + fidelity +
+/// prior-attempts count + LLM telemetry. Distinct from the
+/// SUBSTITUTED FUNCTIONS list above: that one names the *hook*; this
+/// one explains *why* the synthesizer picked it.
+class _ManifestSection extends StatelessWidget {
+  const _ManifestSection({required this.manifest});
+  final SynthesisManifest manifest;
+
+  @override
+  Widget build(BuildContext context) {
+    final kindCounts = <ManifestDecisionKind, int>{};
+    for (final d in manifest.decisions) {
+      kindCounts.update(d.decisionKind, (v) => v + 1, ifAbsent: () => 1);
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'DECISION PROVENANCE',
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+            color: AppTheme.textMuted,
+            letterSpacing: 2,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          _kindSummary(kindCounts),
+          style: const TextStyle(color: AppTheme.textMuted, fontSize: 10),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: AppTheme.bgCanvas,
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: AppTheme.border),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final d in manifest.decisions)
+                _ManifestDecisionRow(decision: d),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  static String _kindSummary(Map<ManifestDecisionKind, int> counts) {
+    if (counts.isEmpty) return '';
+    final parts = <String>[];
+    for (final kind in ManifestDecisionKind.values) {
+      final n = counts[kind];
+      if (n != null && n > 0) parts.add('$n ${kind.jsonName}');
+    }
+    return parts.join(' · ');
+  }
+}
+
+class _ManifestDecisionRow extends StatelessWidget {
+  const _ManifestDecisionRow({required this.decision});
+  final ManifestDecision decision;
+
+  @override
+  Widget build(BuildContext context) {
+    final priorCount = decision.previousAttempts?.length ?? 0;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            flex: 2,
+            child: Text(
+              decision.symbol,
+              style: const TextStyle(
+                fontSize: 11,
+                fontFamily: 'monospace',
+                color: AppTheme.textPrimary,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          _DecisionKindTag(kind: decision.decisionKind),
+          const SizedBox(width: 8),
+          Expanded(
+            flex: 4,
+            child: Text(
+              _detailLine(decision, priorCount),
+              style: const TextStyle(
+                fontSize: 11,
+                color: AppTheme.textMuted,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _detailLine(ManifestDecision d, int priorCount) {
+    final parts = <String>[d.decisionSource];
+    if (d.fidelityAtDecision != null) {
+      parts.add('fid ${d.fidelityAtDecision!.toStringAsFixed(2)}');
+    }
+    if (d.iterationIndex != null) {
+      parts.add('iter ${d.iterationIndex}');
+    }
+    if (priorCount > 0) {
+      parts.add('after $priorCount failed ${priorCount == 1 ? 'try' : 'tries'}');
+    }
+    if (d.llmInvocation != null) {
+      parts.add(d.llmInvocation!.model);
+    }
+    return parts.join(' · ');
+  }
+}
+
+class _DecisionKindTag extends StatelessWidget {
+  const _DecisionKindTag({required this.kind});
+  final ManifestDecisionKind kind;
+
+  static const _palette = <ManifestDecisionKind, Color>{
+    ManifestDecisionKind.forcedOverride: Color(0xFFFFB74D),
+    ManifestDecisionKind.comms: Color(0xFF4FC3F7),
+    ManifestDecisionKind.warmStart: Color(0xFFA5D6A7),
+    ManifestDecisionKind.binding: Color(0xFF81C784),
+    ManifestDecisionKind.iterationFallback: Color(0xFF90A4AE),
+    ManifestDecisionKind.llmOnDemand: Color(0xFFCE93D8),
+  };
+
+  static const _shortLabel = <ManifestDecisionKind, String>{
+    ManifestDecisionKind.forcedOverride: 'OVERRIDE',
+    ManifestDecisionKind.comms: 'COMMS',
+    ManifestDecisionKind.warmStart: 'WARM',
+    ManifestDecisionKind.binding: 'BINDING',
+    ManifestDecisionKind.iterationFallback: 'FALLBACK',
+    ManifestDecisionKind.llmOnDemand: 'LLM',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _palette[kind] ?? AppTheme.textMuted;
+    final label = _shortLabel[kind] ?? kind.jsonName.toUpperCase();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(3),
+        border: Border.all(color: color.withValues(alpha: 0.5), width: 1),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 9,
+          fontWeight: FontWeight.w700,
+          color: color,
+          letterSpacing: 1,
+        ),
+      ),
+    );
+  }
 }
 
 class _SecondaryMetric extends StatelessWidget {

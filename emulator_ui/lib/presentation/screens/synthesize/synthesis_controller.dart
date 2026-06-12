@@ -1,11 +1,14 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:emulator_orchestrator/data/models/emulator.dart';
+import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart';
 import 'package:emulator_orchestrator/data/models/trace_activity_event.dart';
 import 'package:emulator_orchestrator/data/services/llm_hook_generator.dart'
     show PlatformFacts;
 import 'package:emulator_orchestrator/orchestrator/events/orchestrator_events.dart';
 import 'package:emulator_orchestrator/orchestrator/events/synthesizer_events.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../providers/app_providers.dart';
@@ -309,6 +312,15 @@ class SynthesisController {
           );
           ref.read(emulatorDirtyProvider.notifier).state = true;
         }
+        // Persist the run manifest next to the .emu so the post-run
+        // report can re-render and future audits have a durable
+        // record. No-op when the project hasn't been saved yet (no
+        // emulatorPath) — the manifest lives on disk, not in the
+        // project JSON.
+        if (result.manifest != null && emulator.emulatorPath != null) {
+          unawaited(
+              _writeManifestToDisk(emulator.emulatorPath!, result.manifest!));
+        }
         unawaited(ref.read(autosaveControllerProvider).trigger());
       }
     });
@@ -326,6 +338,33 @@ class SynthesisController {
   }
 
   void dispose() => _cancelSubscriptions();
+
+  /// Write [manifest] to `<projectDir>/manifests/<run_id>.json`,
+  /// creating the directory if needed. Best-effort: any I/O error is
+  /// logged to stderr but doesn't propagate — the manifest lives on
+  /// the SynthesizerResult either way, and the UI can still render
+  /// it from memory.
+  ///
+  /// The run_id is an ISO-8601 timestamp; we replace `:` with `-` so
+  /// the filename is portable across filesystems.
+  Future<void> _writeManifestToDisk(
+    String emulatorPath,
+    SynthesisManifest manifest,
+  ) async {
+    try {
+      final projectDir = File(emulatorPath).parent.path;
+      final manifestsDir = Directory('$projectDir/manifests');
+      if (!manifestsDir.existsSync()) {
+        await manifestsDir.create(recursive: true);
+      }
+      final safeRunId = manifest.synthesizerRunId.replaceAll(':', '-');
+      final file = File('${manifestsDir.path}/$safeRunId.json');
+      await file.writeAsString(manifest.toPrettyJson());
+      debugPrint('[Synthesis] manifest written: ${file.path}');
+    } catch (e) {
+      debugPrint('[Synthesis] manifest write failed: $e');
+    }
+  }
 }
 
 final synthesisControllerProvider = Provider<SynthesisController>((ref) {
