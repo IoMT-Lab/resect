@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/models/trace_activity_event.dart';
+import 'package:emulator_orchestrator/data/services/llm_hook_generator.dart'
+    show PlatformFacts;
 import 'package:emulator_orchestrator/orchestrator/events/orchestrator_events.dart';
 import 'package:emulator_orchestrator/orchestrator/events/synthesizer_events.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -96,6 +98,12 @@ class SynthesisController {
 
     final hookPreferences = ref.read(hookPreferencesProvider);
     final hookBindings = ref.read(hookBindingsProvider);
+    final llmGenerator = ref.read(llmHookGeneratorProvider);
+    final platform = await PlatformFacts.tryBuild(
+      replPath: baseImagePath,
+      archString: firmwareRecord.machine?.name,
+      firmwareSymbols: emulator.cachedCallGraph?.symbols.keys ?? const <String>[],
+    );
     await orchestrator.runSynthesizer(
       elfPath: elfPath,
       baseImagePath: baseImagePath,
@@ -109,6 +117,8 @@ class SynthesisController {
       commsHooks: commsHooks,
       hookBindings: hookBindings,
       memoryMapPath: config.memoryMapPath,
+      llmGenerator: llmGenerator,
+      platform: platform,
     );
   }
 

@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
+
+import 'package:signatures/signatures.dart' show FunctionSignature;
 
 import '../../data/database/artifact_database.dart';
 import '../../data/models/hook_binding.dart';
 import '../../data/models/synthesizer_result.dart';
+import '../../data/services/llm_hook_generator.dart' show LlmHookGenerator, PlatformFacts;
 import '../engine/emulation_controller.dart';
 import '../engine/paused_event.dart';
 import '../events/synthesizer_events.dart';
@@ -60,6 +64,8 @@ class SynthesizerWorkflow {
     Map<String, HookSpec> commsHooks = const {},
     Map<String, HookBinding> hookBindings = const {},
     String? memoryMapPath,
+    LlmHookGenerator? llmGenerator,
+    PlatformFacts? platform,
   }) async {
     if (_isRunning) {
       throw SynthesizerException('Synthesizer is already running');
@@ -74,6 +80,14 @@ class SynthesizerWorkflow {
     final hookCache = <String, List<Artifact>>{}; // symbol → available hooks
     final definedHooks = <String, String>{};    // hookName → hookCode
     final hookScopes = <String, String?>{};     // hookName → optional Renode scope
+    // Mutable copy so the LLM fallback can add bindings as it generates;
+    // the caller's map (which lives in the project's Emulator) is not
+    // mutated until the UI's autosave snapshots the provider state.
+    final activeBindings = Map<String, HookBinding>.from(hookBindings);
+    // Symbols where we've already invoked the LLM fallback this run.
+    // Prevents an infinite retry loop on a generated hook that itself
+    // causes an unhandled access at the same symbol.
+    final triedLlm = <String>{};
 
     var iteration = 0;
 
@@ -229,7 +243,7 @@ class SynthesizerWorkflow {
           // intrinsic floor when present. Without a binding, the intrinsic
           // floor drives ordering — generic `return 0` (0.0) sinks below
           // anything user-authored or specialized.
-          final binding = hookBindings[symbol];
+          final binding = activeBindings[symbol];
           double scoreFor(Artifact a) {
             if (binding != null && binding.artifactId == a.id) {
               return binding.fidelity;
@@ -289,6 +303,35 @@ class SynthesizerWorkflow {
         final currentIndex = hookIndex[symbol] ?? 0;
 
         if (currentIndex >= hooks.length) {
+          // On-demand LLM fallback: when every DB-cached candidate has
+          // been tried and none survives, ask the LLM for a hook —
+          // once per symbol. Insert the result as a Replacement
+          // artifact + a binding at fidelity 0.5 (pre-harness, per
+          // plan §2.1), then refresh the cache so the next loop
+          // iteration tries the new candidate.
+          if (llmGenerator != null && !triedLlm.contains(symbol)) {
+            triedLlm.add(symbol);
+            final llmBinding = await _tryLlmFallback(
+              symbol: symbol,
+              iteration: iteration,
+              elfHash: elfHash,
+              llmGenerator: llmGenerator,
+              platform: platform,
+            );
+            if (llmBinding != null) {
+              activeBindings[symbol] = llmBinding;
+              // Clear the per-symbol cache so the next iteration
+              // re-queries with the new artifact in the candidate
+              // list. Reset the hookIndex so the fresh sort starts
+              // from index 0.
+              hookCache.remove(symbol);
+              hookIndex.remove(symbol);
+              continue;
+            }
+            // Generation failed (empty output, network error, etc.) —
+            // fall through to the exhausted branch below.
+          }
+
           stopwatch.stop();
           _eventController.add(SynthesizerSymbolExhausted(
             iteration: iteration,
@@ -462,6 +505,112 @@ class SynthesizerWorkflow {
         'Failed to load firmware after $maxRetries attempts: $lastError');
   }
 
+  /// Generate a hook for [symbol] via the LLM, persist it as a
+  /// Replacement artifact, and return a binding pointing at the new
+  /// artifact at fidelity 0.5 (pre-harness, per plan §2.1). Returns
+  /// null when the LLM produces nothing usable (empty body, no
+  /// signature row, generator error) — the caller falls through to
+  /// the symbol-exhausted failure path.
+  ///
+  /// Emits [SynthesizerLlmGenerating] before the LLM call so the UI
+  /// can flip its progress indicator from "iteration N waiting…" to
+  /// "LLM generating for $symbol…", and [SynthesizerLlmGenerated]
+  /// after a successful insert.
+  Future<HookBinding?> _tryLlmFallback({
+    required String symbol,
+    required int iteration,
+    required String elfHash,
+    required LlmHookGenerator llmGenerator,
+    required PlatformFacts? platform,
+  }) async {
+    final modelTag = llmGenerator.client.model;
+    _eventController.add(SynthesizerLlmGenerating(
+      iteration: iteration,
+      symbol: symbol,
+      modelTag: modelTag,
+    ));
+    print('[Synthesizer] LLM fallback for "$symbol" via $modelTag '
+        '(every DB candidate failed) …');
+
+    // Look up the signature — required input for the generator's
+    // classifier short-circuit and its prompt's `## Signature` block.
+    // Missing-signature isn't fatal (the generator can still produce
+    // a hook without it), so we pass null in that case.
+    final sigRow = await artifactDb.getSignatureFor(
+      elfHash: elfHash,
+      symbolName: symbol,
+    );
+    FunctionSignature? signature;
+    if (sigRow != null) {
+      try {
+        signature = FunctionSignature.fromJson(
+          symbol,
+          jsonDecode(sigRow.signatureJson) as Map<String, dynamic>,
+        );
+      } catch (_) {
+        // Malformed signature JSON — log and continue without it.
+      }
+    }
+
+    final buffer = StringBuffer();
+    try {
+      await for (final chunk in llmGenerator.generate(
+        userPrompt: 'Substitute for $symbol in emulation. The goal is '
+            'to let the caller continue without generating unhandled '
+            'memory accesses — NOT to reproduce what the real hardware '
+            'would do.',
+        targetSymbol: symbol,
+        elfHash: elfHash,
+        platform: platform,
+        signature: signature,
+      )) {
+        buffer.write(chunk);
+      }
+    } catch (e) {
+      print('[Synthesizer] LLM fallback failed for "$symbol": $e');
+      return null;
+    }
+    final body = buffer.toString().trim();
+    if (body.isEmpty) {
+      print('[Synthesizer] LLM returned empty body for "$symbol"');
+      return null;
+    }
+
+    // Reuse an existing artifact when the LLM happens to emit a body
+    // that matches one already in the pool (typically the catalog
+    // no-op template). Otherwise insert as a new Replacement.
+    final existing = await artifactDb.findArtifactByBody(body);
+    final int artifactId;
+    if (existing != null) {
+      artifactId = existing.id;
+    } else {
+      artifactId = await artifactDb.addArtifact(
+        artifactType: 'renode_hook',
+        artifactData: body,
+        origin: 'user',
+        architecture: 'ARM',
+        targetSymbolName: symbol,
+        intrinsicScore: 0.5,
+      );
+    }
+
+    final binding = HookBinding(
+      artifactId: artifactId,
+      fidelity: 0.5,
+      provenance: 'llm:$modelTag',
+      createdAt: DateTime.now(),
+    );
+    _eventController.add(SynthesizerLlmGenerated(
+      iteration: iteration,
+      symbol: symbol,
+      artifactId: artifactId,
+      fidelity: binding.fidelity,
+    ));
+    print('[Synthesizer] LLM fallback produced artifact $artifactId for '
+        '"$symbol" (${body.split('\n').length} lines)');
+    return binding;
+  }
+
   /// Cancel a running synthesis (from external control).
   void cancel() {
     _isRunning = false;
@@ -471,6 +620,7 @@ class SynthesizerWorkflow {
     _eventController.close();
   }
 }
+
 
 /// Exception thrown when synthesizer operations fail.
 class SynthesizerException implements Exception {

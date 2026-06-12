@@ -58,6 +58,42 @@ class SynthesizerSymbolExhausted extends SynthesizerEvent {
   });
 }
 
+/// Emitted right before the synthesizer asks the LLM to generate a
+/// hook for a symbol whose artifact-DB candidates have all been
+/// exhausted. The LLM call is the on-demand fallback path — typically
+/// minutes long — so the UI uses this to swap its progress indicator
+/// from "iteration N waiting…" to "LLM generating for $symbol…".
+class SynthesizerLlmGenerating extends SynthesizerEvent {
+  /// The symbol the LLM is generating a hook for.
+  final String symbol;
+
+  /// The model tag (e.g. `gemma4:e4b`) — surfaced so the UI can show
+  /// which model is doing the work.
+  final String modelTag;
+
+  SynthesizerLlmGenerating({
+    required super.iteration,
+    required this.symbol,
+    required this.modelTag,
+  });
+}
+
+/// Emitted after the LLM call returns successfully and the resulting
+/// hook has been inserted as an artifact + binding. The synthesizer
+/// then re-tries iteration with the new candidate in hand.
+class SynthesizerLlmGenerated extends SynthesizerEvent {
+  final String symbol;
+  final int artifactId;
+  final double fidelity;
+
+  SynthesizerLlmGenerated({
+    required super.iteration,
+    required this.symbol,
+    required this.artifactId,
+    required this.fidelity,
+  });
+}
+
 /// Emitted when synthesis completes (success or failure).
 class SynthesizerCompleted extends SynthesizerEvent {
   final SynthesizerResult result;

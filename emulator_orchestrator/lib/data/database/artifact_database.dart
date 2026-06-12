@@ -370,6 +370,18 @@ class ArtifactDatabase extends _$ArtifactDatabase {
             ..limit(1))
           .getSingleOrNull();
 
+  /// Look up a single signature row by (elfHash, symbolName). Returns
+  /// null when no Ghidra extraction has run for the firmware or when
+  /// the specific symbol wasn't decompilable.
+  Future<Signature?> getSignatureFor({
+    required String elfHash,
+    required String symbolName,
+  }) =>
+      (select(signatures)
+            ..where((t) =>
+                t.elfHash.equals(elfHash) & t.symbolName.equals(symbolName)))
+          .getSingleOrNull();
+
   /// Get every template artifact (origin='default').
   Future<List<Artifact>> getTemplates() =>
       (select(artifacts)..where((t) => t.origin.equals('default'))).get();

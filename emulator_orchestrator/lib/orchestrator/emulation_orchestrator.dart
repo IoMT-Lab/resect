@@ -6,6 +6,8 @@ import '../data/models/emulation_state.dart';
 import '../data/models/emulator.dart';
 import '../data/models/graph_point.dart';
 import '../data/models/hook_binding.dart';
+import '../data/services/llm_hook_generator.dart'
+    show LlmHookGenerator, PlatformFacts;
 import '../data/models/synthesizer_result.dart';
 import '../data/repositories/emulator_repository.dart';
 
@@ -228,6 +230,8 @@ class EmulationOrchestrator {
     Map<String, HookSpec> commsHooks = const {},
     Map<String, HookBinding> hookBindings = const {},
     String? memoryMapPath,
+    LlmHookGenerator? llmGenerator,
+    PlatformFacts? platform,
   }) async => synthesizerWorkflow.run(
       elfPath: elfPath,
       elfHash: elfHash,
@@ -242,6 +246,8 @@ class EmulationOrchestrator {
       commsHooks: commsHooks,
       hookBindings: hookBindings,
       memoryMapPath: memoryMapPath,
+      llmGenerator: llmGenerator,
+      platform: platform,
     );
 
   // =========================================================================
