@@ -12,9 +12,7 @@ class HookTestResultDialog extends StatelessWidget {
   final VoidCallback? onRerun;
 
   const HookTestResultDialog({
-    super.key,
-    required this.hookLabel,
-    required this.result,
+    required this.hookLabel, required this.result, super.key,
     this.onRerun,
   });
 
@@ -307,7 +305,7 @@ class _RenodeLogExpander extends StatefulWidget {
 }
 
 class _RenodeLogExpanderState extends State<_RenodeLogExpander> {
-  bool _expanded = false;
+  var _expanded = false;
 
   @override
   Widget build(BuildContext context) => Column(

@@ -84,7 +84,7 @@ class CommsBusController {
   CommsBusController(this._ref) {
     _ref.listen<Map<CommsClass, CommsProtocolConfig>>(
       commsProtocolConfigProvider,
-      (prev, next) => _sync(prev, next),
+      _sync,
       fireImmediately: true,
     );
   }

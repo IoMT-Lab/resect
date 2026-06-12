@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:emulator_orchestrator/core/app_paths.dart';
 import 'package:emulator_orchestrator/core/constants.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
+import 'package:emulator_orchestrator/data/models/rag_index_status.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
@@ -246,6 +247,7 @@ Future<void> addDocumentToEmulator(BuildContext context, WidgetRef ref) async {
     );
     ref.read(emulatorDirtyProvider.notifier).state = true;
     unawaited(ref.read(autosaveControllerProvider).trigger());
+    refreshRagIndexStatus(ref);
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -299,6 +301,7 @@ Future<void> removeDocumentFromEmulator(
     );
     ref.read(emulatorDirtyProvider.notifier).state = true;
     unawaited(ref.read(autosaveControllerProvider).trigger());
+    refreshRagIndexStatus(ref);
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -335,4 +338,108 @@ Future<void> openDocument(
       );
     }
   }
+}
+
+/// Tracks the in-flight RAG rebuild subscription so [cancelRagIndex]
+/// can stop it. There's only ever one active rebuild per session;
+/// the RAG card hides the Rebuild button while in progress.
+StreamSubscription<void>? _activeRagRebuild;
+
+/// Kick off a full rebuild of the per-project RAG index.
+///
+/// Streams progress into [ragIndexStatusProvider] so the RAG card's
+/// "Embedding (3/12)…" line updates live. When the rebuild ends
+/// (success, cancel, or error) the provider is refreshed with the
+/// final on-disk snapshot.
+Future<void> rebuildRagIndex(BuildContext context, WidgetRef ref) async {
+  final emulator = ref.read(currentEmulatorProvider);
+  final index = ref.read(ragIndexProvider);
+  if (emulator == null || index == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Save the project before building the RAG index (it lives next '
+          'to the .emu file).',
+        ),
+      ),
+    );
+    return;
+  }
+  if (_activeRagRebuild != null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('A RAG rebuild is already in progress.')),
+    );
+    return;
+  }
+  final statusNotifier = ref.read(ragIndexStatusProvider.notifier);
+  final previous = ref.read(ragIndexStatusProvider);
+  statusNotifier.state = RagIndexStatus(
+    lastBuiltAt: previous.lastBuiltAt,
+    chunkCount: previous.chunkCount,
+    chunkCountsByKind: previous.chunkCountsByKind,
+    staleSourceCount: 0,
+    inProgressPhase: 'Starting…',
+  );
+  // Pull the current ELF hash so the RAG rebuild can pick up
+  // Ghidra-derived program facts (decompilation / data types /
+  // data symbols / memory map). Null when no ELF is loaded yet —
+  // the RAG side just skips its Ghidra pass in that case.
+  final elfHash =
+      ref.read(artifactProcessingProvider).valueOrNull?.elfHash;
+  _activeRagRebuild = index.rebuildFor(emulator, elfHash: elfHash).listen(
+    (event) {
+      statusNotifier.state = RagIndexStatus(
+        lastBuiltAt: previous.lastBuiltAt,
+        chunkCount: previous.chunkCount,
+        chunkCountsByKind: previous.chunkCountsByKind,
+        staleSourceCount: 0,
+        inProgressPhase: event.total == 0
+            ? event.phase
+            : '${event.phase} (${event.done}/${event.total})',
+      );
+    },
+    onError: (Object e) {
+      _activeRagRebuild = null;
+      statusNotifier.state = index.statusSnapshot(emulator);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('RAG index rebuild failed: $e')),
+        );
+      }
+    },
+    onDone: () {
+      _activeRagRebuild = null;
+      statusNotifier.state = index.statusSnapshot(emulator);
+    },
+  );
+}
+
+/// Cancel an in-progress RAG index rebuild.
+Future<void> cancelRagIndex(BuildContext context, WidgetRef ref) async {
+  final sub = _activeRagRebuild;
+  if (sub == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('No rebuild in progress.')),
+    );
+    return;
+  }
+  await sub.cancel();
+  _activeRagRebuild = null;
+  final emulator = ref.read(currentEmulatorProvider);
+  final index = ref.read(ragIndexProvider);
+  if (emulator != null && index != null) {
+    ref.read(ragIndexStatusProvider.notifier).state =
+        index.statusSnapshot(emulator);
+  }
+}
+
+/// Refresh the RAG card's status from the on-disk index. Cheap; safe to
+/// call after any mutation (doc add/remove, hook save, call-graph
+/// regen) so the card's staleness banner stays accurate.
+void refreshRagIndexStatus(WidgetRef ref) {
+  final emulator = ref.read(currentEmulatorProvider);
+  final index = ref.read(ragIndexProvider);
+  if (emulator == null || index == null) return;
+  ref.read(ragIndexStatusProvider.notifier).state =
+      index.statusSnapshot(emulator);
 }

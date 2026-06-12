@@ -105,6 +105,39 @@ const configVariables = <ConfigVariable>[
     type: ConfigVarType.directory,
     tier: ConfigTier.advanced,
   ),
+  // --- LLM hook generation (advanced) --------------------------------------
+  ConfigVariable(
+    key: 'LLM_MODEL',
+    label: 'LLM model tag',
+    description: 'Ollama tag of the inference model used for hook '
+        'generation (e.g. gemma4:12b). Set by the LLM module installer; '
+        'edit it here to switch models — re-run install to pull a new tag.',
+    type: ConfigVarType.string,
+    tier: ConfigTier.advanced,
+    optional: true,
+  ),
+  ConfigVariable(
+    key: 'LLM_OLLAMA_HOST',
+    label: 'Ollama host',
+    description: 'host:port of the Ollama server. Defaults to '
+        'localhost:11434. Change if Ollama runs on a different machine on '
+        'your local network.',
+    type: ConfigVarType.string,
+    tier: ConfigTier.advanced,
+    optional: true,
+  ),
+  // --- Ghidra binary analysis (advanced) -----------------------------------
+  ConfigVariable(
+    key: 'GHIDRA_DIR',
+    label: 'Ghidra install directory',
+    description: 'Root of the Ghidra installation (the directory '
+        'containing `support/analyzeHeadless`). Populated by the Ghidra '
+        'Analysis module installer; edit to point at a system-wide '
+        'install if you already have one.',
+    type: ConfigVarType.directory,
+    tier: ConfigTier.advanced,
+    optional: true,
+  ),
   // --- Build & tooling (scripts only, not this session) ---------------------
   ConfigVariable(
     key: 'FLUTTER_DIR',

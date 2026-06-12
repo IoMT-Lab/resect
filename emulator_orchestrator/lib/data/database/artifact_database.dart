@@ -78,7 +78,113 @@ class Artifacts extends Table {
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
 }
 
-@DriftDatabase(tables: [FirmwareImages, Symbols, Artifacts])
+/// Per-symbol function signatures extracted from the ELF by Ghidra
+/// (only populated when MODULE_GHIDRA is installed + enabled).
+///
+/// Keyed by (elfHash, symbolName) so signatures persist across app
+/// launches and don't trample across projects that happen to share
+/// symbol names. The `signatureJson` column holds a
+/// [FunctionSignature.toJson] payload — schema-less so signature-
+/// model changes don't force another DB migration.
+class Signatures extends Table {
+  TextColumn get elfHash => text().references(FirmwareImages, #elfHash)();
+  TextColumn get symbolName => text()();
+  TextColumn get signatureJson => text()();
+  DateTimeColumn get computedAt =>
+      dateTime().withDefault(currentDateAndTime)();
+
+  @override
+  Set<Column> get primaryKey => {elfHash, symbolName};
+}
+
+/// Ghidra-extracted call graph, cached per ELF.
+///
+/// One row per ELF (keyed by `elfHash`); the payload holds the full
+/// `Map<String, CallGraphNode>` Ghidra produced, serialized as JSON.
+/// Typical payload size for an embedded firmware is well under 1 MB,
+/// so we don't bother sharding by function — single-row reads are
+/// faster than 1000+ small-row aggregations.
+///
+/// The payload is the same one `signatures-dart` emits as the
+/// `call_graph` key in `program_info.json`; consumers deserialize
+/// via `CallGraphNode.fromJson`.
+class GhidraCallGraphs extends Table {
+  TextColumn get elfHash => text().references(FirmwareImages, #elfHash)();
+  TextColumn get payloadJson => text()();
+  DateTimeColumn get computedAt =>
+      dateTime().withDefault(currentDateAndTime)();
+
+  @override
+  Set<Column> get primaryKey => {elfHash};
+}
+
+/// Ghidra decompiled pseudocode, one row per (ELF, function).
+///
+/// Populated by the same `analyzeHeadless` pass that fills
+/// [Signatures] / [GhidraCallGraphs]. Surfaced into the per-project
+/// RAG index as `source_kind='decompilation'` chunks so the LLM can
+/// read the actual function body when generating a hook for it.
+class GhidraDecompilations extends Table {
+  TextColumn get elfHash => text().references(FirmwareImages, #elfHash)();
+  TextColumn get functionName => text()();
+  TextColumn get sourceText => text()();
+  DateTimeColumn get computedAt =>
+      dateTime().withDefault(currentDateAndTime)();
+
+  @override
+  Set<Column> get primaryKey => {elfHash, functionName};
+}
+
+/// Ghidra-recovered data-type layouts (struct / union / typedef /
+/// enum). [typeName] is `DataType.getPathName()` so qualified names
+/// don't collide. [definitionText] is pre-formatted C-syntax that
+/// the LLM reads verbatim; we don't try to parse it on the Dart side.
+class GhidraDataTypes extends Table {
+  TextColumn get elfHash => text().references(FirmwareImages, #elfHash)();
+  TextColumn get typeName => text()();
+  TextColumn get definitionText => text()();
+
+  @override
+  Set<Column> get primaryKey => {elfHash, typeName};
+}
+
+/// Named globals/statics with resolved addresses. One row per
+/// symbol; the (address, type, size) triple is what makes RAG
+/// chunks useful ("HAL_TickFreq @ 0x20000028 (uint32_t, 4B)").
+class GhidraDataSymbols extends Table {
+  TextColumn get elfHash => text().references(FirmwareImages, #elfHash)();
+  TextColumn get symbolName => text()();
+  IntColumn get address => integer()();
+  TextColumn get typeName => text()();
+  IntColumn get size => integer()();
+
+  @override
+  Set<Column> get primaryKey => {elfHash, symbolName};
+}
+
+/// Memory section table — `.text`, `.data`, MMIO ranges. Stored as
+/// one JSON-encoded row per ELF (the list is tiny — typically 5–15
+/// sections — so a single-row read beats 15 small-row aggregations).
+class GhidraMemoryMap extends Table {
+  TextColumn get elfHash => text().references(FirmwareImages, #elfHash)();
+  TextColumn get payloadJson => text()();
+
+  @override
+  Set<Column> get primaryKey => {elfHash};
+}
+
+@DriftDatabase(
+    tables: [
+      FirmwareImages,
+      Symbols,
+      Artifacts,
+      Signatures,
+      GhidraCallGraphs,
+      GhidraDecompilations,
+      GhidraDataTypes,
+      GhidraDataSymbols,
+      GhidraMemoryMap,
+    ])
 class ArtifactDatabase extends _$ArtifactDatabase {
   /// Create the database at the default location.
   ///
@@ -91,7 +197,7 @@ class ArtifactDatabase extends _$ArtifactDatabase {
       ArtifactDatabase._internal(executor);
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 8;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -122,6 +228,34 @@ class ArtifactDatabase extends _$ArtifactDatabase {
             // firmware row so the UI doesn't re-parse on every
             // dialog open. Backfilled lazily by `processElfFile`.
             await m.addColumn(firmwareImages, firmwareImages.machine);
+          }
+          if (from < 6) {
+            // Additive: new `signatures` table for Ghidra-extracted
+            // function signatures (return type + parameter types +
+            // ABI-resolved argument storage). Populated lazily by
+            // `SignaturesService` only when MODULE_GHIDRA is enabled.
+            // No data migration — first generation re-extracts.
+            await m.createTable(signatures);
+          }
+          if (from < 7) {
+            // Additive: new `ghidra_call_graphs` table — one row per
+            // ELF, holds the full Ghidra-extracted call graph as
+            // JSON. Populated by the same SignaturesService pass
+            // that fills `signatures`, so when MODULE_GHIDRA is on
+            // both tables get populated together.
+            await m.createTable(ghidraCallGraphs);
+          }
+          if (from < 8) {
+            // Additive: four new Ghidra-derived tables that feed
+            // the per-project RAG index when MODULE_GHIDRA is on —
+            // decompiled C pseudocode, recovered data-type layouts,
+            // named globals/statics, and the section memory map.
+            // All populated by the same `extractFor` pass that
+            // already writes `signatures` + `ghidra_call_graphs`.
+            await m.createTable(ghidraDecompilations);
+            await m.createTable(ghidraDataTypes);
+            await m.createTable(ghidraDataSymbols);
+            await m.createTable(ghidraMemoryMap);
           }
         },
       );
@@ -257,6 +391,63 @@ class ArtifactDatabase extends _$ArtifactDatabase {
   }) =>
       (update(artifacts)..where((t) => t.id.equals(id)))
           .write(ArtifactsCompanion(artifactData: Value(artifactData)));
+
+  // =========================================================================
+  // GHIDRA-EXTRACTED TABLES — reader helpers for the RAG indexer
+  // =========================================================================
+  //
+  // These are populated by `SignaturesService.extractFor` (one
+  // `analyzeHeadless` pass produces all six tables in one
+  // transaction). RAG-side code only ever reads from here; writes
+  // go through the service.
+
+  /// All decompiled-function rows for [elfHash]. Empty when no
+  /// extraction has run yet for this ELF.
+  Future<List<GhidraDecompilation>> decompilationsFor(String elfHash) =>
+      (select(ghidraDecompilations)
+            ..where((t) => t.elfHash.equals(elfHash))
+            ..orderBy([(t) => OrderingTerm.asc(t.functionName)]))
+          .get();
+
+  /// Decompiled source for a single function, or null when absent
+  /// (function not present, or decompilation failed for it).
+  Future<String?> decompilationFor({
+    required String elfHash,
+    required String functionName,
+  }) async {
+    final row = await (select(ghidraDecompilations)
+          ..where((t) =>
+              t.elfHash.equals(elfHash) &
+              t.functionName.equals(functionName)))
+        .getSingleOrNull();
+    return row?.sourceText;
+  }
+
+  /// All recovered data-type rows for [elfHash].
+  Future<List<GhidraDataType>> dataTypesFor(String elfHash) =>
+      (select(ghidraDataTypes)
+            ..where((t) => t.elfHash.equals(elfHash))
+            ..orderBy([(t) => OrderingTerm.asc(t.typeName)]))
+          .get();
+
+  /// All named data symbols for [elfHash], ordered by address so
+  /// the RAG batching pass groups nearby symbols together (helps
+  /// retrieval surface coherent chunks).
+  Future<List<GhidraDataSymbol>> dataSymbolsFor(String elfHash) =>
+      (select(ghidraDataSymbols)
+            ..where((t) => t.elfHash.equals(elfHash))
+            ..orderBy([(t) => OrderingTerm.asc(t.address)]))
+          .get();
+
+  /// The raw memory-map JSON payload for [elfHash], or null.
+  /// Consumers decode via `jsonDecode(...)` (the column is a single
+  /// list of `{name,start,end,permissions}` records).
+  Future<String?> memoryMapPayloadFor(String elfHash) async {
+    final row = await (select(ghidraMemoryMap)
+          ..where((t) => t.elfHash.equals(elfHash)))
+        .getSingleOrNull();
+    return row?.payloadJson;
+  }
 }
 
 LazyDatabase _openConnection() => LazyDatabase(() async {

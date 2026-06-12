@@ -127,7 +127,7 @@ String _renderDart({
   buf.writeln("const String testHarnessReplBase64 = '$replB64';");
   buf.writeln();
   buf.writeln('/// Base64-encoded contents of test_harness/minimal_firmware.elf.');
-  buf.writeln("const String testHarnessElfBase64 =");
+  buf.writeln('const String testHarnessElfBase64 =');
   // Chunk the ELF base64 across multiple lines so the generated file is
   // readable in diffs. 76 chars per line — matches MIME base64.
   for (var i = 0; i < elfB64.length; i += 76) {

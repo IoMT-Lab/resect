@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:emulator_orchestrator/config/component.dart';
 import 'package:emulator_orchestrator/config/config_schema.dart';
 import 'package:emulator_orchestrator/config/env_config.dart';
+import 'package:emulator_orchestrator/data/services/ghidra_installer.dart';
+import 'package:emulator_orchestrator/data/services/ollama_installer.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 export 'package:emulator_orchestrator/config/component.dart';
@@ -98,9 +102,40 @@ final autosaveEnabledProvider = Provider<bool>(
   (ref) => ref.watch(systemConfigProvider).values['PREF_AUTOSAVE'] == '1',
 );
 
-/// The optional-module registry.
+/// Singleton [OllamaInstaller] shared across the app's lifetime. The
+/// `onDispose` hook (fired when the ProviderContainer tears down)
+/// sends SIGTERM to the locally-spawned `ollama serve` so we don't
+/// leak that process when Resect closes.
+final ollamaInstallerProvider = Provider<OllamaInstaller>((ref) {
+  final installer = OllamaInstaller();
+  // Riverpod's `onDispose` is synchronous, but `stopDaemon` is async.
+  // Fire-and-forget via `unawaited`: SIGTERM-then-SIGKILL inside
+  // `stopDaemon` takes at most ~3 s and races against the app tearing
+  // down. The daemon process won't outlive Resect either way (kernel
+  // reparents it to PID 1, but Resect's own `serve` got SIGTERM).
+  ref.onDispose(() => unawaited(installer.stopDaemon()));
+  return installer;
+});
+
+/// Singleton [GhidraInstaller] shared across the app's lifetime.
+/// Ghidra doesn't run a persistent daemon (every extraction is a
+/// one-shot `analyzeHeadless` invocation), so unlike
+/// [ollamaInstallerProvider] there's nothing to tear down on
+/// dispose — but we still want one instance so the install-progress
+/// stream isn't restarted every time `componentStatusProvider`
+/// re-detects.
+final ghidraInstallerProvider =
+    Provider<GhidraInstaller>((ref) => GhidraInstaller());
+
+/// The optional-module registry. Each opt-in module shares its
+/// singleton installer via the providers above so the registry can
+/// rebuild (when `componentStatusProvider` re-detects, etc.)
+/// without orphaning install state.
 final componentRegistryProvider = Provider<List<Component>>(
-  (ref) => buildComponentRegistry(),
+  (ref) => buildComponentRegistry(
+    installer: ref.watch(ollamaInstallerProvider),
+    ghidraInstaller: ref.watch(ghidraInstallerProvider),
+  ),
 );
 
 /// Whether a given module (by config key) is enabled in the current config.
@@ -112,4 +147,22 @@ final componentStatusProvider =
   final component =
       ref.watch(componentRegistryProvider).firstWhere((c) => c.id == id);
   return component.detect();
+});
+
+/// Inference-capable model tags currently installed in the managed
+/// Ollama daemon (filters out the embed model). Used by the LLM
+/// module card's active-model picker. Returns an empty list when
+/// Ollama isn't installed yet — the UI then hides the picker.
+final installedInferenceModelsProvider =
+    FutureProvider<List<String>>((ref) async {
+  final llm = ref
+      .watch(componentRegistryProvider)
+      .whereType<LlmHookGenComponent>()
+      .firstOrNull;
+  if (llm == null) return const [];
+  // Re-fetch whenever the component status changes (e.g. just after
+  // an install dialog closed). Otherwise the dropdown would show
+  // stale data until manual refresh.
+  await ref.watch(componentStatusProvider(llm.id).future);
+  return llm.installedInferenceModels();
 });

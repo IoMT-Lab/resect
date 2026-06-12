@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
+import 'package:emulator_orchestrator/data/models/target_arch.dart';
 import 'package:emulator_orchestrator/data/services/hook_test_harness.dart';
 import 'package:emulator_orchestrator/data/services/starter_template.dart';
 import 'package:flutter/material.dart';
@@ -9,7 +10,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme.dart';
 import '../../providers/app_providers.dart';
 import '../../providers/autosave_provider.dart';
+import '../../providers/config_providers.dart';
 import 'hook_test_result_dialog.dart';
+import 'llm_hook_gen_dialog.dart';
 
 /// Hook-centric viewer + editor over the artifact pool.
 ///
@@ -42,8 +45,8 @@ class _HookDatabaseDialogState extends ConsumerState<HookDatabaseDialog> {
   final _searchController = TextEditingController();
   final _codeController = TextEditingController();
 
-  String _searchQuery = '';
-  bool _hideDefaults = false;
+  var _searchQuery = '';
+  var _hideDefaults = false;
 
   /// Currently selected artifact. Null when nothing selected or in
   /// creating mode.
@@ -51,14 +54,20 @@ class _HookDatabaseDialogState extends ConsumerState<HookDatabaseDialog> {
 
   /// New-hook form state (creating mode).
   final _newHookNameController = TextEditingController();
-  String? _newHookArchitecture = 'ARM';
+  String? _newHookArchitecture;
   _HookKind _newHookKind = _HookKind.reusable;
   String? _newHookTargetSymbol;
 
-  static const _architectureChoices = <String>['ARM', 'x86_64'];
+  /// Pulled from [archRegistry] so adding a new architecture is one
+  /// line of [target_arch.dart], not a UI-side hardcode. The values
+  /// are `TargetArch.id` strings — same shape the hooks-DB
+  /// `architecture` column stores.
+  static final _architectureChoices = <String>[
+    for (final arch in archRegistry.values) arch.id,
+  ];
 
   _Mode _mode = _Mode.viewing;
-  bool _isDirty = false;
+  var _isDirty = false;
 
   @override
   void dispose() {
@@ -80,10 +89,18 @@ class _HookDatabaseDialogState extends ConsumerState<HookDatabaseDialog> {
   }
 
   void _startNewHook() {
+    // Pre-select the architecture matching the loaded ELF's
+    // e_machine; fall back to the first registry entry (ARM
+    // Cortex-M) when no ELF is loaded yet or the machine isn't
+    // in our registry.
+    final machine =
+        ref.read(artifactProcessingProvider).valueOrNull?.machine;
+    final preselectedArch =
+        targetArchFor(machine)?.id ?? _architectureChoices.first;
     setState(() {
       _selected = null;
       _newHookNameController.clear();
-      _newHookArchitecture = 'ARM';
+      _newHookArchitecture = preselectedArch;
       _newHookKind = _HookKind.reusable;
       _newHookTargetSymbol = null;
       _mode = _Mode.creating;
@@ -110,6 +127,36 @@ class _HookDatabaseDialogState extends ConsumerState<HookDatabaseDialog> {
     setState(() {
       _codeController.text = '${starterTemplate()}\n${_codeController.text}';
       _isDirty = _codeController.text.trim().isNotEmpty;
+    });
+  }
+
+  /// Open the LLM hook-generation dialog. On Accept, replace the code
+  /// buffer with the generated body. RAG context comes from the
+  /// currently selected target symbol (when in Replacement mode) and
+  /// its callers/callees from the cached call graph.
+  Future<void> _generateWithLlm() async {
+    final emulator = ref.read(currentEmulatorProvider);
+    final graph = emulator?.cachedCallGraph;
+    final target = _newHookKind == _HookKind.replacement
+        ? _newHookTargetSymbol
+        : null;
+    final callers = (target != null && graph != null)
+        ? graph.getCallers(target)
+        : const <String>[];
+    final callees = (target != null && graph != null)
+        ? (graph.getSymbol(target)?.calledSymbols.keys.toList() ??
+            const <String>[])
+        : const <String>[];
+    final result = await LlmHookGenDialog.show(
+      context,
+      targetSymbol: target,
+      targetCallers: callers,
+      targetCallees: callees,
+    );
+    if (result == null || result.trim().isEmpty) return;
+    setState(() {
+      _codeController.text = result;
+      _isDirty = true;
     });
   }
 
@@ -453,7 +500,7 @@ class _HookDatabaseDialogState extends ConsumerState<HookDatabaseDialog> {
             ? initialArchitecture
             : null;
     var kind = initialKind;
-    String? target = initialTargetSymbol;
+    var target = initialTargetSymbol;
     final result = await showDialog<
         ({
           String name,
@@ -658,6 +705,7 @@ class _HookDatabaseDialogState extends ConsumerState<HookDatabaseDialog> {
                           setState(() => _newHookTargetSymbol = s),
                       symbolNames: firmware?.symbolNames ?? const [],
                       onInsertStarter: _insertStarterTemplate,
+                      onGenerateWithLlm: _generateWithLlm,
                       codeController: _codeController,
                       isDirty: _isDirty,
                       onCodeChanged: _onCodeChanged,
@@ -975,9 +1023,9 @@ class _ArtifactRow extends StatelessWidget {
                 _Pill(text: arch, color: const Color(0xFF81C784)),
               const SizedBox(width: 4),
               if (isDefault)
-                _Pill(text: 'DEFAULT', color: const Color(0xFFFFB74D))
+                const _Pill(text: 'DEFAULT', color: Color(0xFFFFB74D))
               else
-                _Pill(text: 'USER', color: const Color(0xFF4FC3F7)),
+                const _Pill(text: 'USER', color: Color(0xFF4FC3F7)),
               if (artifact.targetSymbolName != null) ...[
                 const SizedBox(width: 4),
                 const _Pill(
@@ -1031,6 +1079,7 @@ class _RightPane extends StatelessWidget {
   final ValueChanged<String?> onPickNewTargetSymbol;
   final List<String> symbolNames;
   final VoidCallback onInsertStarter;
+  final Future<void> Function() onGenerateWithLlm;
   final TextEditingController codeController;
   final bool isDirty;
   final ValueChanged<String> onCodeChanged;
@@ -1058,6 +1107,7 @@ class _RightPane extends StatelessWidget {
     required this.onPickNewTargetSymbol,
     required this.symbolNames,
     required this.onInsertStarter,
+    required this.onGenerateWithLlm,
     required this.codeController,
     required this.isDirty,
     required this.onCodeChanged,
@@ -1331,9 +1381,9 @@ class _RightPane extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 12),
-                // Sticky action row: Insert starter template on the
-                // left, Create Hook on the right. Both always
-                // reachable regardless of scroll position.
+                // Sticky action row: Insert starter template + Generate
+                // with LLM on the left, Create Hook on the right. All
+                // always reachable regardless of scroll position.
                 Row(
                   children: [
                     _StarterTemplateButton(
@@ -1342,6 +1392,8 @@ class _RightPane extends StatelessWidget {
                           .startsWith(starterTemplatePrefix),
                       onInsert: onInsertStarter,
                     ),
+                    const SizedBox(width: 8),
+                    _GenerateWithLlmButton(onPressed: onGenerateWithLlm),
                     const Spacer(),
                     ElevatedButton(
                       onPressed: canCreate ? onCreate : null,
@@ -1402,9 +1454,9 @@ class _ViewingHeader extends StatelessWidget {
               _Pill(text: arch, color: const Color(0xFF81C784)),
             const SizedBox(width: 4),
             if (isDefault)
-              _Pill(text: 'DEFAULT', color: const Color(0xFFFFB74D))
+              const _Pill(text: 'DEFAULT', color: Color(0xFFFFB74D))
             else
-              _Pill(text: 'USER', color: const Color(0xFF4FC3F7)),
+              const _Pill(text: 'USER', color: Color(0xFF4FC3F7)),
             if (artifact.targetSymbolName != null) ...[
               const SizedBox(width: 4),
               const _Pill(
@@ -1446,6 +1498,41 @@ class _StarterTemplateButton extends StatelessWidget {
         icon: const Icon(Icons.code, size: 14),
         label: const Text(
           'Insert starter template',
+          style: TextStyle(fontSize: 12),
+        ),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppTheme.textPrimary,
+          disabledForegroundColor: AppTheme.textMuted,
+          side: const BorderSide(color: AppTheme.border),
+          padding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        ),
+      ),
+    );
+  }
+}
+
+/// "Generate with LLM" button. Disabled with a tooltip pointing the
+/// user to System Configuration when the LLM module isn't installed.
+class _GenerateWithLlmButton extends ConsumerWidget {
+  final Future<void> Function() onPressed;
+  const _GenerateWithLlmButton({required this.onPressed});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final enabled = ref.watch(moduleEnabledProvider('MODULE_LLM_HOOKGEN'));
+    final tooltip = enabled
+        ? 'Describe the hook in plain English; the local LLM writes the '
+            'code using RAG context from your project.'
+        : 'Install the LLM module in Tools → System Configuration → '
+            'Modules to enable hook generation.';
+    return Tooltip(
+      message: tooltip,
+      child: OutlinedButton.icon(
+        onPressed: enabled ? onPressed : null,
+        icon: const Icon(Icons.auto_awesome, size: 14),
+        label: const Text(
+          'Generate with LLM',
           style: TextStyle(fontSize: 12),
         ),
         style: OutlinedButton.styleFrom(
@@ -1567,7 +1654,7 @@ class _SymbolPicker extends StatefulWidget {
 
 class _SymbolPickerState extends State<_SymbolPicker> {
   final _filterController = TextEditingController();
-  String _filter = '';
+  var _filter = '';
 
   @override
   void dispose() {

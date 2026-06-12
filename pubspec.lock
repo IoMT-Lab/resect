@@ -636,6 +636,13 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.0.0"
+  signatures:
+    dependency: "direct overridden"
+    description:
+      path: "../signatures-dart"
+      relative: true
+    source: path
+    version: "1.0.0"
   sky_engine:
     dependency: transitive
     description: flutter

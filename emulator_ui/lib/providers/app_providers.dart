@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:emulator_orchestrator/api/api_server.dart';
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
 import 'package:emulator_orchestrator/data/models/call_graph.dart';
@@ -5,6 +7,7 @@ import 'package:emulator_orchestrator/data/models/emulation_state.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/models/fidelity_result.dart';
 import 'package:emulator_orchestrator/data/models/firmware_record.dart';
+import 'package:emulator_orchestrator/data/models/rag_index_status.dart';
 import 'package:emulator_orchestrator/data/models/recent_emulator.dart';
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
 import 'package:emulator_orchestrator/data/models/trace_activity_event.dart';
@@ -12,6 +15,13 @@ import 'package:emulator_orchestrator/data/repositories/emulator_repository.dart
 import 'package:emulator_orchestrator/data/services/artifact_library_service.dart';
 import 'package:emulator_orchestrator/data/services/fidelity_calculator.dart';
 import 'package:emulator_orchestrator/data/services/hook_test_harness.dart';
+import 'package:emulator_orchestrator/data/services/call_graph_service.dart';
+import 'package:emulator_orchestrator/data/services/llm_client.dart';
+import 'package:emulator_orchestrator/data/services/llm_hook_generator.dart';
+import 'package:emulator_orchestrator/data/services/rag_index.dart';
+import 'package:emulator_orchestrator/data/services/signatures_service.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/call_graph_source.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/dart/ghidra_call_graph_source.dart';
 import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
 import 'package:emulator_orchestrator/orchestrator/engine/dart/dart_engine.dart';
 import 'package:emulator_orchestrator/orchestrator/engine/paused_event.dart';
@@ -305,7 +315,10 @@ final emulationOrchestratorProvider = Provider<EmulationOrchestrator>((ref) {
   final orchestrator = EmulationOrchestrator(
     engineLifecycle: engine.lifecycle,
     emulationController: engine.controller,
-    callGraphSource: engine.callGraphSource,
+    // Picks Ghidra-backed source when MODULE_GHIDRA=1 + GHIDRA_DIR
+    // is set; falls back to engine.callGraphSource (objdump path)
+    // otherwise. See [callGraphSourceProvider] for the contract.
+    callGraphSource: ref.watch(callGraphSourceProvider),
     traceSource: engine.traceSource,
     emulatorRepository: ref.watch(emulatorRepositoryProvider),
     artifactDb: ref.watch(artifactDatabaseProvider),
@@ -377,6 +390,142 @@ final emulatorDirtyProvider = StateProvider<bool>((ref) => false);
 /// should `ref.invalidate(recentEmulatorsProvider)` after any open/save so
 /// the list reflects the latest activity.
 final recentEmulatorsProvider = FutureProvider<List<RecentEmulator>>((ref) async => ref.watch(emulatorRepositoryProvider).getRecentEmulators());
+
+/// Snapshot of the per-project RAG index state — last-built time,
+/// chunk counts, staleness flag, in-progress phase. Surfaced in the
+/// Library tab's RAG INDEX card. Updated by [ragIndexProvider]'s
+/// rebuild / status-refresh actions.
+final ragIndexStatusProvider =
+    StateProvider<RagIndexStatus>((ref) => RagIndexStatus.empty);
+
+/// Local Ollama HTTP client built from the user's resect.config. Disposed
+/// when the host/model change or the app closes. The model tag is read
+/// from `LLM_MODEL`; the host from `LLM_OLLAMA_HOST`.
+final llmClientProvider = Provider<LlmClient>((ref) {
+  final cfg = ref.watch(systemConfigProvider);
+  final host = (cfg.values['LLM_OLLAMA_HOST'] ?? '').trim();
+  final model = (cfg.values['LLM_MODEL'] ?? '').trim();
+  final client = LlmClient(
+    host: host.isEmpty ? 'localhost:11434' : host,
+    // Default matches `LlmHookGenComponent._defaultModel` and the
+    // catalog's `recommended: true` entry. Update both together.
+    model: model.isEmpty ? 'gemma4:e4b' : model,
+  );
+  ref.onDispose(client.close);
+  return client;
+});
+
+/// Per-project RAG index. Null until an emulator is loaded with a
+/// project directory on disk (unsaved projects don't get one).
+///
+/// Threads the shared [ArtifactDatabase] in so the rebuild pass can
+/// pull Ghidra-extracted decompilation / data types / data symbols
+/// / memory map into the index when the Ghidra module is enabled.
+/// Library tabs without Ghidra installed get a no-op pass (the
+/// new tables are simply empty for the current ELF hash).
+final ragIndexProvider = Provider<RagIndex?>((ref) {
+  final emulator = ref.watch(currentEmulatorProvider);
+  final projectPath = emulator?.emulatorPath;
+  if (projectPath == null) return null;
+  final projectDir = File(projectPath).parent.path;
+  final client = ref.watch(llmClientProvider);
+  final index = RagIndex(
+    projectDir: projectDir,
+    client: client,
+    artifactDb: ref.watch(artifactDatabaseProvider),
+  );
+  ref.onDispose(index.close);
+  return index;
+});
+
+/// Composes the RAG-context lookup with the Ollama generate stream.
+/// Null until [ragIndexProvider] is ready (i.e. an emulator is loaded).
+///
+/// Threads the artifact DB through so the generator can pin the
+/// target function's Ghidra decompilation as the first
+/// project-context chunk when MODULE_GHIDRA has extracted one.
+final llmHookGeneratorProvider = Provider<LlmHookGenerator?>((ref) {
+  final index = ref.watch(ragIndexProvider);
+  if (index == null) return null;
+  return LlmHookGenerator(
+    index: index,
+    client: ref.watch(llmClientProvider),
+    artifactDb: ref.watch(artifactDatabaseProvider),
+  );
+});
+
+/// Per-project [SignaturesService] — wraps the artifact-database
+/// signature cache and the Ghidra-headless extraction path. Read-
+/// only methods (lookup, hasSignaturesFor) short-circuit when the
+/// MODULE_GHIDRA toggle is off, so callers can use this provider
+/// unconditionally and let the service decide.
+final signaturesServiceProvider = Provider<SignaturesService>(
+  (ref) => SignaturesService(
+    db: ref.watch(artifactDatabaseProvider),
+    // Share the same GhidraInstaller the install flow uses, so
+    // detect + extract see consistent state for the managed Temurin
+    // JRE path (`~/.local/share/resect/jdk/jdk-*/`).
+    ghidraInstaller: ref.watch(ghidraInstallerProvider),
+  ),
+);
+
+/// Cache-aware reader for the Ghidra-extracted call graph. Same
+/// table that [SignaturesService.extractFor] writes to in the same
+/// transaction as the signatures cache, so any time the signatures
+/// cache has data, this one does too.
+final callGraphServiceProvider = Provider<CallGraphService>(
+  (ref) => CallGraphService(db: ref.watch(artifactDatabaseProvider)),
+);
+
+/// Selects which [CallGraphSource] the orchestrator uses for the
+/// session. Two implementations:
+///
+/// - When `MODULE_GHIDRA=1` AND `GHIDRA_DIR` is set, use
+///   [GhidraCallGraphSource] — accurate across architectures, picks
+///   up indirect calls and Thumb branches the objdump regex would
+///   miss, and serves from cache after the first extraction.
+/// - Otherwise fall back to [DartEngine.callGraphSource] (the
+///   existing objdump-based [DartCallGraphSource]).
+///
+/// The choice is resolved ONCE at provider construction. Toggling
+/// `MODULE_GHIDRA` after the app is running won't live-swap the
+/// source — restart Resect for the change to take effect. (The
+/// orchestrator caches its capabilities at construction time, so a
+/// live swap would require tearing it down anyway.)
+final callGraphSourceProvider = Provider<CallGraphSource>((ref) {
+  final ghidraEnabled = ref.watch(moduleEnabledProvider('MODULE_GHIDRA'));
+  final ghidraDir =
+      (ref.watch(systemConfigProvider).values['GHIDRA_DIR'] ?? '').trim();
+  if (ghidraEnabled && ghidraDir.isNotEmpty) {
+    return GhidraCallGraphSource(
+      signaturesService: ref.watch(signaturesServiceProvider),
+      callGraphService: ref.watch(callGraphServiceProvider),
+    );
+  }
+  return ref.watch(dartEngineProvider).callGraphSource;
+});
+
+/// Look up the cached signature for a single symbol in the currently
+/// loaded ELF. Returns null when:
+/// - No emulator is loaded
+/// - The Ghidra module is disabled
+/// - The ELF hasn't been signature-extracted yet
+/// - The symbol isn't in the ELF (e.g., external imports)
+///
+/// Cache-only — never triggers a Ghidra subprocess. The caller
+/// (likely a Library-tab action or background job) is responsible
+/// for kicking off `SignaturesService.extractFor` when needed.
+final signatureForProvider =
+    FutureProvider.family<FunctionSignature?, String>((ref, symbolName) async {
+  final emulator = ref.watch(currentEmulatorProvider);
+  if (emulator == null) return null;
+  final firmware = ref.watch(artifactProcessingProvider).valueOrNull;
+  final elfHash = firmware?.elfHash;
+  if (elfHash == null) return null;
+  return ref
+      .watch(signaturesServiceProvider)
+      .signatureFor(elfHash: elfHash, symbolName: symbolName);
+});
 
 // ============================================================================
 // ARTIFACT LIBRARY PROVIDERS
