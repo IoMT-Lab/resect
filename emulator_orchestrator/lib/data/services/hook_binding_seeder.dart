@@ -141,11 +141,18 @@ class HookBindingSeeder {
         newArtifacts++;
       }
 
+      // The catalog template's Hook carries the Renode scope (3rd arg
+      // to AddHookAtSymbol) — null for stateless returnHook, the
+      // function name for incrementHook, the protocol name for comms
+      // templates, etc. Thread it onto the binding so the synthesizer's
+      // iteration apply re-deploys with the same scope the template
+      // expected.
       bindings[symbol] = HookBinding(
         artifactId: artifactId,
         fidelity: _fidelityForRule(result.ruleName),
         provenance: 'classifier:${result.ruleName}',
         createdAt: now,
+        scope: result.hook.scope,
       );
       classified++;
     }
@@ -155,6 +162,85 @@ class HookBindingSeeder {
         '$noSignature without-signature, $emptyDecomp empty-decomp, '
         '$newArtifacts new artifact${newArtifacts == 1 ? '' : 's'} inserted');
     return bindings;
+  }
+
+  /// Walk [bindings] in place, re-classifying any symbol whose binding
+  /// has `provenance` starting with `classifier:` and no scope set.
+  /// Updates the existing binding with the catalog template's scope
+  /// (preserves artifactId / fidelity / provenance / createdAt) so a
+  /// pre-scope-migration project regains stateful-hook correctness on
+  /// next open.
+  ///
+  /// Idempotent: bindings that already have a scope (or whose
+  /// provenance is `user` / `llm:*` / `harness*`) are skipped. LLM and
+  /// user-provenance bindings without scope are left alone — the
+  /// per-creation-site policy assigns their scope at *creation* time,
+  /// not retroactively.
+  ///
+  /// Returns the number of bindings upgraded.
+  Future<int> upgradeBindingsMissingScope({
+    required String elfHash,
+    required Map<String, HookBinding> bindings,
+  }) async {
+    final affected = bindings.entries
+        .where((e) =>
+            e.value.scope == null &&
+            e.value.provenance.startsWith('classifier:'))
+        .map((e) => e.key)
+        .toList();
+    if (affected.isEmpty) return 0;
+
+    final dsRows = await _db.dataSymbolsFor(elfHash);
+    final dataSymbols = <String, DataSymbol>{
+      for (final r in dsRows)
+        r.symbolName: DataSymbol(
+          name: r.symbolName,
+          address: r.address,
+          type: r.typeName,
+          size: r.size,
+        ),
+    };
+
+    var upgraded = 0;
+    for (final symbol in affected) {
+      final sigRow = await _db.getSignatureFor(
+        elfHash: elfHash,
+        symbolName: symbol,
+      );
+      if (sigRow == null) continue;
+      final decomp = await _db.decompilationFor(
+        elfHash: elfHash,
+        functionName: symbol,
+      );
+      if (decomp == null || decomp.isEmpty) continue;
+      final FunctionSignature signature;
+      try {
+        signature = FunctionSignature.fromJson(
+          symbol,
+          jsonDecode(sigRow.signatureJson) as Map<String, dynamic>,
+        );
+      } catch (e) {
+        stderr.writeln('[HookBindingSeeder] migration signature parse '
+            'failed for "$symbol": $e');
+        continue;
+      }
+      final result = _classifier.classify(
+        functionName: symbol,
+        signature: signature,
+        decompilation: decomp,
+        dataSymbols: dataSymbols,
+      );
+      if (result == null) continue;
+      if (result.hook.scope == null) continue;
+      bindings[symbol] = bindings[symbol]!.copyWith(scope: result.hook.scope);
+      upgraded++;
+    }
+    if (upgraded > 0) {
+      stderr.writeln('[HookBindingSeeder] elfHash=${elfHash.substring(0, 8)}…: '
+          '$upgraded binding${upgraded == 1 ? '' : 's'} '
+          'upgraded with scope from re-classification');
+    }
+    return upgraded;
   }
 
   /// Map a classifier rule name (e.g. `rule-3-counter-global`) to its

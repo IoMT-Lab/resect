@@ -391,10 +391,6 @@ class SynthesizerWorkflow {
         final hookName = '${symbol}_hook_$currentIndex';
         final hookCode = hookArtifact.artifactData;
 
-        definedHooks[hookName] = hookCode;
-        hookMap[symbol] = hookName;
-        hookIndex[symbol] = currentIndex + 1;
-
         // Classify the attempt for the manifest: binding-driven when
         // the chosen artifact matches an active binding for the
         // symbol (covers classifier-seeded, LLM-seeded, and
@@ -404,6 +400,19 @@ class SynthesizerWorkflow {
         final binding = activeBindings[symbol];
         final bindingMatches =
             binding != null && binding.artifactId == hookArtifact.id;
+
+        definedHooks[hookName] = hookCode;
+        // Carry the binding's Renode scope onto the deploy when this
+        // iteration-applied hook came from a binding. Mirrors what the
+        // override / comms / warm-start pre-seed layers do for their
+        // own attempts. Bindings without a scope (stateless hooks,
+        // pre-scope-migration bindings) deploy unscoped — same as
+        // today's behavior for the no-binding case.
+        if (bindingMatches && binding.scope != null) {
+          hookScopes[hookName] = binding.scope;
+        }
+        hookMap[symbol] = hookName;
+        hookIndex[symbol] = currentIndex + 1;
         final ManifestDecisionKind attemptKind;
         final String attemptSource;
         final LlmInvocation? llmInvocation;
@@ -436,6 +445,7 @@ class SynthesizerWorkflow {
               kind: attemptKind,
               source: attemptSource,
               artifactId: hookArtifact.id,
+              scope: bindingMatches ? binding.scope : null,
               fidelity: bindingMatches ? binding.fidelity : null,
               iterationIndex: currentIndex,
               llmInvocation: llmInvocation,
@@ -676,6 +686,12 @@ class SynthesizerWorkflow {
       fidelity: 0.5,
       provenance: 'llm:$modelTag',
       createdAt: DateTime.now(),
+      // Per-symbol scope as a default so anything stateful the LLM
+      // emitted (incrementVariable / variables.getVariable / etc.)
+      // gets a persistent Python interpreter keyed on the function
+      // name. Stateless bodies ignore the scope. Cheap insurance —
+      // see the scope-handling plan §Per-creation-site policy.
+      scope: symbol,
     );
     _eventController.add(SynthesizerLlmGenerated(
       iteration: iteration,

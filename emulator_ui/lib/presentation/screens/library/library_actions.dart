@@ -114,6 +114,7 @@ Future<void> openEmulator(
       Map<String, HookBinding>.from(emulator.hookBindings),
       preferences: emulator.hookPreferences,
       overrides: emulator.hookOverrides,
+      overrideScopes: emulator.hookOverrideScopes,
     );
     await _seedClassifierBindings(
       ref,
@@ -171,6 +172,20 @@ Future<void> _seedClassifierBindings(
   final seeder = HookBindingSeeder(
     artifactDb: ref.read(artifactDatabaseProvider),
   );
+  // Pre-scope-migration projects may have classifier-provenance
+  // bindings with no scope. Re-classify those symbols and fill in
+  // the scope before running the normal seed (so stateful classifier
+  // hooks regain correct interpreter isolation on next open). The
+  // migration mutates `bindings` in place; the new-seed pass below
+  // skips any symbol that already has a binding.
+  final upgraded = await seeder.upgradeBindingsMissingScope(
+    elfHash: elfHash,
+    bindings: bindings,
+  );
+  if (upgraded > 0) {
+    debugPrint('[openEmulator] migrated $upgraded classifier '
+        'binding${upgraded == 1 ? '' : 's'} with missing scope');
+  }
   final seeded = await seeder.seedBindingsForElf(
     elfHash: elfHash,
     skipSymbols: bindings.keys.toSet(),
@@ -190,11 +205,18 @@ Future<void> _seedClassifierBindings(
 /// Run on project open so existing projects don't lose their per-symbol
 /// picks under the new fidelity-driven candidate ordering. Idempotent:
 /// re-running over an already-back-filled project is a no-op.
+///
+/// The back-fill carries over `hookOverrideScopes[symbol]` (when set)
+/// onto the binding's `scope` field. This preserves the user's explicit
+/// Renode-scope choice from the Hook Database dialog — without it, a
+/// user-authored stateful Replacement would deploy stateless when the
+/// override is later removed in favor of the binding-driven sort.
 Future<Map<String, HookBinding>> _backfillBindingsForUserReplacements(
   WidgetRef ref,
   Map<String, HookBinding> bindings, {
   required Map<String, int> preferences,
   required Map<String, int> overrides,
+  required Map<String, String> overrideScopes,
 }) async {
   final candidates = <String, int>{
     ...preferences,
@@ -213,11 +235,14 @@ Future<Map<String, HookBinding>> _backfillBindingsForUserReplacements(
     if (artifact.origin != 'user' || artifact.targetSymbolName == null) {
       continue;
     }
+    final rawScope = overrideScopes[symbol];
+    final scope = (rawScope == null || rawScope.isEmpty) ? null : rawScope;
     bindings[symbol] = HookBinding(
       artifactId: artifact.id,
       fidelity: 1.0,
       provenance: 'user',
       createdAt: now,
+      scope: scope,
     );
     added++;
   }

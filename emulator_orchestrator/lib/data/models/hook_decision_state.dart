@@ -263,7 +263,10 @@ HookDecisionState buildHookDecisionState({
 
   // 4) Fidelity-scored bindings — the per-project compatibility
   //    overlay. The synthesizer's iteration sort consumes this
-  //    layer; UI sees provenance + fidelity for each row.
+  //    layer; UI sees provenance + fidelity + Renode scope for each
+  //    row. The scope is what's actually deployed for the binding's
+  //    hook in production iteration apply — see the scope-handling
+  //    plan §Wiring through to deploy.
   for (final entry in emulator.hookBindings.entries) {
     if (seen.contains(entry.key)) continue;
     byCommSymbol[entry.key] = HookDecision(
@@ -272,6 +275,7 @@ HookDecisionState buildHookDecisionState({
       artifactId: entry.value.artifactId,
       fidelity: entry.value.fidelity,
       provenance: entry.value.provenance,
+      scope: entry.value.scope,
     );
     seen.add(entry.key);
   }
