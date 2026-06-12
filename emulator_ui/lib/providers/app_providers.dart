@@ -5,9 +5,11 @@ import 'package:emulator_orchestrator/data/database/artifact_database.dart';
 import 'package:emulator_orchestrator/data/models/call_graph.dart';
 import 'package:emulator_orchestrator/data/models/emulation_state.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
+import 'package:emulator_orchestrator/data/models/comms_assignment.dart';
 import 'package:emulator_orchestrator/data/models/fidelity_result.dart';
 import 'package:emulator_orchestrator/data/models/firmware_record.dart';
 import 'package:emulator_orchestrator/data/models/hook_binding.dart';
+import 'package:emulator_orchestrator/data/models/hook_decision_state.dart';
 import 'package:emulator_orchestrator/data/models/rag_index_status.dart';
 import 'package:emulator_orchestrator/data/models/recent_emulator.dart';
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
@@ -34,6 +36,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'autosave_provider.dart';
 import 'comms_bus_provider.dart';
 import 'comms_classification_provider.dart';
+import 'comms_config_providers.dart';
 import 'config_providers.dart';
 
 export 'package:emulator_orchestrator/data/models/emulation_state.dart';
@@ -660,6 +663,46 @@ final hookOverrideScopesProvider =
 /// on project open.
 final hookBindingsProvider =
     StateProvider<Map<String, HookBinding>>((ref) => {});
+
+/// Reactive [HookDecisionState] projection of the current project's
+/// overlays plus the live comms-protocol config. Consumed by the
+/// pre-synthesis report widget (and, eventually, the manifest builder
+/// and the headless CLI when those land).
+///
+/// Builds from the live providers — not the persisted [Emulator] —
+/// so user edits in the Hook Database / Comms / Symbol-picker tabs
+/// surface in the report without waiting for an autosave round-trip.
+/// Null when no emulator is open.
+final hookDecisionStateProvider = Provider<HookDecisionState?>((ref) {
+  final emulator = ref.watch(currentEmulatorProvider);
+  if (emulator == null) return null;
+
+  final firmware = ref.watch(artifactProcessingProvider).valueOrNull;
+  // elfHash can be empty if the firmware hasn't finished processing
+  // yet — the report still works, the field just shows blank.
+  final elfHash = firmware?.elfHash ?? '';
+
+  final live = emulator.copyWith(
+    hookOverrides: ref.watch(hookOverridesProvider),
+    hookOverrideScopes: ref.watch(hookOverrideScopesProvider),
+    hookPreferences: ref.watch(hookPreferencesProvider),
+    hookBindings: ref.watch(hookBindingsProvider),
+    // hooks (warm-start) lives on the Emulator itself, no provider
+    // shadow today — pass through.
+  );
+
+  final commsConfig = ref.watch(commsProtocolConfigProvider);
+  final commsConfigsForBuilder = <CommsClass, CommsProtocolStatus>{
+    for (final entry in commsConfig.entries)
+      entry.key: (virtualized: entry.value.virtualized, port: entry.value.port),
+  };
+
+  return buildHookDecisionState(
+    emulator: live,
+    elfHash: elfHash,
+    commsConfigs: commsConfigsForBuilder,
+  );
+});
 
 // ============================================================================
 // SYNTHESIZER PROVIDERS

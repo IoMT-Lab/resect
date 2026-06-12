@@ -8,6 +8,7 @@ import '../../../../core/theme.dart';
 import '../../../../providers/app_providers.dart';
 import '../../library/library_actions.dart';
 import '../synthesis_controller.dart';
+import 'pre_synthesis_report.dart';
 import 'synthesis_report.dart';
 
 /// Center pane of the Synthesize tab.
@@ -75,45 +76,61 @@ class _IdleView extends ConsumerWidget {
       (emulator.baseImagePath ?? '').isNotEmpty;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => _Centered(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.auto_fix_high, size: 40, color: AppTheme.textMuted),
-          const SizedBox(height: 16),
-          const Text(
-            'SYNTHESIZE',
-            style: TextStyle(
-              color: AppTheme.textPrimary,
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 4,
+  Widget build(BuildContext context, WidgetRef ref) => Container(
+        color: AppTheme.bgCanvas,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 32),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 720),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Icon(Icons.auto_fix_high,
+                      size: 40, color: AppTheme.textMuted),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'SYNTHESIZE',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: AppTheme.textPrimary,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 4,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _ready
+                        ? 'Iteratively discover and substitute hardware-dependent '
+                            'functions with hooks until the firmware runs cleanly.'
+                        : 'This emulator needs both a firmware ELF and a platform '
+                            '(.repl) before synthesis can run. Set them in the Library tab.',
+                    style: const TextStyle(
+                        color: AppTheme.textMuted, fontSize: 12, height: 1.5),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  if (_ready) const PreSynthesisReport(),
+                  const SizedBox(height: 20),
+                  Center(
+                    child: ElevatedButton.icon(
+                      onPressed: _ready ? () => _launch(context, ref) : null,
+                      icon: const Icon(Icons.play_arrow, size: 18),
+                      label: const Text('Run Synthesis'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 24, vertical: 14),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          const SizedBox(height: 12),
-          Text(
-            _ready
-                ? 'Iteratively discover and substitute hardware-dependent '
-                    'functions with hooks until the firmware runs cleanly.'
-                : 'This emulator needs both a firmware ELF and a platform '
-                    '(.repl) before synthesis can run. Set them in the Library tab.',
-            style: const TextStyle(
-                color: AppTheme.textMuted, fontSize: 12, height: 1.5),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 24),
-          ElevatedButton.icon(
-            onPressed: _ready ? () => _launch(context, ref) : null,
-            icon: const Icon(Icons.play_arrow, size: 18),
-            label: const Text('Run Synthesis'),
-            style: ElevatedButton.styleFrom(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-            ),
-          ),
-        ],
-      ),
-    );
+        ),
+      );
 
   Future<void> _launch(BuildContext context, WidgetRef ref) async {
     final controller = ref.read(synthesisControllerProvider);
