@@ -6,6 +6,7 @@ import 'package:emulator_orchestrator/core/constants.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/models/hook_binding.dart';
 import 'package:emulator_orchestrator/data/models/rag_index_status.dart';
+import 'package:emulator_orchestrator/data/services/hook_binding_seeder.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
@@ -114,11 +115,16 @@ Future<void> openEmulator(
       preferences: emulator.hookPreferences,
       overrides: emulator.hookOverrides,
     );
+    await _seedClassifierBindings(
+      ref,
+      bindings,
+      elfFilePath: emulator.elfFilePath,
+    );
     ref.read(hookBindingsProvider.notifier).state = bindings;
     if (bindings.length != emulator.hookBindings.length) {
-      // New bindings were back-filled; mark the project dirty so the
-      // next save persists them. (We don't trigger autosave directly
-      // here — the user may want to inspect first.)
+      // New bindings were back-filled or seeded; mark the project
+      // dirty so the next save persists them. (We don't trigger
+      // autosave directly here — the user may want to inspect first.)
       ref.read(emulatorDirtyProvider.notifier).state = true;
     }
     ref.read(hookedSymbolsProvider.notifier).state =
@@ -134,6 +140,45 @@ Future<void> openEmulator(
       );
     }
   }
+}
+
+/// Run [HookBindingSeeder] against the project's ELF and merge any
+/// classifier-produced bindings into [bindings] for symbols that don't
+/// already have one. Mutates [bindings] in place.
+///
+/// Safe to call before Ghidra extraction has run for the firmware —
+/// the seeder no-ops when its inputs (decompilations + signatures)
+/// are absent. Errors from hashing/reading the ELF are swallowed with
+/// a debug log so a missing or moved firmware file never blocks
+/// project open.
+Future<void> _seedClassifierBindings(
+  WidgetRef ref,
+  Map<String, HookBinding> bindings, {
+  required String? elfFilePath,
+}) async {
+  if (elfFilePath == null || elfFilePath.isEmpty) return;
+
+  final service = ref.read(artifactLibraryServiceProvider);
+  final String elfHash;
+  try {
+    elfHash = await service.hashElfFile(elfFilePath);
+  } catch (e) {
+    debugPrint('[openEmulator] classifier seed skipped — '
+        'hashElfFile failed: $e');
+    return;
+  }
+
+  final seeder = HookBindingSeeder(
+    artifactDb: ref.read(artifactDatabaseProvider),
+  );
+  final seeded = await seeder.seedBindingsForElf(
+    elfHash: elfHash,
+    skipSymbols: bindings.keys.toSet(),
+  );
+  if (seeded.isEmpty) return;
+  bindings.addAll(seeded);
+  debugPrint('[openEmulator] seeded ${seeded.length} classifier '
+      'binding${seeded.length == 1 ? '' : 's'}');
 }
 
 /// Write a fidelity-1.0 binding for any (symbol → artifact) pair the

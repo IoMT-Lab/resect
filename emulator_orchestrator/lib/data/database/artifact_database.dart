@@ -354,6 +354,22 @@ class ArtifactDatabase extends _$ArtifactDatabase {
   Future<Artifact?> getArtifactById(int id) =>
       (select(artifacts)..where((t) => t.id.equals(id))).getSingleOrNull();
 
+  /// Find any artifact whose body matches [body] exactly. Returns the
+  /// first match in `(origin ASC, id ASC)` order so default-origin
+  /// templates take priority over user-authored duplicates. Used by
+  /// the classifier-binding seeder to avoid inserting a new artifact
+  /// when an equivalent body (typically a default template) already
+  /// exists.
+  Future<Artifact?> findArtifactByBody(String body) =>
+      (select(artifacts)
+            ..where((t) => t.artifactData.equals(body))
+            ..orderBy([
+              (t) => OrderingTerm.asc(t.origin),
+              (t) => OrderingTerm.asc(t.id),
+            ])
+            ..limit(1))
+          .getSingleOrNull();
+
   /// Get every template artifact (origin='default').
   Future<List<Artifact>> getTemplates() =>
       (select(artifacts)..where((t) => t.origin.equals('default'))).get();
