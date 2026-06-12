@@ -269,6 +269,29 @@ class SynthesisController {
           currentSymbol: event.symbol,
           status: 'Exhausted: ${event.symbol}',
         );
+      } else if (event is SynthesizerLlmGenerating) {
+        // The iteration loop has exhausted DB candidates for this
+        // symbol and the on-demand LLM is generating a fresh hook
+        // — ~2 min on gemma4:e4b. Reset the countdown timestamp so
+        // the elapsed-time stamp in the progress strip starts at
+        // zero for the LLM call rather than carrying over from
+        // the previous iteration.
+        ref.read(synthesisProgressProvider.notifier).state = current.copyWith(
+          currentSymbol: event.symbol,
+          status: 'LLM generating: ${event.symbol} '
+              '(${event.modelTag})',
+          countdownStart: DateTime.now(),
+        );
+      } else if (event is SynthesizerLlmGenerated) {
+        // Fresh artifact + binding ready. Don't bump hooksApplied
+        // yet — the next iteration's SynthesizerHookApplied will
+        // do that when the synthesizer actually installs the hook.
+        ref.read(synthesisProgressProvider.notifier).state = current.copyWith(
+          currentSymbol: event.symbol,
+          status: 'LLM produced hook for ${event.symbol} '
+              '(fidelity ${event.fidelity.toStringAsFixed(2)})',
+          countdownStart: DateTime.now(),
+        );
       } else if (event is SynthesizerCompleted) {
         final result = event.result;
         ref.read(synthesisResultProvider.notifier).state = result;
