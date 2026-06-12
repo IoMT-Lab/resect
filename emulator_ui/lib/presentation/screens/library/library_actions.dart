@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:emulator_orchestrator/core/app_paths.dart';
 import 'package:emulator_orchestrator/core/constants.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
+import 'package:emulator_orchestrator/data/models/hook_binding.dart';
 import 'package:emulator_orchestrator/data/models/rag_index_status.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -107,6 +108,19 @@ Future<void> openEmulator(
         Map<String, int>.from(emulator.hookPreferences);
     ref.read(hookOverridesProvider.notifier).state =
         Map<String, int>.from(emulator.hookOverrides);
+    final bindings = await _backfillBindingsForUserReplacements(
+      ref,
+      Map<String, HookBinding>.from(emulator.hookBindings),
+      preferences: emulator.hookPreferences,
+      overrides: emulator.hookOverrides,
+    );
+    ref.read(hookBindingsProvider.notifier).state = bindings;
+    if (bindings.length != emulator.hookBindings.length) {
+      // New bindings were back-filled; mark the project dirty so the
+      // next save persists them. (We don't trigger autosave directly
+      // here — the user may want to inspect first.)
+      ref.read(emulatorDirtyProvider.notifier).state = true;
+    }
     ref.read(hookedSymbolsProvider.notifier).state =
         emulator.hooks.keys.toSet();
     ref.read(autosaveControllerProvider).restoreArtifacts(emulator);
@@ -120,6 +134,53 @@ Future<void> openEmulator(
       );
     }
   }
+}
+
+/// Write a fidelity-1.0 binding for any (symbol → artifact) pair the
+/// user has already wired up via `hookOverrides` or `hookPreferences`,
+/// when the artifact is a user-authored Replacement (the targetSymbolName
+/// non-null kind) AND the project doesn't already have a binding for
+/// that symbol. Returns the merged map.
+///
+/// Run on project open so existing projects don't lose their per-symbol
+/// picks under the new fidelity-driven candidate ordering. Idempotent:
+/// re-running over an already-back-filled project is a no-op.
+Future<Map<String, HookBinding>> _backfillBindingsForUserReplacements(
+  WidgetRef ref,
+  Map<String, HookBinding> bindings, {
+  required Map<String, int> preferences,
+  required Map<String, int> overrides,
+}) async {
+  final candidates = <String, int>{
+    ...preferences,
+    ...overrides, // overrides win on collision; the artifactId is the same in either case
+  };
+  if (candidates.isEmpty) return bindings;
+
+  final db = ref.read(artifactDatabaseProvider);
+  final now = DateTime.now();
+  var added = 0;
+  for (final entry in candidates.entries) {
+    final symbol = entry.key;
+    if (bindings.containsKey(symbol)) continue;
+    final artifact = await db.getArtifactById(entry.value);
+    if (artifact == null) continue;
+    if (artifact.origin != 'user' || artifact.targetSymbolName == null) {
+      continue;
+    }
+    bindings[symbol] = HookBinding(
+      artifactId: artifact.id,
+      fidelity: 1.0,
+      provenance: 'user',
+      createdAt: now,
+    );
+    added++;
+  }
+  if (added > 0) {
+    debugPrint('[openEmulator] back-filled $added user-Replacement '
+        'binding${added == 1 ? '' : 's'} at fidelity 1.0');
+  }
+  return bindings;
 }
 
 /// Save the current emulator. If it has no path yet, falls through to

@@ -75,6 +75,21 @@ class Artifacts extends Table {
   /// symbol and skips it when iterating candidates for other
   /// symbols).
   TextColumn get targetSymbolName => text().nullable()();
+  /// Suitability floor for this hook in general, independent of any
+  /// specific symbol it might be bound to (0.0–1.0). Catalog `return 0`
+  /// templates sit at 0.0; specialized templates and user-authored
+  /// hooks carry positive values per the magnitudes documented in
+  /// the radiant-inventing-dream plan §2.1. The synthesizer's
+  /// candidate-sort uses `COALESCE(hook_bindings.fidelity,
+  /// artifacts.intrinsic_score, 0.0)` — so the per-project
+  /// [HookBinding] overrides this floor when present, and this column
+  /// is the fallback for symbols without an evidence-backed binding.
+  ///
+  /// Nullable so that "not yet scored" is distinguishable from "scored
+  /// 0.0" — `ArtifactLibraryService.ensureIntrinsicScores` only writes
+  /// rows whose value is currently NULL, leaving anything previously
+  /// set (e.g. a future harness-derived score) untouched.
+  RealColumn get intrinsicScore => real().nullable()();
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
 }
 
@@ -197,7 +212,7 @@ class ArtifactDatabase extends _$ArtifactDatabase {
       ArtifactDatabase._internal(executor);
 
   @override
-  int get schemaVersion => 8;
+  int get schemaVersion => 9;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -256,6 +271,18 @@ class ArtifactDatabase extends _$ArtifactDatabase {
             await m.createTable(ghidraDataTypes);
             await m.createTable(ghidraDataSymbols);
             await m.createTable(ghidraMemoryMap);
+          }
+          if (from < 9) {
+            // Additive: `intrinsic_score` on artifacts — the
+            // suitability floor for each hook body, independent of
+            // any specific binding. New rows default to 0.0; existing
+            // rows are back-filled by
+            // `ArtifactLibraryService.ensureIntrinsicScores` on the
+            // next app boot (catalog templates 0.0–0.2 by body match,
+            // user-authored Reusable 0.3, Replacement 0.5). The
+            // synthesizer's candidate-sort COALESCE consults this
+            // column when no per-project [HookBinding] overrides it.
+            await m.addColumn(artifacts, artifacts.intrinsicScore);
           }
         },
       );
@@ -368,6 +395,7 @@ class ArtifactDatabase extends _$ArtifactDatabase {
     String? name,
     String? architecture,
     String? targetSymbolName,
+    double? intrinsicScore,
   }) =>
       into(artifacts).insert(ArtifactsCompanion.insert(
         artifactType: artifactType,
@@ -376,7 +404,19 @@ class ArtifactDatabase extends _$ArtifactDatabase {
         name: Value(name),
         architecture: Value(architecture),
         targetSymbolName: Value(targetSymbolName),
+        intrinsicScore:
+            intrinsicScore == null ? const Value.absent() : Value(intrinsicScore),
       ));
+
+  /// Set the intrinsic-score floor for an artifact. Used by
+  /// `ArtifactLibraryService.ensureIntrinsicScores` to back-fill rows
+  /// that pre-date the column.
+  Future<int> updateArtifactIntrinsicScore({
+    required int id,
+    required double intrinsicScore,
+  }) =>
+      (update(artifacts)..where((t) => t.id.equals(id)))
+          .write(ArtifactsCompanion(intrinsicScore: Value(intrinsicScore)));
 
   /// Delete an artifact by its primary key ID.
   Future<int> deleteArtifact(int id) =>

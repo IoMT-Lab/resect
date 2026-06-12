@@ -7,6 +7,7 @@ import 'package:emulator_orchestrator/data/models/emulation_state.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/models/fidelity_result.dart';
 import 'package:emulator_orchestrator/data/models/firmware_record.dart';
+import 'package:emulator_orchestrator/data/models/hook_binding.dart';
 import 'package:emulator_orchestrator/data/models/rag_index_status.dart';
 import 'package:emulator_orchestrator/data/models/recent_emulator.dart';
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
@@ -348,6 +349,8 @@ final emulationOrchestratorProvider = Provider<EmulationOrchestrator>((ref) {
           Map<String, int>.from(event.emulator?.hookOverrides ?? {});
       ref.read(hookOverrideScopesProvider.notifier).state =
           Map<String, String>.from(event.emulator?.hookOverrideScopes ?? {});
+      ref.read(hookBindingsProvider.notifier).state =
+          Map<String, HookBinding>.from(event.emulator?.hookBindings ?? {});
       ref.read(hookedSymbolsProvider.notifier).state =
           event.emulator?.hooks.keys.toSet() ?? {};
       // Restore persisted synthesis artifacts so the fidelity report can be
@@ -639,6 +642,24 @@ final hookOverridesProvider = StateProvider<Map<String, int>>((ref) => {});
 /// across symbols.
 final hookOverrideScopesProvider =
     StateProvider<Map<String, String>>((ref) => {});
+
+/// Per-symbol compatibility bindings: symbol name → [HookBinding].
+///
+/// The third layer on top of [hookOverridesProvider] (forced) and
+/// [hookPreferencesProvider] (soft re-order). Each binding records which
+/// artifact is the preferred substitute for the symbol, the fidelity of
+/// that choice (0.0–1.0), and the provenance — classifier rule, LLM
+/// model, harness verdict, or user authorship. The synthesizer's
+/// iteration ordering uses `COALESCE(binding.fidelity,
+/// artifact.intrinsicScore, 0.0)` as the candidate-sort key, so a
+/// fidelity-bearing binding wins over the artifact's intrinsic floor.
+///
+/// Populated by the Stage 1+ classifier and LLM passes (per the
+/// radiant-inventing-dream plan), and back-filled at fidelity 1.0 for
+/// any user-authored Replacement that already has a matching override
+/// on project open.
+final hookBindingsProvider =
+    StateProvider<Map<String, HookBinding>>((ref) => {});
 
 // ============================================================================
 // SYNTHESIZER PROVIDERS

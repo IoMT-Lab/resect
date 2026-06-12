@@ -87,6 +87,7 @@ class ArtifactLibraryService {
     final fileName = p.basename(elfFilePath);
 
     await ensureDefaultTemplates();
+    await ensureIntrinsicScores();
 
     // Parse the machine field from the ELF header up front — cheap
     // (just the first ~20 bytes), and used both for fresh-register
@@ -125,6 +126,93 @@ class ArtifactLibraryService {
       symbolNames: symbolNames,
       machine: machine,
     );
+  }
+
+  /// Back-fill `intrinsic_score` for any artifact row where it's
+  /// currently NULL — the "not yet scored" state. Idempotent: rows
+  /// with a previously-set score (any non-null value) are left alone,
+  /// so Stage 3's harness-derived intrinsic updates won't get
+  /// clobbered on the next boot.
+  ///
+  /// The magnitudes follow the radiant-inventing-dream plan §2.1:
+  ///
+  /// - Catalog `return 0` / `return 1` / legacy returns → **0.0**
+  ///   (no-op; only intrinsic value is "doesn't error").
+  /// - Catalog increment / counter → **0.1** (stateful, mildly useful
+  ///   in general).
+  /// - Catalog read / write templates → **0.2** (protocol-shaped; in
+  ///   the right binding much more useful, but bare intrinsic is generic).
+  /// - User-authored Reusable (`origin='user'`,
+  ///   `targetSymbolName == null`) → **0.3**.
+  /// - User-authored Replacement (`origin='user'`,
+  ///   `targetSymbolName != null`) → **0.5** (floor — the per-project
+  ///   [HookBinding] fidelity at 1.0 is what should actually win for
+  ///   the symbol this Replacement was authored for).
+  /// - Anything else (unknown default body, unknown origin) → **0.0**.
+  Future<void> ensureIntrinsicScores() async {
+    final all = await _db.getAllArtifacts();
+    final unscored = all.where((a) => a.intrinsicScore == null).toList();
+    if (unscored.isEmpty) return;
+
+    final templateScores = _catalogIntrinsicScores();
+    var updated = 0;
+    for (final a in unscored) {
+      final double score;
+      if (a.origin == 'default') {
+        score = templateScores[a.artifactData] ?? 0.0;
+      } else if (a.origin == 'user') {
+        score = a.targetSymbolName == null ? 0.3 : 0.5;
+      } else {
+        score = 0.0;
+      }
+      await _db.updateArtifactIntrinsicScore(id: a.id, intrinsicScore: score);
+      updated++;
+    }
+    stderr.writeln('[ArtifactLibrary] ensureIntrinsicScores: '
+        '$updated row${updated == 1 ? '' : 's'} back-filled');
+  }
+
+  /// Map canonical default-template bodies to their intrinsic score.
+  /// Builds from the catalog so the mapping moves in lockstep with
+  /// what `ensureDefaultTemplates` actually inserts. Bodies the
+  /// `defaultCodes()` set knows but this map doesn't fall through to
+  /// 0.0 (safe floor for an unrecognized but-shipped template).
+  Map<String, double> _catalogIntrinsicScores() {
+    final scores = <String, double>{};
+
+    // 0.0 — bare-no-op return-N templates (catalog + the two legacy bodies).
+    for (final v in [0, 1]) {
+      scores[_catalog.build('return', {'value': v}).code] = 0.0;
+    }
+    // The legacy `_legacyReturn0` / `_legacyReturn1` bodies live in
+    // `HookCatalog.defaultCodes()` but aren't catalog-built (they're
+    // string constants). Score them by looking them up via the set
+    // minus the catalog-built bodies.
+    final knownBuilt = scores.keys.toSet();
+    for (final body in _catalog.defaultCodes()) {
+      if (knownBuilt.contains(body)) continue;
+      // The other defaultCodes entries — legacy returns, read/write,
+      // increment — get classified below or default to 0.0.
+      scores[body] = 0.0;
+    }
+
+    // 0.1 — increment/counter templates.
+    for (final v in [0, 1]) {
+      scores[_catalog
+          .build('increment', {'scope': '', 'defaultValue': v}).code] = 0.1;
+    }
+
+    // 0.2 — read / write templates (protocol-shaped).
+    for (final v in [0, 1]) {
+      scores[_catalog
+          .build('read', {'scope': '', 'defaultValue': v}).code] = 0.2;
+    }
+    for (final v in [0, 1]) {
+      scores[_catalog.build('write',
+          {'scope': '', 'value': v, 'returnValue': 0}).code] = 0.2;
+    }
+
+    return scores;
   }
 
   /// Idempotently insert every default template body the catalog emits

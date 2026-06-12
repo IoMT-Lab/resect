@@ -5,6 +5,7 @@ import '../data/models/call_graph.dart';
 import '../data/models/emulation_state.dart';
 import '../data/models/emulator.dart';
 import '../data/models/graph_point.dart';
+import '../data/models/hook_binding.dart';
 import '../data/models/synthesizer_result.dart';
 import '../data/repositories/emulator_repository.dart';
 
@@ -225,6 +226,7 @@ class EmulationOrchestrator {
     Map<String, String> hookOverrideScopes = const {},
     Map<String, String> resolvedHooks = const {},
     Map<String, HookSpec> commsHooks = const {},
+    Map<String, HookBinding> hookBindings = const {},
     String? memoryMapPath,
   }) async => synthesizerWorkflow.run(
       elfPath: elfPath,
@@ -238,6 +240,7 @@ class EmulationOrchestrator {
       hookOverrideScopes: hookOverrideScopes,
       resolvedHooks: resolvedHooks,
       commsHooks: commsHooks,
+      hookBindings: hookBindings,
       memoryMapPath: memoryMapPath,
     );
 

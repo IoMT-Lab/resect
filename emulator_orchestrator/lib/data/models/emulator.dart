@@ -2,6 +2,7 @@ import 'package:uuid/uuid.dart';
 
 import 'call_graph.dart';
 import 'comms_assignment.dart';
+import 'hook_binding.dart';
 import 'synthesizer_result.dart';
 
 /// Represents an emulator configuration containing firmware files, settings,
@@ -57,6 +58,15 @@ class Emulator {
   /// [hookOverrides] entry are ignored at apply time.
   final Map<String, String> hookOverrideScopes;
 
+  /// Per-symbol compatibility bindings (symbol name → [HookBinding]).
+  /// The third layer on top of [hookOverrides] (forced) and
+  /// [hookPreferences] (soft re-order): a fidelity-scored record of which
+  /// artifact this project considers the best substitute for each
+  /// symbol, plus how that decision was reached (classifier rule, LLM
+  /// generation, harness pass, user authorship). Consumed by the
+  /// synthesizer's iteration ordering — see [HookBinding.fidelity].
+  final Map<String, HookBinding> hookBindings;
+
   /// Open-ended metadata for future expansion
   final Map<String, dynamic> metadata;
 
@@ -93,6 +103,7 @@ class Emulator {
     this.hookPreferences = const {},
     this.hookOverrides = const {},
     this.hookOverrideScopes = const {},
+    this.hookBindings = const {},
     this.metadata = const {},
     this.documents = const [],
     this.cachedCallGraph,
@@ -142,6 +153,10 @@ class Emulator {
         (json['hook_override_scopes'] as Map<String, dynamic>?)
                 ?.map((k, v) => MapEntry(k, v as String)) ??
             {};
+    final hookBindings = (json['hook_bindings'] as Map<String, dynamic>?)
+            ?.map((k, v) =>
+                MapEntry(k, HookBinding.fromJson(v as Map<String, dynamic>))) ??
+        <String, HookBinding>{};
     final metadata = json['metadata'] as Map<String, dynamic>? ?? {};
     final documents = (json['documents'] as List<dynamic>?)
         ?.map((d) => DocumentEntry.fromJson(d as Map<String, dynamic>))
@@ -170,6 +185,7 @@ class Emulator {
       hookPreferences: hookPreferences,
       hookOverrides: hookOverrides,
       hookOverrideScopes: hookOverrideScopes,
+      hookBindings: hookBindings,
       metadata: metadata,
       documents: documents,
       cachedCallGraph:
@@ -201,6 +217,9 @@ class Emulator {
       if (hookOverrides.isNotEmpty) 'hook_overrides': hookOverrides,
       if (hookOverrideScopes.isNotEmpty)
         'hook_override_scopes': hookOverrideScopes,
+      if (hookBindings.isNotEmpty)
+        'hook_bindings':
+            hookBindings.map((k, v) => MapEntry(k, v.toJson())),
       if (documents.isNotEmpty) 'documents': documents.map((d) => d.toJson()).toList(),
       if (cachedCallGraph != null) 'call_graph': cachedCallGraph!.toJson(),
       if (synthesisResult != null) 'synthesis_result': synthesisResult!.toJson(),
@@ -226,6 +245,7 @@ class Emulator {
     Map<String, int>? hookPreferences,
     Map<String, int>? hookOverrides,
     Map<String, String>? hookOverrideScopes,
+    Map<String, HookBinding>? hookBindings,
     Map<String, dynamic>? metadata,
     List<DocumentEntry>? documents,
     CallGraph? cachedCallGraph,
@@ -248,6 +268,7 @@ class Emulator {
       hookPreferences: hookPreferences ?? this.hookPreferences,
       hookOverrides: hookOverrides ?? this.hookOverrides,
       hookOverrideScopes: hookOverrideScopes ?? this.hookOverrideScopes,
+      hookBindings: hookBindings ?? this.hookBindings,
       metadata: metadata ?? this.metadata,
       documents: documents ?? this.documents,
       cachedCallGraph:

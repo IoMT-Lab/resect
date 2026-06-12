@@ -95,6 +95,7 @@ class SynthesisController {
     _subscribeSynthesizerEvents(emulator);
 
     final hookPreferences = ref.read(hookPreferencesProvider);
+    final hookBindings = ref.read(hookBindingsProvider);
     await orchestrator.runSynthesizer(
       elfPath: elfPath,
       baseImagePath: baseImagePath,
@@ -106,6 +107,7 @@ class SynthesisController {
       hookOverrideScopes: hookOverrideScopes,
       resolvedHooks: resolvedHooks,
       commsHooks: commsHooks,
+      hookBindings: hookBindings,
       memoryMapPath: config.memoryMapPath,
     );
   }

@@ -1,4 +1,5 @@
 import 'package:emulator_orchestrator/data/models/emulator.dart';
+import 'package:emulator_orchestrator/data/models/hook_binding.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app_providers.dart';
@@ -32,6 +33,8 @@ class AutosaveController {
         hookOverrides: Map<String, int>.from(ref.read(hookOverridesProvider)),
         hookOverrideScopes:
             Map<String, String>.from(ref.read(hookOverrideScopesProvider)),
+        hookBindings:
+            Map<String, HookBinding>.from(ref.read(hookBindingsProvider)),
         cachedCallGraph:
             ref.read(callgraphProvider).valueOrNull ?? base.cachedCallGraph,
         synthesisResult: ref.read(synthesisResultProvider) ?? base.synthesisResult,

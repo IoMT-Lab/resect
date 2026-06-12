@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import '../../data/database/artifact_database.dart';
+import '../../data/models/hook_binding.dart';
 import '../../data/models/synthesizer_result.dart';
 import '../engine/emulation_controller.dart';
 import '../engine/paused_event.dart';
@@ -57,6 +58,7 @@ class SynthesizerWorkflow {
     Map<String, String> hookOverrideScopes = const {},
     Map<String, String> resolvedHooks = const {},
     Map<String, HookSpec> commsHooks = const {},
+    Map<String, HookBinding> hookBindings = const {},
     String? memoryMapPath,
   }) async {
     if (_isRunning) {
@@ -220,7 +222,30 @@ class SynthesizerWorkflow {
             elfHash,
             symbol,
           );
-          // If the user has a preference for this symbol, try that artifact first.
+          // Effective-score sort per the radiant-inventing-dream plan §2.0:
+          //   COALESCE(binding.fidelity, artifact.intrinsicScore, 0.0) DESC,
+          //   origin ASC, id ASC.
+          // The per-project binding's fidelity overrides the artifact's
+          // intrinsic floor when present. Without a binding, the intrinsic
+          // floor drives ordering — generic `return 0` (0.0) sinks below
+          // anything user-authored or specialized.
+          final binding = hookBindings[symbol];
+          double scoreFor(Artifact a) {
+            if (binding != null && binding.artifactId == a.id) {
+              return binding.fidelity;
+            }
+            return a.intrinsicScore ?? 0.0;
+          }
+          hooks = [...hooks]..sort((a, b) {
+              final byScore = scoreFor(b).compareTo(scoreFor(a));
+              if (byScore != 0) return byScore;
+              final byOrigin = a.origin.compareTo(b.origin);
+              if (byOrigin != 0) return byOrigin;
+              return a.id.compareTo(b.id);
+            });
+          // If the user has a preference for this symbol, try that artifact
+          // first — preserved on top of the effective-score sort as the
+          // soft re-order signal it's always been.
           final preferredId = hookPreferences[symbol];
           if (preferredId != null) {
             final preferredIndex = hooks.indexWhere((a) => a.id == preferredId);
@@ -230,7 +255,10 @@ class SynthesizerWorkflow {
             }
           }
           print('[Synthesizer] Lookup hooks for "$symbol" (elfHash=${elfHash.substring(0, 8)}...): '
-              'found ${hooks.length}${preferredId != null ? ' (preferred: $preferredId)' : ''}');
+              'found ${hooks.length}${preferredId != null ? ' (preferred: $preferredId)' : ''}'
+              '${binding != null ? ' (binding: artifact ${binding.artifactId} @ '
+                  'fidelity ${binding.fidelity.toStringAsFixed(2)} '
+                  'from ${binding.provenance})' : ''}');
           hookCache[symbol] = hooks;
         }
         final hooks = hookCache[symbol]!;
