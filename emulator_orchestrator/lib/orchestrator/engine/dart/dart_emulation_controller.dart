@@ -140,6 +140,7 @@ class DartEmulationController implements EmulationController {
     _pendingPause = false;
     _lastSymbol = null;
     _lastUnhandledSymbol = null;
+    _hooks.clear();
     _hookMap.clear();
     await _client.reset();
   }

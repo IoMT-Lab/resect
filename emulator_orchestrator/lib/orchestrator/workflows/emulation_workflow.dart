@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import '../../data/models/emulation_state.dart';
 import '../engine/call_graph_source.dart';
@@ -90,7 +91,10 @@ class EmulationWorkflow {
       );
 
       onStateChanged(EmulationState.running);
-    } catch (e) {
+    } catch (e, st) {
+      stderr
+        ..writeln('[emulation_workflow.start] FAILED: $e')
+        ..writeln(st.toString());
       // Tear down the engine if startup failed partway through.
       await engineLifecycle.stop();
       throw EmulationException('Failed to start emulation', e);
@@ -156,7 +160,10 @@ class EmulationWorkflow {
       );
 
       onStateChanged(EmulationState.running);
-    } catch (e) {
+    } catch (e, st) {
+      stderr
+        ..writeln('[emulation_workflow.restart] FAILED: $e')
+        ..writeln(st.toString());
       throw EmulationException('Failed to restart emulation', e);
     }
   }

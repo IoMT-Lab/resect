@@ -452,9 +452,21 @@ ClassificationResult? _rule2ReturnLiteral(
   final match = _kReturnLiteral.firstMatch(body);
   if (match == null) return null;
   final raw = match.group(1)!;
-  final value = raw.startsWith('0x') || raw.startsWith('-0x')
-      ? int.parse(raw, radix: 16)
-      : int.parse(raw);
+  // `int.parse(raw, radix: 16)` does NOT accept the `0x` prefix; the
+  // prefix is only auto-detected when radix is null (and even then
+  // negative-hex isn't handled). Strip the prefix explicitly and use
+  // tryParse so a malformed literal returns null instead of throwing
+  // — one bad function shouldn't crash the whole seed pass.
+  final int? value;
+  if (raw.startsWith('-0x')) {
+    final unsigned = int.tryParse(raw.substring(3), radix: 16);
+    value = unsigned == null ? null : -unsigned;
+  } else if (raw.startsWith('0x')) {
+    value = int.tryParse(raw.substring(2), radix: 16);
+  } else {
+    value = int.tryParse(raw);
+  }
+  if (value == null) return null;
   return ClassificationResult(
     ruleName: 'rule-2-return-literal',
     templateName: 'returnHook',

@@ -88,6 +88,7 @@ class ArtifactLibraryService {
 
     await ensureDefaultTemplates();
     await ensureIntrinsicScores();
+    await migrateLegacyHookBodies();
 
     // Parse the machine field from the ELF header up front — cheap
     // (just the first ~20 bytes), and used both for fresh-register
@@ -239,6 +240,36 @@ class ArtifactLibraryService {
     stderr.writeln(
         '[ArtifactLibrary] ensureDefaultTemplates: $added inserted, '
         '${present.length + added} present total');
+  }
+
+  /// Rewrite any existing `renode_hook` artifact whose body still
+  /// contains a raw `import <synthetic-module>` line. Pre-fix paths
+  /// (notably the LLM fallback in `SynthesizerWorkflow`) could write
+  /// un-inlined hook code straight into `artifactData`; deploying
+  /// those rows blows up Renode with `ImportException: No module
+  /// named ...`. Running `updateArtifactData` on each affected row
+  /// re-enters the DB write boundary, which now substitutes imports.
+  /// Idempotent: a second pass finds no matching rows.
+  Future<void> migrateLegacyHookBodies() async {
+    final legacy = RegExp(
+      r'^\s*(?:import|from)\s+'
+      r'(set_return_value|variables|comms|i2c_local|i2c_remote|'
+      r'uart_remote|pointer|stm32_glue)\b',
+      multiLine: true,
+    );
+    final rows = await _db.getAllArtifacts();
+    var rewritten = 0;
+    for (final row in rows) {
+      if (row.artifactType != 'renode_hook') continue;
+      if (!legacy.hasMatch(row.artifactData)) continue;
+      await _db.updateArtifactData(id: row.id, artifactData: row.artifactData);
+      rewritten++;
+    }
+    if (rewritten > 0) {
+      stderr.writeln(
+          '[ArtifactLibrary] migrateLegacyHookBodies: $rewritten row(s) '
+          'rewritten with inlined imports');
+    }
   }
 
   /// Replace any obsolete `origin='default'` template rows whose body

@@ -116,45 +116,55 @@ class HookBindingSeeder {
         continue;
       }
 
-      final result = _classifier.classify(
-        functionName: symbol,
-        signature: signature,
-        decompilation: d.sourceText,
-        dataSymbols: dataSymbols,
-      );
-      if (result == null) continue;
-
-      final body = result.hook.code;
-      final existing = await _db.findArtifactByBody(body);
-      final int artifactId;
-      if (existing != null) {
-        artifactId = existing.id;
-      } else {
-        artifactId = await _db.addArtifact(
-          artifactType: 'renode_hook',
-          artifactData: body,
-          origin: 'user',
-          architecture: 'ARM',
-          targetSymbolName: symbol,
-          intrinsicScore: 0.5,
+      // Wrap per-symbol classify + insert in a defensive try/catch so
+      // one bad function (malformed regex match, integer-parse failure,
+      // unexpected DB error) doesn't abort the whole 856-function seed
+      // pass. The catch logs the symbol + error for triage and the
+      // outer loop continues with the next decomp.
+      try {
+        final result = _classifier.classify(
+          functionName: symbol,
+          signature: signature,
+          decompilation: d.sourceText,
+          dataSymbols: dataSymbols,
         );
-        newArtifacts++;
-      }
+        if (result == null) continue;
 
-      // The catalog template's Hook carries the Renode scope (3rd arg
-      // to AddHookAtSymbol) — null for stateless returnHook, the
-      // function name for incrementHook, the protocol name for comms
-      // templates, etc. Thread it onto the binding so the synthesizer's
-      // iteration apply re-deploys with the same scope the template
-      // expected.
-      bindings[symbol] = HookBinding(
-        artifactId: artifactId,
-        fidelity: _fidelityForRule(result.ruleName),
-        provenance: 'classifier:${result.ruleName}',
-        createdAt: now,
-        scope: result.hook.scope,
-      );
-      classified++;
+        final body = result.hook.code;
+        final existing = await _db.findArtifactByBody(body);
+        final int artifactId;
+        if (existing != null) {
+          artifactId = existing.id;
+        } else {
+          artifactId = await _db.addArtifact(
+            artifactType: 'renode_hook',
+            artifactData: body,
+            origin: 'user',
+            architecture: 'ARM',
+            targetSymbolName: symbol,
+            intrinsicScore: 0.5,
+          );
+          newArtifacts++;
+        }
+
+        // The catalog template's Hook carries the Renode scope (3rd arg
+        // to AddHookAtSymbol) — null for stateless returnHook, the
+        // function name for incrementHook, the protocol name for comms
+        // templates, etc. Thread it onto the binding so the synthesizer's
+        // iteration apply re-deploys with the same scope the template
+        // expected.
+        bindings[symbol] = HookBinding(
+          artifactId: artifactId,
+          fidelity: _fidelityForRule(result.ruleName),
+          provenance: 'classifier:${result.ruleName}',
+          createdAt: now,
+          scope: result.hook.scope,
+        );
+        classified++;
+      } catch (e) {
+        stderr.writeln(
+            '[HookBindingSeeder] classify/insert failed for "$symbol": $e');
+      }
     }
 
     stderr.writeln('[HookBindingSeeder] elfHash=${elfHash.substring(0, 8)}…: '

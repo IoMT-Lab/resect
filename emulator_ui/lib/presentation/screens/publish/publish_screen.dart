@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -214,7 +216,10 @@ class _CardGrid extends ConsumerWidget {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Exported: $zipPath')),
       );
-    } catch (e) {
+    } catch (e, st) {
+      stderr
+        ..writeln('[publish export] FAILED: $e')
+        ..writeln(st.toString());
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Export failed: $e')),
@@ -238,7 +243,10 @@ class _CardGrid extends ConsumerWidget {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Exported: $outputPath')),
       );
-    } catch (e) {
+    } catch (e, st) {
+      stderr
+        ..writeln('[publish export] FAILED: $e')
+        ..writeln(st.toString());
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Export failed: $e')),
@@ -262,7 +270,10 @@ class _CardGrid extends ConsumerWidget {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Exported: $zipPath')),
       );
-    } catch (e) {
+    } catch (e, st) {
+      stderr
+        ..writeln('[publish export] FAILED: $e')
+        ..writeln(st.toString());
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Export failed: $e')),

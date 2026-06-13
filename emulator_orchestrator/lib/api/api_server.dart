@@ -150,7 +150,7 @@ class ApiServer {
   /// POST /synthesizer/run — Run the automated hook synthesizer.
   ///
   /// Body: {"elfPath": "...", "replPath": "...", "startFrom": "...",
-  ///        "endAt": ["sym1"], "maxIterations": 100}
+  ///        "endAt": ["sym1"], "maxIterations": 10}
   ///
   /// The ELF hash is computed automatically. The call graph must have been
   /// generated first (so the artifact DB has symbol records).
@@ -163,7 +163,7 @@ class ApiServer {
     final replPath = body['replPath'] as String?;
     final startFrom = body['startFrom'] as String?;
     final endAt = (body['endAt'] as List?)?.cast<String>();
-    final maxIterations = body['maxIterations'] as int? ?? 100;
+    final maxIterations = body['maxIterations'] as int? ?? 10;
     final hookPreferencesRaw = body['hookPreferences'] as Map<String, dynamic>?;
     final hookPreferences = hookPreferencesRaw?.map(
       (k, v) => MapEntry(k, v as int),

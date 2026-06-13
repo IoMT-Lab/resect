@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:emulator_orchestrator/core/app_paths.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
@@ -196,7 +197,10 @@ class _VagrantTestDialogState extends ConsumerState<VagrantTestDialog> {
     try {
       final emulator = await repository.loadEmulator(path);
       setState(() => _pickedEmulator = emulator);
-    } catch (e) {
+    } catch (e, st) {
+      stderr
+        ..writeln('[vagrant_test_dialog loadEmulator] FAILED: $e')
+        ..writeln(st.toString());
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to load emulator: $e')),

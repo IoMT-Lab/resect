@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:hooks/hooks.dart' show includeSystemModules, substituteImport;
 import 'package:renode/renode.dart';
 
 import '../../config/env_config.dart';
@@ -82,21 +81,6 @@ class HookTestHarness {
     String? scope,
     Duration timeout = const Duration(seconds: 10),
   }) async {
-    // Inline the bundled hooks-dart helper modules (`set_return_value`,
-    // `pointer`, `variables`, `comms`, …) into the hook body the same
-    // way `createHook` does in production. Without this, a hook that
-    // says `import set_return_value` reaches IronPython unmodified
-    // and Renode dies with `ImportException: No module named
-    // set_return_value` (IronPython doesn't have these as real Python
-    // modules — they're inlined at hook-creation time).
-    //
-    // `includeSystemModules` populates the hooks-dart import cache;
-    // it's idempotent (no-op after first call), safe to invoke per
-    // run. Avoids depending on whether the catalog provider has
-    // already initialized — important for command-line tools like
-    // `tool/test_rag_end_to_end.dart` that don't load the UI.
-    includeSystemModules();
-    final substitutedCode = substituteImport(hookCode);
     // Serialize: queue behind any in-flight test.
     while (_inflight != null) {
       try {
@@ -109,7 +93,7 @@ class HookTestHarness {
     _inflight = myCompleter;
     try {
       final result = await _runOne(
-        hookCode: substitutedCode,
+        hookCode: hookCode,
         scope: scope,
         timeout: timeout,
       );

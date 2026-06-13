@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:signatures/signatures.dart' show FunctionSignature;
@@ -58,7 +59,7 @@ class SynthesizerWorkflow {
     required String baseImagePath,
     String? startFrom,
     List<String>? endAt,
-    int maxIterations = 100,
+    int maxIterations = 10,
     Map<String, int> hookPreferences = const {},
     Map<String, int> hookOverrides = const {},
     Map<String, String> hookOverrideScopes = const {},
@@ -524,7 +525,10 @@ class SynthesizerWorkflow {
         endAt: endAt,
         pauseOnUnhandled: pauseOnUnhandled,
       );
-    } catch (e) {
+    } catch (e, st) {
+      stderr
+        ..writeln('[synthesizer._startAndWaitForPause] start() threw: $e')
+        ..writeln(st.toString());
       pauseSub.cancel();
       startedSub.cancel();
       resumedSub.cancel();

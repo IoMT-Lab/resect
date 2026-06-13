@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -371,7 +372,10 @@ class _SystemConfigDialogState extends ConsumerState<SystemConfigDialog> {
           SnackBar(content: Text('Saved ${ref.read(systemConfigProvider).configPath}')),
         );
       }
-    } catch (e) {
+    } catch (e, st) {
+      stderr
+        ..writeln('[system_config_dialog save] FAILED: $e')
+        ..writeln(st.toString());
       if (mounted) {
         setState(() => _saving = false);
         ScaffoldMessenger.of(context).showSnackBar(

@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
+import 'package:hooks/hooks.dart' show includeSystemModules, substituteImport;
 import '../../core/app_paths.dart';
 
 part 'artifact_database.g.dart';
@@ -416,6 +417,22 @@ class ArtifactDatabase extends _$ArtifactDatabase {
   /// [architecture]. Pass [targetSymbolName] when authoring a
   /// replacement hook for one specific function; leave null for
   /// reusable hooks.
+  /// Inline `import <synthetic-module>` against hooks-dart's bundled
+  /// Python helpers before any hook body enters the DB. The artifact
+  /// table is the single source of truth for hook code; runtime
+  /// callers (synthesizer, defineHook, test harness) read [artifactData]
+  /// straight and ship it to Renode. If the body still carries a raw
+  /// `import set_return_value` line at that point, IronPython throws
+  /// an unhandled ImportException and the .NET process dies. Enforcing
+  /// the inlining here means every read is guaranteed-deployable.
+  /// Idempotent: bodies that have already been inlined no longer
+  /// match the regex.
+  String _inlineHookImports(String body, String artifactType) {
+    if (artifactType != 'renode_hook') return body;
+    includeSystemModules();
+    return substituteImport(body);
+  }
+
   Future<int> addArtifact({
     required String artifactType,
     required String artifactData,
@@ -427,7 +444,7 @@ class ArtifactDatabase extends _$ArtifactDatabase {
   }) =>
       into(artifacts).insert(ArtifactsCompanion.insert(
         artifactType: artifactType,
-        artifactData: artifactData,
+        artifactData: _inlineHookImports(artifactData, artifactType),
         origin: Value(origin),
         name: Value(name),
         architecture: Value(architecture),
@@ -456,9 +473,15 @@ class ArtifactDatabase extends _$ArtifactDatabase {
   Future<int> updateArtifactData({
     required int id,
     required String artifactData,
-  }) =>
-      (update(artifacts)..where((t) => t.id.equals(id)))
-          .write(ArtifactsCompanion(artifactData: Value(artifactData)));
+  }) async {
+    final row = await (select(artifacts)..where((t) => t.id.equals(id)))
+        .getSingleOrNull();
+    final body = row == null
+        ? artifactData
+        : _inlineHookImports(artifactData, row.artifactType);
+    return (update(artifacts)..where((t) => t.id.equals(id)))
+        .write(ArtifactsCompanion(artifactData: Value(body)));
+  }
 
   // =========================================================================
   // GHIDRA-EXTRACTED TABLES — reader helpers for the RAG indexer

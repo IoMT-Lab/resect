@@ -26,7 +26,6 @@ library;
 import 'dart:async';
 import 'dart:io';
 
-import 'package:hooks/hooks.dart' show includeSystemModules, substituteImport;
 import 'package:renode/renode.dart';
 
 import '../../config/env_config.dart';
@@ -101,11 +100,6 @@ class HookProgressRunner {
     _inflight = completer;
     final stopwatch = Stopwatch()..start();
     try {
-      // Materialise the hook body once (substituteImport inlines
-      // the hooks-dart helpers like `set_return_value`).
-      includeSystemModules();
-      final substituted = substituteImport(hookCode);
-
       String? error;
       var withCount = 0;
       var baselineCount = 0;
@@ -114,7 +108,7 @@ class HookProgressRunner {
           replPath: replPath,
           elfPath: elfPath,
           targetSymbol: targetSymbol,
-          hookCode: substituted,
+          hookCode: hookCode,
           scope: scope,
           runWindow: runWindow,
         );
