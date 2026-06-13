@@ -117,6 +117,7 @@ class LlmClient {
   Stream<String> generate(
     String prompt, {
     String? system,
+    String? modelOverride,
     double temperature = 1.0,
     double topP = 0.95,
     int topK = 64,
@@ -144,7 +145,7 @@ class LlmClient {
     // empty list as "no constraint" but the omission is cleaner.
     final hasStops = stop != null && stop.isNotEmpty;
     final body = <String, Object?>{
-      'model': model,
+      'model': modelOverride ?? model,
       'prompt': prompt,
       'stream': true,
       'think': think,
@@ -212,6 +213,42 @@ class LlmClient {
       out[i] = (list[i] as num).toDouble();
     }
     return out;
+  }
+
+  /// Models installed on the Ollama server, smallest first (by
+  /// on-disk byte size — a reliable proxy for params × quantization).
+  /// Excludes the configured [embeddingModel] and anything whose name
+  /// contains `embed` since those can't run `/api/generate`.
+  ///
+  /// Returns an empty list when `/api/tags` fails or returns
+  /// nothing — callers should fall back to the constructor-configured
+  /// [model] in that case.
+  Future<List<({String name, int sizeBytes})>> listModels() async {
+    try {
+      final req = await _http.getUrl(Uri.parse('http://$host/api/tags'));
+      final resp = await req.close();
+      if (resp.statusCode != 200) {
+        await resp.drain<void>();
+        return const [];
+      }
+      final raw = await resp.transform(utf8.decoder).join();
+      final json = jsonDecode(raw) as Map<String, dynamic>;
+      final list = (json['models'] as List?) ?? const [];
+      final out = <({String name, int sizeBytes})>[];
+      for (final entry in list) {
+        if (entry is! Map<String, dynamic>) continue;
+        final name = entry['name'] as String?;
+        final size = entry['size'];
+        if (name == null || size is! num) continue;
+        if (name == embeddingModel) continue;
+        if (name.toLowerCase().contains('embed')) continue;
+        out.add((name: name, sizeBytes: size.toInt()));
+      }
+      out.sort((a, b) => a.sizeBytes.compareTo(b.sizeBytes));
+      return out;
+    } catch (_) {
+      return const [];
+    }
   }
 
   /// Ping Ollama's `/api/tags` endpoint to confirm the server is up. Used

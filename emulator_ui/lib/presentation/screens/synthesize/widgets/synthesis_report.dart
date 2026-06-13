@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme.dart';
 import '../../../../providers/app_providers.dart';
+import '../../../widgets/synthesis_visuals.dart';
 
 /// Post-synthesis metrics report for the Synthesize tab.
 ///
@@ -14,12 +15,6 @@ import '../../../../providers/app_providers.dart';
 /// report is metrics-only.
 class SynthesisReport extends ConsumerWidget {
   const SynthesisReport({super.key});
-
-  static Color _fidelityColor(double pct) {
-    if (pct >= 0.8) return const Color(0xFF66BB6A);
-    if (pct >= 0.5) return const Color(0xFFFFA726);
-    return const Color(0xFFE57373);
-  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -34,13 +29,13 @@ class SynthesisReport extends ConsumerWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _SummaryStat(label: 'Iterations', value: '${result.totalIterations}'),
+            SummaryStat(label: 'Iterations', value: '${result.totalIterations}'),
             const SizedBox(width: 28),
-            _SummaryStat(
+            SummaryStat(
                 label: 'Hooks Applied',
                 value: '${result.resolvedHooks.length}'),
             const SizedBox(width: 28),
-            _SummaryStat(
+            SummaryStat(
                 label: 'Duration', value: '${result.totalDuration.inSeconds}s'),
           ],
         ),
@@ -132,7 +127,7 @@ class SynthesisReport extends ConsumerWidget {
 
   Widget _buildFidelityDisplay(FidelityResult fidelity) {
     final pct = fidelity.overallFidelity;
-    final color = _fidelityColor(pct);
+    final color = fidelityColor(pct);
 
     return Container(
       width: double.infinity,
@@ -222,25 +217,6 @@ class SynthesisReport extends ConsumerWidget {
       ),
     );
   }
-}
-
-class _SummaryStat extends StatelessWidget {
-  final String label;
-  final String value;
-  const _SummaryStat({required this.label, required this.value});
-
-  @override
-  Widget build(BuildContext context) => Column(
-        children: [
-          Text(value,
-              style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: AppTheme.textPrimary)),
-          Text(label,
-              style: const TextStyle(fontSize: 10, color: AppTheme.textMuted)),
-        ],
-      );
 }
 
 /// Small colored pill that labels where a resolved hook came from.
@@ -484,7 +460,7 @@ class _SecondaryMetric extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = SynthesisReport._fidelityColor(value);
+    final color = fidelityColor(value);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,

@@ -3,30 +3,32 @@ import 'dart:io';
 import 'package:emulator_orchestrator/api/api_server.dart';
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
 import 'package:emulator_orchestrator/data/models/call_graph.dart';
+import 'package:emulator_orchestrator/data/models/comms_assignment.dart';
 import 'package:emulator_orchestrator/data/models/emulation_state.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
-import 'package:emulator_orchestrator/data/models/comms_assignment.dart';
 import 'package:emulator_orchestrator/data/models/fidelity_result.dart';
 import 'package:emulator_orchestrator/data/models/firmware_record.dart';
 import 'package:emulator_orchestrator/data/models/hook_binding.dart';
 import 'package:emulator_orchestrator/data/models/hook_decision_state.dart';
+import 'package:emulator_orchestrator/data/models/last_run_insight.dart';
 import 'package:emulator_orchestrator/data/models/rag_index_status.dart';
 import 'package:emulator_orchestrator/data/models/recent_emulator.dart';
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
 import 'package:emulator_orchestrator/data/models/trace_activity_event.dart';
 import 'package:emulator_orchestrator/data/repositories/emulator_repository.dart';
 import 'package:emulator_orchestrator/data/services/artifact_library_service.dart';
+import 'package:emulator_orchestrator/data/services/call_graph_service.dart';
 import 'package:emulator_orchestrator/data/services/fidelity_calculator.dart';
 import 'package:emulator_orchestrator/data/services/hook_test_harness.dart';
-import 'package:emulator_orchestrator/data/services/call_graph_service.dart';
+import 'package:emulator_orchestrator/data/services/last_run_insight_service.dart';
 import 'package:emulator_orchestrator/data/services/llm_client.dart';
 import 'package:emulator_orchestrator/data/services/llm_hook_generator.dart';
 import 'package:emulator_orchestrator/data/services/rag_index.dart';
 import 'package:emulator_orchestrator/data/services/signatures_service.dart';
-import 'package:emulator_orchestrator/orchestrator/engine/call_graph_source.dart';
-import 'package:emulator_orchestrator/orchestrator/engine/dart/ghidra_call_graph_source.dart';
 import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/call_graph_source.dart';
 import 'package:emulator_orchestrator/orchestrator/engine/dart/dart_engine.dart';
+import 'package:emulator_orchestrator/orchestrator/engine/dart/ghidra_call_graph_source.dart';
 import 'package:emulator_orchestrator/orchestrator/engine/paused_event.dart';
 import 'package:emulator_orchestrator/orchestrator/events/orchestrator_events.dart';
 import 'package:emulator_orchestrator/orchestrator/vagrant_test_event.dart';
@@ -253,6 +255,26 @@ final synthesisProgressProvider = StateProvider<SynthesisProgress?>((ref) => nul
 /// provide export options. Null when no result is available.
 final synthesisResultProvider = StateProvider<SynthesizerResult?>((ref) => null);
 
+/// Symbols reachable from the firmware's entry points via the
+/// statically-extracted call graph (forward BFS over `calledSymbols`
+/// edges). Used by the pre-synthesis report to distinguish "uncovered
+/// AND reachable" (the real synthesis-relevant unbound count) from
+/// "uncovered AND dead code" (libc / unused weak symbols / unreferenced
+/// functions that the firmware never executes).
+///
+/// Entry points checked in order: `Reset_Handler` (Cortex-M boot
+/// vector), `main`. The first one present in the graph anchors the
+/// BFS. Returns an empty set when neither entry is present so the UI
+/// can fall back to "treat every symbol as reachable" semantics.
+final reachableSymbolsProvider = Provider<Set<String>>((ref) {
+  final callGraph = ref.watch(callgraphProvider).valueOrNull;
+  if (callGraph == null) return const {};
+  return FidelityCalculator.reachableFromEntries(
+    callGraph,
+    const ['Reset_Handler', 'main'],
+  );
+});
+
 /// Computed fidelity metric for the current synthesis result.
 ///
 /// Automatically recomputes when the call graph or synthesis result changes.
@@ -420,6 +442,33 @@ final llmClientProvider = Provider<LlmClient>((ref) {
   ref.onDispose(client.close);
   return client;
 });
+
+/// Service that composes the Last Run Insights prompt and streams the
+/// LLM's recommendation. Reads model + host from `llmClientProvider`.
+final lastRunInsightServiceProvider = Provider<LastRunInsightService>(
+  (ref) => LastRunInsightService(llmClient: ref.watch(llmClientProvider)),
+);
+
+/// LLM-generated advisory for the last successful synthesis run.
+/// Hydrated from `Emulator.lastRunInsight` on project open by
+/// `AutosaveController.restoreArtifacts`; written by the Generate
+/// button in the Last Run card. Null when no insight has been
+/// generated for the current project.
+final lastRunInsightProvider =
+    StateProvider<LastRunInsight?>((ref) => null);
+
+/// Toggles while the LLM call is in flight so the recommendation
+/// panel can render a streaming indicator. Set true when the Generate
+/// button is pressed, false when the stream ends or is cancelled.
+final lastRunInsightGeneratingProvider =
+    StateProvider<bool>((ref) => false);
+
+/// In-flight buffer of streamed tokens for the recommendation panel.
+/// Lives in a provider so multiple widgets (panel body + a future
+/// debug surface) can subscribe; cleared back to empty when the
+/// stream ends or is cancelled.
+final lastRunInsightStreamBufferProvider =
+    StateProvider<String>((ref) => '');
 
 /// Per-project RAG index. Null until an emulator is loaded with a
 /// project directory on disk (unsaved projects don't get one).

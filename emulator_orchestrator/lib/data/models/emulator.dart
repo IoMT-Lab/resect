@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 import 'call_graph.dart';
 import 'comms_assignment.dart';
 import 'hook_binding.dart';
+import 'last_run_insight.dart';
 import 'synthesizer_result.dart';
 
 /// Represents an emulator configuration containing firmware files, settings,
@@ -93,6 +94,13 @@ class Emulator {
   /// not surfaced in the Comms tab.
   final Map<String, CommsAssignment> commsAssignments;
 
+  /// LLM-generated advisory text for the most-recently-generated
+  /// insight. Cached against [SynthesizerResult.manifest]'s
+  /// `synthesizerRunId`; goes stale when [synthesisResult] changes
+  /// past that point. Null when the user hasn't asked for an insight
+  /// yet. See [LastRunInsight].
+  final LastRunInsight? lastRunInsight;
+
   const Emulator({
     required this.id,
     required this.name,
@@ -110,6 +118,7 @@ class Emulator {
     this.synthesisResult,
     this.executedSymbols = const {},
     this.commsAssignments = const {},
+    this.lastRunInsight,
   });
 
   /// Create a new emulator with default values
@@ -170,6 +179,8 @@ class Emulator {
             ?.map((k, v) =>
                 MapEntry(k, CommsAssignment.fromJson(v as Map<String, dynamic>))) ??
         <String, CommsAssignment>{};
+    final lastRunInsightJson =
+        json['last_run_insight'] as Map<String, dynamic>?;
 
     return Emulator(
       id: emulatorData['id'] as String,
@@ -195,6 +206,9 @@ class Emulator {
           : null,
       executedSymbols: executedSymbols,
       commsAssignments: commsAssignments,
+      lastRunInsight: lastRunInsightJson != null
+          ? LastRunInsight.fromJson(lastRunInsightJson)
+          : null,
     );
   }
 
@@ -226,6 +240,7 @@ class Emulator {
       if (executedSymbols.isNotEmpty) 'executed_symbols': executedSymbols.toList(),
       if (commsAssignments.isNotEmpty)
         'comms_assignments': commsAssignments.map((k, v) => MapEntry(k, v.toJson())),
+      if (lastRunInsight != null) 'last_run_insight': lastRunInsight!.toJson(),
       'ui_state': uiState.toJson(),
       'metadata': metadata,
     };
@@ -254,6 +269,8 @@ class Emulator {
     bool clearSynthesisResult = false,
     Set<String>? executedSymbols,
     Map<String, CommsAssignment>? commsAssignments,
+    LastRunInsight? lastRunInsight,
+    bool clearLastRunInsight = false,
   }) => Emulator(
       id: id ?? this.id,
       name: name ?? this.name,
@@ -277,6 +294,9 @@ class Emulator {
           clearSynthesisResult ? null : (synthesisResult ?? this.synthesisResult),
       executedSymbols: executedSymbols ?? this.executedSymbols,
       commsAssignments: commsAssignments ?? this.commsAssignments,
+      lastRunInsight: clearLastRunInsight
+          ? null
+          : (lastRunInsight ?? this.lastRunInsight),
     );
 }
 

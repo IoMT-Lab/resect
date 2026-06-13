@@ -8,6 +8,7 @@ import '../../../../core/theme.dart';
 import '../../../../providers/app_providers.dart';
 import '../../library/library_actions.dart';
 import '../synthesis_controller.dart';
+import 'last_run_card.dart';
 import 'pre_synthesis_report.dart';
 import 'synthesis_report.dart';
 
@@ -113,6 +114,8 @@ class _IdleView extends ConsumerWidget {
                   ),
                   const SizedBox(height: 20),
                   if (_ready) const PreSynthesisReport(),
+                  if (_ready) const SizedBox(height: 14),
+                  if (_ready) const LastRunCard(),
                   const SizedBox(height: 20),
                   Center(
                     child: ElevatedButton.icon(

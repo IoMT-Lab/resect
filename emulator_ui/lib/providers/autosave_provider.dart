@@ -1,5 +1,6 @@
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/models/hook_binding.dart';
+import 'package:emulator_orchestrator/data/models/last_run_insight.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app_providers.dart';
@@ -39,6 +40,8 @@ class AutosaveController {
             ref.read(callgraphProvider).valueOrNull ?? base.cachedCallGraph,
         synthesisResult: ref.read(synthesisResultProvider) ?? base.synthesisResult,
         executedSymbols: Set<String>.from(ref.read(executedSymbolsProvider)),
+        lastRunInsight:
+            ref.read(lastRunInsightProvider) ?? base.lastRunInsight,
       );
 
   /// Restore persisted synthesis artifacts from [emulator] into the live
@@ -49,6 +52,7 @@ class AutosaveController {
     ref.read(synthesisResultProvider.notifier).state = result;
     ref.read(executedSymbolsProvider.notifier).state =
         Set<String>.from(emulator?.executedSymbols ?? const <String>{});
+    ref.read(lastRunInsightProvider.notifier).state = emulator?.lastRunInsight;
     if (result != null) {
       ref.read(synthesisProgressProvider.notifier).state = SynthesisProgress(
         countdownStart: DateTime.now(),

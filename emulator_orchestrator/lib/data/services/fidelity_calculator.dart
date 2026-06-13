@@ -14,6 +14,41 @@ class FidelityCalculator {
   static const _convergenceThreshold = 0.0001;
   static const _maxIterations = 100;
 
+  /// Forward-BFS from each of [entries] over `calledSymbols` edges and
+  /// return the set of reachable symbols (including the entries
+  /// themselves). Used by the pre-synthesis report to distinguish
+  /// "uncovered AND reachable" from "uncovered AND dead code" — the
+  /// latter doesn't affect synthesis outcomes because the firmware
+  /// never executes it.
+  ///
+  /// Entries that don't exist in [callGraph] are skipped. If none of
+  /// [entries] match, returns an empty set (caller can fall back to
+  /// "all symbols" semantics).
+  static Set<String> reachableFromEntries(
+    CallGraph callGraph,
+    List<String> entries,
+  ) {
+    final symbols = callGraph.symbols;
+    final reachable = <String>{};
+    final queue = Queue<String>();
+    for (final entry in entries) {
+      if (symbols.containsKey(entry) && reachable.add(entry)) {
+        queue.add(entry);
+      }
+    }
+    while (queue.isNotEmpty) {
+      final current = queue.removeFirst();
+      final sym = symbols[current];
+      if (sym == null) continue;
+      for (final child in sym.calledSymbols.keys) {
+        if (symbols.containsKey(child) && reachable.add(child)) {
+          queue.add(child);
+        }
+      }
+    }
+    return reachable;
+  }
+
   /// Find all symbols on any path from [start] to [stop] in [callGraph].
   ///
   /// BFS forward from start, BFS backward from stop (using callers),
