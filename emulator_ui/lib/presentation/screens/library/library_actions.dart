@@ -87,54 +87,106 @@ Future<void> openEmulator(
     if (emulatorPath == null) return;
   }
 
-  final repository = ref.read(emulatorRepositoryProvider);
+  // Capture a ProviderContainer up-front. WidgetRef is tied to the
+  // calling widget's lifecycle (typically LibraryEmptyState's button
+  // click). Setting currentEmulatorProvider below switches the
+  // LibraryScreen view from empty-state to loaded — which disposes
+  // the calling widget mid-async. Any ref.read AFTER that yields
+  // `Bad state: Cannot use "ref" after the widget was disposed`. The
+  // ProviderContainer outlives individual widgets and is the right
+  // handle for cross-rebuild reads in long-running async flows.
+  final container = ProviderScope.containerOf(context, listen: false);
+  final repository = container.read(emulatorRepositoryProvider);
+  // Flip the RAG card into "Checking…" before the slow work starts.
+  // Without this the card flashes "Never built" between the moment
+  // the library view switches from empty-state to loaded-view and
+  // the moment ragIndex.statusSnapshot completes at the end of this
+  // function. The card renders the checking state via its
+  // isInProgress branch (sync icon + "Checking…").
+  container.read(ragIndexStatusProvider.notifier).state =
+      RagIndexStatus.checking;
+  stderr.writeln('[openEmulator] loading $emulatorPath');
   try {
     final emulator = await repository.loadEmulator(emulatorPath);
+    stderr.writeln('[openEmulator] loaded; overrides=${emulator.hookOverrides.length} '
+        'prefs=${emulator.hookPreferences.length} '
+        'bindings=${emulator.hookBindings.length} '
+        'hooks=${emulator.hooks.length} '
+        'commsAssignments=${emulator.commsAssignments.length} '
+        'elfFilePath=${emulator.elfFilePath}');
 
-    ref.read(currentEmulatorProvider.notifier).state = emulator;
-    ref.read(emulatorDirtyProvider.notifier).state = false;
+    container.read(currentEmulatorProvider.notifier).state = emulator;
+    container.read(emulatorDirtyProvider.notifier).state = false;
 
     if (emulator.elfFilePath != null) {
-      ref.read(selectedElfPathProvider.notifier).state = emulator.elfFilePath;
+      container.read(selectedElfPathProvider.notifier).state =
+          emulator.elfFilePath;
     }
-    ref.read(leftSidebarExpandedProvider.notifier).state =
+    container.read(leftSidebarExpandedProvider.notifier).state =
         emulator.uiState.leftSidebarExpanded;
-    ref.read(rightSidebarExpandedProvider.notifier).state =
+    container.read(rightSidebarExpandedProvider.notifier).state =
         emulator.uiState.rightSidebarExpanded;
     if (emulator.uiState.selectedSymbol != null) {
-      ref.read(selectedSymbolProvider.notifier).state =
+      container.read(selectedSymbolProvider.notifier).state =
           emulator.uiState.selectedSymbol;
     }
-    ref.read(hookPreferencesProvider.notifier).state =
+    container.read(hookPreferencesProvider.notifier).state =
         Map<String, int>.from(emulator.hookPreferences);
-    ref.read(hookOverridesProvider.notifier).state =
+    container.read(hookOverridesProvider.notifier).state =
         Map<String, int>.from(emulator.hookOverrides);
+    container.read(hookOverrideScopesProvider.notifier).state =
+        Map<String, String>.from(emulator.hookOverrideScopes);
     final bindings = await _backfillBindingsForUserReplacements(
-      ref,
+      container,
       Map<String, HookBinding>.from(emulator.hookBindings),
       preferences: emulator.hookPreferences,
       overrides: emulator.hookOverrides,
       overrideScopes: emulator.hookOverrideScopes,
     );
+    stderr.writeln('[openEmulator] before _seedClassifierBindings; '
+        'bindings so far: ${bindings.length}');
     await _seedClassifierBindings(
-      ref,
+      container,
       bindings,
       elfFilePath: emulator.elfFilePath,
     );
-    ref.read(hookBindingsProvider.notifier).state = bindings;
+    stderr.writeln('[openEmulator] after _seedClassifierBindings; '
+        'bindings now: ${bindings.length}');
+    container.read(hookBindingsProvider.notifier).state = bindings;
     if (bindings.length != emulator.hookBindings.length) {
       // New bindings were back-filled or seeded; mark the project
       // dirty so the next save persists them. (We don't trigger
       // autosave directly here — the user may want to inspect first.)
-      ref.read(emulatorDirtyProvider.notifier).state = true;
+      container.read(emulatorDirtyProvider.notifier).state = true;
     }
-    ref.read(hookedSymbolsProvider.notifier).state =
+    container.read(hookedSymbolsProvider.notifier).state =
         emulator.hooks.keys.toSet();
-    ref.read(autosaveControllerProvider).restoreArtifacts(emulator);
+    container.read(autosaveControllerProvider).restoreArtifacts(emulator);
+
+    // Refresh the RAG card's status from the on-disk index for the
+    // newly-loaded project. Without this the card stays at
+    // `RagIndexStatus.empty` (the StateProvider's initial value) and
+    // reads "Never built" even when a previously-saved index exists.
+    // refreshRagIndexStatus(ref) takes a WidgetRef and is used by
+    // doc-add/remove paths; inline here using container since
+    // openEmulator runs across widget rebuilds.
+    final ragIndex = container.read(ragIndexProvider);
+    if (ragIndex != null) {
+      container.read(ragIndexStatusProvider.notifier).state =
+          ragIndex.statusSnapshot(emulator);
+    }
 
     await repository.addToRecentEmulators(emulatorPath, emulator.name);
-    ref.invalidate(recentEmulatorsProvider);
-  } catch (e) {
+    container.invalidate(recentEmulatorsProvider);
+    stderr.writeln('[openEmulator] complete');
+  } catch (e, st) {
+    stderr
+      ..writeln('[openEmulator] FAILED: $e')
+      ..writeln(st.toString());
+    // Reset the checking state we set up front so the card doesn't
+    // stay stuck on "Checking…" after a failed open.
+    container.read(ragIndexStatusProvider.notifier).state =
+        RagIndexStatus.empty;
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to load emulator: $e')),
@@ -153,13 +205,13 @@ Future<void> openEmulator(
 /// a debug log so a missing or moved firmware file never blocks
 /// project open.
 Future<void> _seedClassifierBindings(
-  WidgetRef ref,
+  ProviderContainer container,
   Map<String, HookBinding> bindings, {
   required String? elfFilePath,
 }) async {
   if (elfFilePath == null || elfFilePath.isEmpty) return;
 
-  final service = ref.read(artifactLibraryServiceProvider);
+  final service = container.read(artifactLibraryServiceProvider);
   final String elfHash;
   try {
     elfHash = await service.hashElfFile(elfFilePath);
@@ -170,7 +222,7 @@ Future<void> _seedClassifierBindings(
   }
 
   final seeder = HookBindingSeeder(
-    artifactDb: ref.read(artifactDatabaseProvider),
+    artifactDb: container.read(artifactDatabaseProvider),
   );
   // Pre-scope-migration projects may have classifier-provenance
   // bindings with no scope. Re-classify those symbols and fill in
@@ -212,7 +264,7 @@ Future<void> _seedClassifierBindings(
 /// user-authored stateful Replacement would deploy stateless when the
 /// override is later removed in favor of the binding-driven sort.
 Future<Map<String, HookBinding>> _backfillBindingsForUserReplacements(
-  WidgetRef ref,
+  ProviderContainer container,
   Map<String, HookBinding> bindings, {
   required Map<String, int> preferences,
   required Map<String, int> overrides,
@@ -224,7 +276,7 @@ Future<Map<String, HookBinding>> _backfillBindingsForUserReplacements(
   };
   if (candidates.isEmpty) return bindings;
 
-  final db = ref.read(artifactDatabaseProvider);
+  final db = container.read(artifactDatabaseProvider);
   final now = DateTime.now();
   var added = 0;
   for (final entry in candidates.entries) {
@@ -256,29 +308,37 @@ Future<Map<String, HookBinding>> _backfillBindingsForUserReplacements(
 /// Save the current emulator. If it has no path yet, falls through to
 /// [saveEmulatorAs]. Returns `true` on success.
 Future<bool> saveEmulator(BuildContext context, WidgetRef ref) async {
-  final emulator = ref.read(currentEmulatorProvider);
+  // Capture ProviderContainer because the calling widget (Save button on
+  // emulator_card) may be unmounted during the disk-I/O await if the
+  // user navigates away mid-save. Same pattern as openEmulator.
+  final container = ProviderScope.containerOf(context, listen: false);
+  final emulator = container.read(currentEmulatorProvider);
   if (emulator == null) return false;
 
   if (emulator.emulatorPath == null) {
     return saveEmulatorAs(context, ref);
   }
 
-  final repository = ref.read(emulatorRepositoryProvider);
-  final updated = ref.read(autosaveControllerProvider).gatherState(emulator);
+  final repository = container.read(emulatorRepositoryProvider);
+  final updated =
+      container.read(autosaveControllerProvider).gatherState(emulator);
 
   try {
     await repository.saveEmulator(updated, emulator.emulatorPath!);
-    ref.read(currentEmulatorProvider.notifier).state = updated;
-    ref.read(emulatorDirtyProvider.notifier).state = false;
+    container.read(currentEmulatorProvider.notifier).state = updated;
+    container.read(emulatorDirtyProvider.notifier).state = false;
     await repository.addToRecentEmulators(emulator.emulatorPath!, emulator.name);
-    ref.invalidate(recentEmulatorsProvider);
+    container.invalidate(recentEmulatorsProvider);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Saved: ${emulator.emulatorPath}')),
       );
     }
     return true;
-  } catch (e) {
+  } catch (e, st) {
+    stderr
+      ..writeln('[saveEmulator] FAILED: $e')
+      ..writeln(st.toString());
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to save emulator: $e')),
@@ -290,7 +350,8 @@ Future<bool> saveEmulator(BuildContext context, WidgetRef ref) async {
 
 /// Save the current emulator to a new path chosen via a save dialog.
 Future<bool> saveEmulatorAs(BuildContext context, WidgetRef ref) async {
-  final emulator = ref.read(currentEmulatorProvider);
+  final container = ProviderScope.containerOf(context, listen: false);
+  final emulator = container.read(currentEmulatorProvider);
   if (emulator == null) return false;
 
   // Make sure the default save directory exists before the save dialog
@@ -298,7 +359,7 @@ Future<bool> saveEmulatorAs(BuildContext context, WidgetRef ref) async {
   // first run.
   await AppPaths.ensureProjectsDir();
 
-  final result = await ref.read(fileSelectorProvider).saveFile(
+  final result = await container.read(fileSelectorProvider).saveFile(
         dialogTitle: 'Save Emulator As',
         suggestedName: '${emulator.name}${AppConstants.emulatorFileExtension}',
         initialDirectory: AppPaths.projectsDir,
@@ -310,23 +371,28 @@ Future<bool> saveEmulatorAs(BuildContext context, WidgetRef ref) async {
       ? result
       : '$result${AppConstants.emulatorFileExtension}';
 
-  final repository = ref.read(emulatorRepositoryProvider);
-  final updated = ref.read(autosaveControllerProvider).gatherState(emulator)
+  final repository = container.read(emulatorRepositoryProvider);
+  final updated = container
+      .read(autosaveControllerProvider)
+      .gatherState(emulator)
       .copyWith(emulatorPath: savePath);
 
   try {
     await repository.saveEmulator(updated, savePath);
-    ref.read(currentEmulatorProvider.notifier).state = updated;
-    ref.read(emulatorDirtyProvider.notifier).state = false;
+    container.read(currentEmulatorProvider.notifier).state = updated;
+    container.read(emulatorDirtyProvider.notifier).state = false;
     await repository.addToRecentEmulators(savePath, emulator.name);
-    ref.invalidate(recentEmulatorsProvider);
+    container.invalidate(recentEmulatorsProvider);
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Saved: $savePath')),
       );
     }
     return true;
-  } catch (e) {
+  } catch (e, st) {
+    stderr
+      ..writeln('[saveEmulatorAs] FAILED: $e')
+      ..writeln(st.toString());
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to save emulator: $e')),
@@ -360,26 +426,30 @@ String defaultSavePathFor(Emulator emulator) => p.join(
 /// directory, and attach it to [currentEmulatorProvider]. The repository
 /// handles filename collisions by appending a numeric suffix.
 Future<void> addDocumentToEmulator(BuildContext context, WidgetRef ref) async {
-  final emulator = ref.read(currentEmulatorProvider);
+  final container = ProviderScope.containerOf(context, listen: false);
+  final emulator = container.read(currentEmulatorProvider);
   if (emulator == null) return;
 
-  final sourcePath = await ref.read(fileSelectorProvider).openFile(
+  final sourcePath = await container.read(fileSelectorProvider).openFile(
         dialogTitle: 'Add document to project',
       );
   if (sourcePath == null) return;
   if (!context.mounted) return;
 
-  final repository = ref.read(emulatorRepositoryProvider);
+  final repository = container.read(emulatorRepositoryProvider);
   try {
     final entry = await repository.addDocument(emulator.id, sourcePath);
-    ref.read(currentEmulatorProvider.notifier).state = emulator.copyWith(
+    container.read(currentEmulatorProvider.notifier).state = emulator.copyWith(
       documents: [...emulator.documents, entry],
       modifiedAt: DateTime.now(),
     );
-    ref.read(emulatorDirtyProvider.notifier).state = true;
-    unawaited(ref.read(autosaveControllerProvider).trigger());
-    refreshRagIndexStatus(ref);
-  } catch (e) {
+    container.read(emulatorDirtyProvider.notifier).state = true;
+    unawaited(container.read(autosaveControllerProvider).trigger());
+    refreshRagIndexStatus(container);
+  } catch (e, st) {
+    stderr
+      ..writeln('[addDocumentToEmulator] FAILED: $e')
+      ..writeln(st.toString());
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to add document: $e')),
@@ -395,7 +465,8 @@ Future<void> removeDocumentFromEmulator(
   WidgetRef ref,
   DocumentEntry doc,
 ) async {
-  final emulator = ref.read(currentEmulatorProvider);
+  final container = ProviderScope.containerOf(context, listen: false);
+  final emulator = container.read(currentEmulatorProvider);
   if (emulator == null) return;
 
   final confirmed = await showDialog<bool>(
@@ -421,19 +492,22 @@ Future<void> removeDocumentFromEmulator(
   if (confirmed != true) return;
   if (!context.mounted) return;
 
-  final repository = ref.read(emulatorRepositoryProvider);
+  final repository = container.read(emulatorRepositoryProvider);
   try {
     await repository.removeDocument(emulator.id, doc.filename);
-    ref.read(currentEmulatorProvider.notifier).state = emulator.copyWith(
+    container.read(currentEmulatorProvider.notifier).state = emulator.copyWith(
       documents: emulator.documents
           .where((d) => d.filename != doc.filename)
           .toList(),
       modifiedAt: DateTime.now(),
     );
-    ref.read(emulatorDirtyProvider.notifier).state = true;
-    unawaited(ref.read(autosaveControllerProvider).trigger());
-    refreshRagIndexStatus(ref);
-  } catch (e) {
+    container.read(emulatorDirtyProvider.notifier).state = true;
+    unawaited(container.read(autosaveControllerProvider).trigger());
+    refreshRagIndexStatus(container);
+  } catch (e, st) {
+    stderr
+      ..writeln('[removeDocumentFromEmulator] FAILED: $e')
+      ..writeln(st.toString());
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to remove document: $e')),
@@ -462,7 +536,10 @@ Future<void> openDocument(
     } else {
       await Process.run('xdg-open', [path]);
     }
-  } catch (e) {
+  } catch (e, st) {
+    stderr
+      ..writeln('[openDocument] FAILED: $e')
+      ..writeln(st.toString());
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to open document: $e')),
@@ -567,10 +644,14 @@ Future<void> cancelRagIndex(BuildContext context, WidgetRef ref) async {
 /// Refresh the RAG card's status from the on-disk index. Cheap; safe to
 /// call after any mutation (doc add/remove, hook save, call-graph
 /// regen) so the card's staleness banner stays accurate.
-void refreshRagIndexStatus(WidgetRef ref) {
-  final emulator = ref.read(currentEmulatorProvider);
-  final index = ref.read(ragIndexProvider);
+///
+/// Takes a [ProviderContainer] (not a [WidgetRef]) so callers can keep
+/// invoking this after async operations that may have rebuilt their
+/// owning widget — see the ref-after-dispose comment on openEmulator.
+void refreshRagIndexStatus(ProviderContainer container) {
+  final emulator = container.read(currentEmulatorProvider);
+  final index = container.read(ragIndexProvider);
   if (emulator == null || index == null) return;
-  ref.read(ragIndexStatusProvider.notifier).state =
+  container.read(ragIndexStatusProvider.notifier).state =
       index.statusSnapshot(emulator);
 }

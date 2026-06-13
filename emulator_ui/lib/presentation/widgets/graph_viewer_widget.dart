@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:emulator_orchestrator/core/constants.dart';
@@ -96,6 +97,18 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
   Matrix4? _viewAnimEnd;
   var _focusOnSelect = true;
 
+  /// True while either Shift key is held down anywhere in the window.
+  /// Drives the Refresh / Regenerate button-label flip on the "stopped"
+  /// state — Shift turns the cheap in-memory refresh into a forced
+  /// artifact-DB invalidate + Ghidra re-extract.
+  bool _shiftHeld = false;
+
+  /// Mode captured when the user CLICKED the call-graph button — used
+  /// for the in-flight spinner label so it doesn't flip back to
+  /// "Refreshing…" if the user releases Shift mid-regeneration. Null
+  /// when no operation is in flight.
+  bool? _inFlightForce;
+
   @override
   void initState() {
     super.initState();
@@ -107,10 +120,12 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
       vsync: this,
       duration: const Duration(milliseconds: 400),
     )..addListener(_onViewAnimTick);
+    HardwareKeyboard.instance.addHandler(_onHardwareKey);
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onHardwareKey);
     _rippleTimer?.cancel();
     _rippleNotifier.dispose();
     _animationController.dispose();
@@ -118,6 +133,24 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     _transformationController.dispose();
     _focusNode.dispose();
     super.dispose();
+  }
+
+  /// Global key listener — fires for every keyboard event in the
+  /// window. We only care about Shift transitions; everything else
+  /// falls through (handler returns false so other listeners still
+  /// see the event).
+  bool _onHardwareKey(KeyEvent event) {
+    final isShift = event.logicalKey == LogicalKeyboardKey.shiftLeft ||
+        event.logicalKey == LogicalKeyboardKey.shiftRight;
+    if (!isShift) return false;
+    final held = HardwareKeyboard.instance.isLogicalKeyPressed(
+            LogicalKeyboardKey.shiftLeft) ||
+        HardwareKeyboard.instance
+            .isLogicalKeyPressed(LogicalKeyboardKey.shiftRight);
+    if (held != _shiftHeld && mounted) {
+      setState(() => _shiftHeld = held);
+    }
+    return false;
   }
 
   // Helper to calculate box dimensions for labeled box style
@@ -1660,11 +1693,25 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
       );
     }
 
-    // Stopped — CTA that regenerates the call graph from the ELF. While a
-    // regeneration is in flight (callgraphProvider is refreshing over an
-    // existing graph), surface a busy state so the click feels acknowledged.
-    final isRegenerating = ref.watch(callgraphProvider).isLoading;
-    if (isRegenerating) {
+    // Stopped — two-mode CTA:
+    //   - Default: "Refresh Call Graph" — drops the in-memory cache and
+    //     re-reads from callgraphProvider. Fast (effectively a no-op
+    //     when the Ghidra DB cache holds the same elfHash).
+    //   - Shift held: "Regenerate Call Graph" — additionally deletes
+    //     the artifact-DB cached row for this elfHash, forcing a
+    //     fresh Ghidra extraction. Minutes of work.
+    // The button's in-flight label tracks which mode is firing so the
+    // user knows whether they're waiting on a refresh or a regenerate.
+    final isInFlight = ref.watch(callgraphProvider).isLoading;
+    final force = _shiftHeld;
+    // While in-flight, use the mode captured at click time (so the
+    // spinner label doesn't flip when the user releases Shift during
+    // a regenerate); when idle, follow live Shift state so the user
+    // sees the prospective action before they click.
+    final inFlightAction =
+        (_inFlightForce ?? force) ? 'Regenerate' : 'Refresh';
+    final action = force ? 'Regenerate' : 'Refresh';
+    if (isInFlight) {
       return ElevatedButton.icon(
         onPressed: null,
         icon: const SizedBox(
@@ -1675,7 +1722,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
             color: Colors.white,
           ),
         ),
-        label: const Text('Regenerating...'),
+        label: Text('${inFlightAction}ing...'),
         style: ElevatedButton.styleFrom(
           backgroundColor: AppTheme.accent,
           foregroundColor: Colors.white,
@@ -1690,25 +1737,84 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
     }
     return _buildActionButton(
       icon: Icons.refresh,
-      label: 'Regenerate Call Graph',
+      label: '$action Call Graph',
       color: AppTheme.accent,
-      onPressed: () => _regenerateCallGraph(ref),
+      onPressed: () => _regenerateCallGraph(ref, force: force),
     );
   }
 
-  /// Force a fresh objdump extraction: clear the project's cached graph so
-  /// [callgraphProvider] won't return it, invalidate to re-run, then (once the
-  /// new graph lands) autosave. Waiting on the future ensures the
-  /// after-regeneration autosave fires only on a real regeneration.
-  Future<void> _regenerateCallGraph(WidgetRef ref) async {
-    final emu = ref.read(currentEmulatorProvider);
-    if (emu != null) {
-      ref.read(currentEmulatorProvider.notifier).state =
-          emu.copyWith(clearCachedCallGraph: true);
+  /// Two modes — selected by the [force] flag:
+  ///
+  /// - **force=false (Refresh)**: Drop the project's in-memory cached
+  ///   call graph and re-read from `callgraphProvider`. If the active
+  ///   call-graph source is `GhidraCallGraphSource`, this returns the
+  ///   artifact-DB cached row instantly (effectively a no-op when the
+  ///   ELF hash hasn't changed). Fast.
+  /// - **force=true (Regenerate)**: Before invalidating, also delete
+  ///   the `ghidra_call_graphs` cache row for the current elfHash via
+  ///   `CallGraphService.invalidateFor`. The next read misses the DB
+  ///   cache and `SignaturesService.extractFor` runs from scratch —
+  ///   minutes of work on a real ELF. Use when the cached analysis is
+  ///   suspected stale or wrong.
+  ///
+  /// For `DartCallGraphSource` (no MODULE_GHIDRA), there's no DB
+  /// cache to invalidate — every call already re-runs objdump — so
+  /// [force] is a no-op there.
+  ///
+  /// Captures a [ProviderContainer] up-front because the widget may be
+  /// rebuilt mid-await when currentEmulatorProvider changes — any
+  /// post-await `ref.read` on a disposed widget throws "Cannot use ref
+  /// after disposed" and gets silently swallowed without diagnostics.
+  Future<void> _regenerateCallGraph(
+    WidgetRef ref, {
+    required bool force,
+  }) async {
+    final container = ProviderScope.containerOf(context, listen: false);
+    final mode = force ? 'regenerate' : 'refresh';
+    // Capture the mode for the in-flight spinner label. Without this,
+    // if the user releases Shift after starting a regenerate, the
+    // button's live `_shiftHeld` flips to false and the spinner label
+    // shows "Refreshing..." for what's actually a minutes-long
+    // Ghidra re-extraction.
+    if (mounted) setState(() => _inFlightForce = force);
+    stderr.writeln('[$mode CallGraph] starting');
+    try {
+      final emu = container.read(currentEmulatorProvider);
+      if (force && emu?.elfFilePath != null) {
+        // Hash the ELF + drop the cached ghidra_call_graphs row so the
+        // next provider read misses and SignaturesService.extractFor
+        // runs fresh. extractFor delete-then-inserts all six Ghidra
+        // tables, so we only need to delete the call_graphs row here.
+        final service = container.read(artifactLibraryServiceProvider);
+        final cgService = container.read(callGraphServiceProvider);
+        try {
+          final elfHash = await service.hashElfFile(emu!.elfFilePath!);
+          final deleted = await cgService.invalidateFor(elfHash);
+          stderr.writeln(
+              '[regenerate CallGraph] invalidated artifact-DB cache: $deleted row(s) deleted for $elfHash');
+        } catch (e) {
+          stderr.writeln(
+              '[regenerate CallGraph] artifact-DB invalidate failed (continuing): $e');
+        }
+      }
+      if (emu != null) {
+        container.read(currentEmulatorProvider.notifier).state =
+            emu.copyWith(clearCachedCallGraph: true);
+      }
+      container.invalidate(callgraphProvider);
+      stderr.writeln('[$mode CallGraph] invalidated; awaiting fresh graph');
+      final result = await container.read(callgraphProvider.future);
+      stderr.writeln('[$mode CallGraph] graph ready: '
+          '${result?.symbols.length ?? 0} symbols');
+      await container.read(autosaveControllerProvider).trigger();
+      stderr.writeln('[$mode CallGraph] complete');
+    } catch (e, st) {
+      stderr
+        ..writeln('[$mode CallGraph] FAILED: $e')
+        ..writeln(st.toString());
+    } finally {
+      if (mounted) setState(() => _inFlightForce = null);
     }
-    ref.invalidate(callgraphProvider);
-    await ref.read(callgraphProvider.future);
-    await ref.read(autosaveControllerProvider).trigger();
   }
 
   /// Helper to build a simple action button (PAUSE, RESET)

@@ -19,6 +19,18 @@ class CallGraphService {
 
   final ArtifactDatabase db;
 
+  /// Delete the cached call-graph row for [elfHash]. Used by the UI's
+  /// "Regenerate Call Graph" path (shift-click) to force the next read
+  /// to miss and re-run `SignaturesService.extractFor` from scratch.
+  /// Side note: `extractFor` itself delete-then-inserts all six Ghidra
+  /// tables atomically, so removing only this row is enough to trigger
+  /// a clean re-extract of everything — the rest of the rows get
+  /// overwritten by the next extraction pass.
+  Future<int> invalidateFor(String elfHash) =>
+      (db.delete(db.ghidraCallGraphs)
+            ..where((t) => t.elfHash.equals(elfHash)))
+          .go();
+
   /// True iff a row exists in `ghidra_call_graphs` for [elfHash].
   Future<bool> hasCallGraphFor(String elfHash) async {
     final row = await (db.selectOnly(db.ghidraCallGraphs)

@@ -45,4 +45,17 @@ class RagIndexStatus {
     staleSourceCount: 0,
     inProgressPhase: null,
   );
+
+  /// Transient state set between "user clicked Open Project" and the
+  /// first [RagIndex.statusSnapshot] completing. Renders as a sync
+  /// icon + "Checking…" in the RAG card (via the existing
+  /// [isInProgress] branch) so the user doesn't see a "Never built"
+  /// flash for a project that actually has a built index.
+  static const checking = RagIndexStatus(
+    lastBuiltAt: null,
+    chunkCount: 0,
+    chunkCountsByKind: {},
+    staleSourceCount: 0,
+    inProgressPhase: 'Checking…',
+  );
 }
