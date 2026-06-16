@@ -5,10 +5,10 @@ a Renode platform description (`.repl`), it **classifies** the firmware's
 hardware-dependent functions, **scores** candidate Python hooks for each one,
 **generates** new hooks on demand with a local LLM, and **applies** them
 inside Renode through an iterative synthesis loop that records every
-decision in a per-run manifest. The output is a `.emu` project file with the
-resolved hooks, scoped Python globals, the call graph, and the manifest a
-downstream tool (or another LLM round) can read back to suggest the next
-iteration.
+decision in a per-run manifest. The output is a `.emu` project file
+carrying the resolved hooks, the scoped Python globals, the call graph,
+and the manifest — which downstream tooling (including the in-app LLM
+advisor) reads back to recommend changes for the next run.
 
 The orchestrator runs entirely in-process — there is no Python backend.
 [`renode-dart`](https://github.com/IoMT-Lab/renode-dart),
@@ -68,19 +68,21 @@ Supported targets: ARM (via `arm-none-eabi-objdump`) and x86_64 (via stock
                   │                │               │                │
         ┌─────────▼─────────┐  ┌───▼──────────┐ ┌──▼─────────────┐ ┌▼──────────────┐
         │  Dart engine      │  │  Ollama      │ │  Ghidra        │ │  Renode       │
-        │  (in-process):    │  │  (local      │ │  (subprocess;  │ │  portable     │
-        │  • renode-dart    │  │   HTTP /     │ │   MODULE_      │ │  (1.16.x;     │
-        │  • callgraph-dart │  │   NDJSON;    │ │   GHIDRA)      │ │   patched     │
-        │  • hooks-dart     │  │   MODULE_    │ │  Java 21+      │ │   build for   │
-        │  • signatures     │  │   LLM_…)     │ │                │ │   scope arg)  │
+        │  (in-process)     │  │  (optional)  │ │  (optional)    │ │  portable     │
+        │  • renode-dart    │  │              │ │                │ │  (1.16.x;     │
+        │  • callgraph-dart │  │  local HTTP  │ │  subprocess    │ │   patched     │
+        │  • hooks-dart     │  │  NDJSON      │ │  Java 21+      │ │   build for   │
+        │  • signatures     │  │  MODULE_LLM_ │ │  MODULE_GHIDRA │ │   scope arg)  │
+        │       │           │  │  HOOKGEN     │ │                │ │               │
         │       │           │  └──────────────┘ └────────────────┘ └───────────────┘
         │       └──────────────────── subprocess ──────────────────────┘
         └───────────────────┘
 ```
 
-Boxes drawn with dashed lines in your head — Ollama and Ghidra — are
-optional. Resect synthesizes firmware without them, just with less
-grounding context and no LLM-authored hooks.
+Without `MODULE_LLM_HOOKGEN` and `MODULE_GHIDRA`, Resect still
+synthesizes firmware — with fewer candidate sources (no LLM-authored
+hooks) and less grounding (no Ghidra decompilation in the RAG /
+classifier).
 
 ### Workspace layout
 
@@ -248,9 +250,10 @@ hook binding at a seeded fidelity:
 Each binding records its provenance as `classifier:rule-N-...`. The
 synthesizer's iteration sort weights the binding's fidelity over the
 artifact's intrinsic-score floor (`COALESCE(binding.fidelity,
-intrinsicScore)`). Classifier behaviour is independent of `MODULE_LLM`
-— with `MODULE_GHIDRA` off, the classifier has fewer decompiled bodies
-to consume and silently skips symbols it can't see into.
+intrinsicScore)`). The classifier itself doesn't depend on
+`MODULE_LLM_HOOKGEN`. With `MODULE_GHIDRA` off, fewer decompiled
+bodies are available and the classifier skips symbols it has no
+source for.
 
 ### Forced overrides + scope
 
@@ -265,7 +268,8 @@ only honored by the patched Renode portable**
 silently drops it.
 
 Fidelity-scored bindings carry the same `scope` field; when a binding
-wins a candidate selection, its scope rides into Renode with the hook.
+wins a candidate selection, its scope is sent to Renode alongside the
+hook body.
 
 ### Comms-bus virtualization (`MODULE_COMMS_BUS`)
 
@@ -369,9 +373,9 @@ scope}`, `decision_kind` (one of `forced_override`, `comms`,
 `iteration_index`, `previous_attempts[]`, optional `llm_invocation`
 telemetry.
 
-The manifest is built so downstream tools (or an LLM round) can
-consume it deterministically — it's the canonical record of "what
-synthesis did to this firmware."
+The manifest is the canonical record of what synthesis did to the
+firmware. The schema is stable enough that downstream tools — and the
+in-app LLM advisor — can consume it deterministically.
 
 ### Last Run insights
 
@@ -383,12 +387,12 @@ last-applied or failed symbol. Cached against the run's
 without re-running the LLM; the cache goes stale the moment a new run
 produces a new id.
 
-The advisory deliberately picks the **smallest installed Ollama model**
-(by on-disk size, via `/api/tags`) rather than the hook-gen default —
-the task is short enough that a 0.5B–1B model runs in seconds. Hidden
-behind `MODULE_LLM_HOOKGEN`; without the module, the Last Run card
-still shows the fidelity headline and surfaces an "enable the module
-for recommendations" hint.
+The advisory picks the **smallest installed Ollama model** (by on-disk
+size, via `/api/tags`) rather than the hook-gen default — the task is
+short enough that a 0.5B–1B model runs in seconds. Gated on
+`MODULE_LLM_HOOKGEN`; with the module off, the Last Run card still
+shows the fidelity headline and replaces the recommendation panel
+with a one-line hint pointing at the module flag.
 
 ### Fidelity metrics
 
