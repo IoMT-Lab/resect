@@ -24,6 +24,7 @@ import 'package:emulator_orchestrator/data/services/last_run_insight_service.dar
 import 'package:emulator_orchestrator/data/services/llm_client.dart';
 import 'package:emulator_orchestrator/data/services/llm_hook_generator.dart';
 import 'package:emulator_orchestrator/data/services/rag_index.dart';
+import 'package:emulator_orchestrator/data/services/recommendation_service.dart';
 import 'package:emulator_orchestrator/data/services/signatures_service.dart';
 import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
 import 'package:emulator_orchestrator/orchestrator/engine/call_graph_source.dart';
@@ -447,6 +448,17 @@ final llmClientProvider = Provider<LlmClient>((ref) {
 /// LLM's recommendation. Reads model + host from `llmClientProvider`.
 final lastRunInsightServiceProvider = Provider<LastRunInsightService>(
   (ref) => LastRunInsightService(llmClient: ref.watch(llmClientProvider)),
+);
+
+/// JSON-emitting LLM service used by the closed-loop auto-tune
+/// orchestrator. Reuses `LastRunInsightService.composePrompt` for
+/// the input context section so device-class additions land in
+/// both services when that work ships.
+final recommendationServiceProvider = Provider<RecommendationService>(
+  (ref) => RecommendationService(
+    llmClient: ref.watch(llmClientProvider),
+    insightService: ref.watch(lastRunInsightServiceProvider),
+  ),
 );
 
 /// LLM-generated advisory for the last successful synthesis run.

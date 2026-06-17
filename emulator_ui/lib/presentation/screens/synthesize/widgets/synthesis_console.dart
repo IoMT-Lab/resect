@@ -7,7 +7,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme.dart';
 import '../../../../providers/app_providers.dart';
 import '../../library/library_actions.dart';
+import '../llm_synthesis_orchestrator.dart';
 import '../synthesis_controller.dart';
+import 'auto_tune_config_dialog.dart';
+import 'auto_tune_modal.dart';
 import 'last_run_card.dart';
 import 'pre_synthesis_report.dart';
 import 'synthesis_report.dart';
@@ -117,16 +120,37 @@ class _IdleView extends ConsumerWidget {
                   if (_ready) const SizedBox(height: 14),
                   if (_ready) const LastRunCard(),
                   const SizedBox(height: 20),
-                  Center(
-                    child: ElevatedButton.icon(
-                      onPressed: _ready ? () => _launch(context, ref) : null,
-                      icon: const Icon(Icons.play_arrow, size: 18),
-                      label: const Text('Run Synthesis'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 24, vertical: 14),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed:
+                            _ready ? () => _launch(context, ref) : null,
+                        icon: const Icon(Icons.play_arrow, size: 18),
+                        label: const Text('Run Synthesis'),
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 24, vertical: 14),
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 12),
+                      Tooltip(
+                        message: emulator.emulatorPath == null
+                            ? 'Save the project first so snapshots can persist.'
+                            : 'LLM-orchestrated synthesis loop with per-round user review.',
+                        child: OutlinedButton.icon(
+                          onPressed: (_ready && emulator.emulatorPath != null)
+                              ? () => _launchAutoTune(context, ref)
+                              : null,
+                          icon: const Icon(Icons.auto_awesome, size: 18),
+                          label: const Text('Auto-tune'),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 20, vertical: 14),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -134,6 +158,28 @@ class _IdleView extends ConsumerWidget {
           ),
         ),
       );
+
+  Future<void> _launchAutoTune(BuildContext context, WidgetRef ref) async {
+    final config = await AutoTuneConfigDialog.show(context);
+    if (config == null || !context.mounted) return;
+    final container = ProviderScope.containerOf(context);
+    final orchestrator = LlmSynthesisOrchestrator(container);
+    final sessionFuture = orchestrator.runAutoTune(config);
+    // Surface the running session in the modal. The modal sits on top
+    // of the Synthesize tab and blocks interaction until terminated.
+    await AutoTuneModal.show(
+      context: context,
+      orchestrator: orchestrator,
+      sessionFuture: sessionFuture,
+    );
+    // Surface any uncaught error from the session.
+    try {
+      await sessionFuture;
+    } catch (e, st) {
+      debugPrint('[AutoTune] session error: $e\n$st');
+    }
+    orchestrator.dispose();
+  }
 
   Future<void> _launch(BuildContext context, WidgetRef ref) async {
     final controller = ref.read(synthesisControllerProvider);
