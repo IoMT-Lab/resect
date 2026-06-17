@@ -713,6 +713,17 @@ final hookOverrideScopesProvider =
 final hookBindingsProvider =
     StateProvider<Map<String, HookBinding>>((ref) => {});
 
+/// Synthesizer's per-run iteration cap. Pre-existing default of 10
+/// matches the orchestrator's `runSynthesizer` default. Exposed as a
+/// provider so the closed-loop LLM orchestrator's `AdjustIterationCap`
+/// recommendation can mutate it between rounds, and so the eventual
+/// auto-tune config dialog can surface it as a user-facing knob.
+///
+/// SynthesisController reads this when calling
+/// `orchestrator.runSynthesizer(...)` so changes take effect on the
+/// next synthesis run.
+final synthesisMaxIterationsProvider = StateProvider<int>((ref) => 10);
+
 /// Reactive [HookDecisionState] projection of the current project's
 /// overlays plus the live comms-protocol config. Consumed by the
 /// pre-synthesis report widget (and, eventually, the manifest builder

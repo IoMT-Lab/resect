@@ -4,6 +4,7 @@ import 'call_graph.dart';
 import 'comms_assignment.dart';
 import 'hook_binding.dart';
 import 'last_run_insight.dart';
+import 'round_snapshot.dart';
 import 'synthesizer_result.dart';
 
 /// Represents an emulator configuration containing firmware files, settings,
@@ -101,6 +102,23 @@ class Emulator {
   /// yet. See [LastRunInsight].
   final LastRunInsight? lastRunInsight;
 
+  /// History of closed-loop LLM auto-tune rounds. Ordered by round
+  /// number (round 0 is the baseline synthesis; rounds 1..N each
+  /// follow a user-reviewed batch of [Recommendation]s). FIFO-pruned
+  /// at [roundSnapshotCap] when [appendRoundSnapshot] is called.
+  /// Empty when no auto-tune session has run against this project.
+  final List<RoundSnapshot> roundSnapshots;
+
+  /// Maximum length of [roundSnapshots]. When an append would push
+  /// the list past this value the oldest snapshots are dropped FIFO
+  /// — see [appendRoundSnapshot]. Configurable per-project from the
+  /// auto-tune configuration dialog; default is [defaultSnapshotCap].
+  final int roundSnapshotCap;
+
+  /// Default cap on [roundSnapshots] length when the project hasn't
+  /// configured a custom value.
+  static const defaultSnapshotCap = 100;
+
   const Emulator({
     required this.id,
     required this.name,
@@ -119,6 +137,8 @@ class Emulator {
     this.executedSymbols = const {},
     this.commsAssignments = const {},
     this.lastRunInsight,
+    this.roundSnapshots = const [],
+    this.roundSnapshotCap = defaultSnapshotCap,
   });
 
   /// Create a new emulator with default values
@@ -181,6 +201,13 @@ class Emulator {
         <String, CommsAssignment>{};
     final lastRunInsightJson =
         json['last_run_insight'] as Map<String, dynamic>?;
+    final roundSnapshots = (json['round_snapshots'] as List<dynamic>?)
+            ?.map((e) =>
+                RoundSnapshot.fromJson(e as Map<String, dynamic>))
+            .toList() ??
+        const <RoundSnapshot>[];
+    final roundSnapshotCap =
+        json['round_snapshot_cap'] as int? ?? Emulator.defaultSnapshotCap;
 
     return Emulator(
       id: emulatorData['id'] as String,
@@ -209,6 +236,8 @@ class Emulator {
       lastRunInsight: lastRunInsightJson != null
           ? LastRunInsight.fromJson(lastRunInsightJson)
           : null,
+      roundSnapshots: roundSnapshots,
+      roundSnapshotCap: roundSnapshotCap,
     );
   }
 
@@ -241,6 +270,10 @@ class Emulator {
       if (commsAssignments.isNotEmpty)
         'comms_assignments': commsAssignments.map((k, v) => MapEntry(k, v.toJson())),
       if (lastRunInsight != null) 'last_run_insight': lastRunInsight!.toJson(),
+      if (roundSnapshots.isNotEmpty)
+        'round_snapshots': roundSnapshots.map((s) => s.toJson()).toList(),
+      if (roundSnapshotCap != defaultSnapshotCap)
+        'round_snapshot_cap': roundSnapshotCap,
       'ui_state': uiState.toJson(),
       'metadata': metadata,
     };
@@ -271,6 +304,8 @@ class Emulator {
     Map<String, CommsAssignment>? commsAssignments,
     LastRunInsight? lastRunInsight,
     bool clearLastRunInsight = false,
+    List<RoundSnapshot>? roundSnapshots,
+    int? roundSnapshotCap,
   }) => Emulator(
       id: id ?? this.id,
       name: name ?? this.name,
@@ -297,7 +332,51 @@ class Emulator {
       lastRunInsight: clearLastRunInsight
           ? null
           : (lastRunInsight ?? this.lastRunInsight),
+      roundSnapshots: roundSnapshots ?? this.roundSnapshots,
+      roundSnapshotCap: roundSnapshotCap ?? this.roundSnapshotCap,
     );
+
+  /// Most recent snapshot, or null when the auto-tune history is
+  /// empty.
+  RoundSnapshot? get latestSnapshot =>
+      roundSnapshots.isEmpty ? null : roundSnapshots.last;
+
+  /// Snapshot for the given round number, or null when no snapshot
+  /// is recorded for that round (e.g. it was pruned, or the round
+  /// number is from a future not-yet-run session).
+  RoundSnapshot? snapshotForRound(int round) {
+    for (final s in roundSnapshots) {
+      if (s.round == round) return s;
+    }
+    return null;
+  }
+
+  /// All snapshots that recorded the given synthesizer run. Typically
+  /// a singleton — each round's snapshot pairs with a unique run ID
+  /// — but the list shape leaves room for future branch-and-explore
+  /// where multiple snapshots could share a baseline run.
+  List<RoundSnapshot> snapshotsForRunId(String runId) =>
+      roundSnapshots
+          .where((s) => s.synthesizerRunId == runId)
+          .toList(growable: false);
+
+  /// Append [snapshot] to [roundSnapshots], FIFO-pruning to
+  /// [roundSnapshotCap]. Returns a copy of this [Emulator] with the
+  /// updated list; the original is left unchanged.
+  ///
+  /// If the cap is positive and the new length would exceed it, the
+  /// oldest snapshots are dropped from the front of the list until
+  /// the length equals the cap. A cap of 0 means "drop everything"
+  /// (the new snapshot is also dropped — degenerate but consistent);
+  /// a negative cap is treated as unlimited.
+  Emulator appendRoundSnapshot(RoundSnapshot snapshot) {
+    final next = [...roundSnapshots, snapshot];
+    final cap = roundSnapshotCap;
+    if (cap >= 0 && next.length > cap) {
+      next.removeRange(0, next.length - cap);
+    }
+    return copyWith(roundSnapshots: next);
+  }
 }
 
 /// A document file associated with an emulator project.

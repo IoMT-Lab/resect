@@ -13,10 +13,14 @@ import 'package:crypto/crypto.dart';
 /// override / comms / warm-start / binding / iteration fallback /
 /// LLM on-demand) and any prior failed attempts.
 ///
-/// Schema is versioned via [manifestVersion] — consumers should
-/// fail-fast on an unknown version rather than guess. v1 is the
-/// shipping shape sketched in the radiant-inventing-dream plan §4.3
-/// and the fields here should be treated as stable.
+/// **Schema versioning.** [manifestVersion] is bumped on additive
+/// shape changes; the parser accepts every published version it
+/// knows about. v1 (the original shipping shape) carried only
+/// decisions + a run-outcome block. v2 adds run-level metrics
+/// (`metrics`, `executedSymbols`, `timing`) alongside the existing
+/// fields, and an optional `autoTuneRound` on each
+/// [ManifestDecision]. v1 manifests load into the v2 reader with
+/// all new fields null; v2 manifests carry the new fields populated.
 class SynthesisManifest {
   const SynthesisManifest({
     required this.manifestVersion,
@@ -26,10 +30,14 @@ class SynthesisManifest {
     required this.result,
     required this.decisions,
     this.failedSymbol,
+    this.metrics,
+    this.executedSymbols,
+    this.timing,
   });
 
-  /// Schema version. Bump on incompatible shape changes; consumers
-  /// reject unknown versions.
+  /// Schema version. Bump on shape changes; the parser accepts every
+  /// version this build understands ([_supportedVersions]). Manifests
+  /// written by this build use [_currentManifestVersion].
   final int manifestVersion;
 
   /// SHA-256 of the firmware ELF this run targeted. Lets a future
@@ -58,6 +66,36 @@ class SynthesisManifest {
   /// forced override failed) — non-null iff `result.success == false`.
   final String? failedSymbol;
 
+  /// Run-level aggregate fidelity metrics (v2+). Populated by the
+  /// caller after the synthesizer returns, by running
+  /// [FidelityCalculator] against the manifest's decisions + the
+  /// run's executed symbols + the call graph. Null on v1 manifests
+  /// loaded from disk.
+  final ManifestMetrics? metrics;
+
+  /// Symbols the firmware actually reached during this run (v2+).
+  /// Subset of the call graph; used by the coverage-fidelity
+  /// computation and by the closed-loop orchestrator's progress
+  /// signal. Null on v1 manifests.
+  final List<String>? executedSymbols;
+
+  /// Optional per-iteration wall-clock timing (v2+). Each entry
+  /// captures one iteration of the synthesizer's main loop. Null
+  /// when not captured (cheap-build mode); populated when a richer
+  /// timing breakdown is asked for.
+  final List<IterationTiming>? timing;
+
+  /// Manifest versions this build can parse. The most recent
+  /// version in this set is what newly-built manifests are tagged
+  /// with ([_currentManifestVersion]).
+  static const _supportedVersions = {1, 2};
+  static const _currentManifestVersion = 2;
+
+  /// Version this build stamps onto new manifests. Exposed for the
+  /// manifest builder and tests; consumers should generally read
+  /// [manifestVersion] off a constructed manifest instead.
+  static int get currentVersion => _currentManifestVersion;
+
   Map<String, dynamic> toJson() => {
         'manifest_version': manifestVersion,
         'elf_hash': elfHash,
@@ -66,14 +104,18 @@ class SynthesisManifest {
         'result': result.toJson(),
         'decisions': decisions.map((d) => d.toJson()).toList(),
         if (failedSymbol != null) 'failed_symbol': failedSymbol,
+        if (metrics != null) 'metrics': metrics!.toJson(),
+        if (executedSymbols != null) 'executed_symbols': executedSymbols,
+        if (timing != null)
+          'timing': timing!.map((t) => t.toJson()).toList(),
       };
 
   factory SynthesisManifest.fromJson(Map<String, dynamic> json) {
     final version = json['manifest_version'] as int;
-    if (version != 1) {
+    if (!_supportedVersions.contains(version)) {
       throw FormatException(
         'Unsupported synthesis-manifest version: $version '
-        '(this build understands version 1).',
+        '(this build understands versions ${_supportedVersions.join(", ")}).',
       );
     }
     return SynthesisManifest(
@@ -88,8 +130,40 @@ class SynthesisManifest {
               ManifestDecision.fromJson(e as Map<String, dynamic>))
           .toList(),
       failedSymbol: json['failed_symbol'] as String?,
+      metrics: json['metrics'] == null
+          ? null
+          : ManifestMetrics.fromJson(json['metrics'] as Map<String, dynamic>),
+      executedSymbols: (json['executed_symbols'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList(),
+      timing: (json['timing'] as List<dynamic>?)
+          ?.map((e) => IterationTiming.fromJson(e as Map<String, dynamic>))
+          .toList(),
     );
   }
+
+  /// Return a copy of this manifest with the v2 enrichment fields
+  /// (`metrics`, `executedSymbols`, `timing`) populated. Used by the
+  /// synthesis caller after the workflow returns to fold in
+  /// [FidelityCalculator] output without re-building the rest of
+  /// the manifest.
+  SynthesisManifest withMetrics({
+    required ManifestMetrics metrics,
+    required List<String> executedSymbols,
+    List<IterationTiming>? timing,
+  }) =>
+      SynthesisManifest(
+        manifestVersion: manifestVersion,
+        elfHash: elfHash,
+        elfFileName: elfFileName,
+        synthesizerRunId: synthesizerRunId,
+        result: result,
+        decisions: decisions,
+        failedSymbol: failedSymbol,
+        metrics: metrics,
+        executedSymbols: executedSymbols,
+        timing: timing ?? this.timing,
+      );
 
   /// Format the manifest as pretty-printed JSON ready to write to
   /// disk. Uses a 2-space indent to keep diffs readable.
@@ -126,6 +200,89 @@ class ManifestRunResult {
       );
 }
 
+/// Run-level aggregate fidelity metrics (manifest v2+).
+///
+/// Produced by [FidelityCalculator] over the manifest's hooked symbols
+/// + the run's executed symbols + the project call graph, then folded
+/// into the manifest via [SynthesisManifest.withMetrics] before
+/// persistence. The closed-loop LLM orchestrator reads these directly
+/// instead of recomputing each round.
+class ManifestMetrics {
+  const ManifestMetrics({
+    required this.overallFidelity,
+    required this.coverageFidelity,
+    required this.subgraphFidelity,
+    required this.intactCount,
+    required this.degradedCount,
+    required this.hookedCount,
+  });
+
+  /// Overall weighted fidelity across the whole call graph. 0–1.
+  final double overallFidelity;
+
+  /// Fidelity averaged over only the functions traversed during this
+  /// run. Null if no traversal data was captured.
+  final double? coverageFidelity;
+
+  /// Fidelity averaged over only functions on paths between the
+  /// project's configured start/stop symbols. Null if start/stop are
+  /// not set on the project.
+  final double? subgraphFidelity;
+
+  /// Functions whose fidelity stayed at 1.0 after propagation.
+  final int intactCount;
+
+  /// Functions transitively affected (0.0 < fidelity < 1.0).
+  final int degradedCount;
+
+  /// Functions directly hooked (fidelity forced to efficacy, default 0.0).
+  final int hookedCount;
+
+  Map<String, dynamic> toJson() => {
+        'overall_fidelity': overallFidelity,
+        if (coverageFidelity != null) 'coverage_fidelity': coverageFidelity,
+        if (subgraphFidelity != null) 'subgraph_fidelity': subgraphFidelity,
+        'intact_count': intactCount,
+        'degraded_count': degradedCount,
+        'hooked_count': hookedCount,
+      };
+
+  factory ManifestMetrics.fromJson(Map<String, dynamic> json) =>
+      ManifestMetrics(
+        overallFidelity: (json['overall_fidelity'] as num).toDouble(),
+        coverageFidelity: (json['coverage_fidelity'] as num?)?.toDouble(),
+        subgraphFidelity: (json['subgraph_fidelity'] as num?)?.toDouble(),
+        intactCount: json['intact_count'] as int,
+        degradedCount: json['degraded_count'] as int,
+        hookedCount: json['hooked_count'] as int,
+      );
+}
+
+/// Per-iteration wall-clock timing (manifest v2+). Optional; null
+/// list means the caller chose not to capture per-iteration timing
+/// for this run.
+class IterationTiming {
+  const IterationTiming({
+    required this.iterationIndex,
+    required this.wallClockSeconds,
+  });
+
+  final int iterationIndex;
+  final double wallClockSeconds;
+
+  Map<String, dynamic> toJson() => {
+        'iteration_index': iterationIndex,
+        'wall_clock_seconds': wallClockSeconds,
+      };
+
+  factory IterationTiming.fromJson(Map<String, dynamic> json) =>
+      IterationTiming(
+        iterationIndex: json['iteration_index'] as int,
+        wallClockSeconds:
+            (json['wall_clock_seconds'] as num).toDouble(),
+      );
+}
+
 /// One decision made by the synthesizer for one symbol during one run.
 ///
 /// The fields shadow [HookDecision] plus runtime-only data
@@ -142,6 +299,7 @@ class ManifestDecision {
     this.iterationIndex,
     this.previousAttempts,
     this.llmInvocation,
+    this.autoTuneRound,
   });
 
   final String symbol;
@@ -174,6 +332,12 @@ class ManifestDecision {
   /// LLM telemetry for `llm_on_demand` decisions; null otherwise.
   final LlmInvocation? llmInvocation;
 
+  /// When this decision was driven by an overlay change the
+  /// closed-loop LLM orchestrator wrote during a specific auto-tune
+  /// round, the round index lands here. Null for decisions outside
+  /// auto-tune sessions or for the baseline (round 0) run.
+  final int? autoTuneRound;
+
   Map<String, dynamic> toJson() => {
         'symbol': symbol,
         'applied_hook': appliedHook.toJson(),
@@ -186,6 +350,7 @@ class ManifestDecision {
           'previous_attempts':
               previousAttempts!.map((p) => p.toJson()).toList(),
         if (llmInvocation != null) 'llm_invocation': llmInvocation!.toJson(),
+        if (autoTuneRound != null) 'auto_tune_round': autoTuneRound,
       };
 
   factory ManifestDecision.fromJson(Map<String, dynamic> json) =>
@@ -206,6 +371,7 @@ class ManifestDecision {
             ? null
             : LlmInvocation.fromJson(
                 json['llm_invocation'] as Map<String, dynamic>),
+        autoTuneRound: json['auto_tune_round'] as int?,
       );
 }
 

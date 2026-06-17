@@ -3,7 +3,9 @@ import 'dart:io';
 
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart';
+import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
 import 'package:emulator_orchestrator/data/models/trace_activity_event.dart';
+import 'package:emulator_orchestrator/data/services/fidelity_calculator.dart';
 import 'package:emulator_orchestrator/data/services/llm_hook_generator.dart'
     show PlatformFacts;
 import 'package:emulator_orchestrator/orchestrator/events/orchestrator_events.dart';
@@ -122,6 +124,7 @@ class SynthesisController {
       memoryMapPath: config.memoryMapPath,
       llmGenerator: llmGenerator,
       platform: platform,
+      maxIterations: ref.read(synthesisMaxIterationsProvider),
     );
   }
 
@@ -296,7 +299,7 @@ class SynthesisController {
           countdownStart: DateTime.now(),
         );
       } else if (event is SynthesizerCompleted) {
-        final result = event.result;
+        final result = _enrichManifest(event.result);
         ref.read(synthesisResultProvider.notifier).state = result;
         ref.read(synthesisProgressProvider.notifier).state = current.copyWith(
           complete: true,
@@ -338,6 +341,77 @@ class SynthesisController {
   }
 
   void dispose() => _cancelSubscriptions();
+
+  /// Fold run-level fidelity metrics + executed-symbols into the
+  /// manifest carried by [result] (manifest v2 enrichment).
+  ///
+  /// The synthesizer builds a v2 manifest with `metrics`, `executedSymbols`,
+  /// and `timing` all null because the workflow doesn't have call-graph
+  /// access. The controller computes [FidelityResult] from the current
+  /// call graph + executed-symbols-provider state + the manifest's hooked
+  /// symbols, then folds the resulting [ManifestMetrics] into the manifest
+  /// via [SynthesisManifest.withMetrics]. Subsequent disk write +
+  /// `synthesisResultProvider` consumers see the enriched manifest.
+  ///
+  /// Returns [result] unchanged when the manifest is null (legacy test
+  /// path) or the call graph isn't loaded — in either case the v2
+  /// enrichment fields stay null and downstream code falls back to
+  /// recomputing as needed.
+  SynthesizerResult _enrichManifest(SynthesizerResult result) {
+    final manifest = result.manifest;
+    if (manifest == null) return result;
+
+    final callGraph = ref.read(callgraphProvider).valueOrNull;
+    if (callGraph == null) return result;
+
+    final executedSymbols = ref.read(executedSymbolsProvider);
+    final currentEmulator = ref.read(currentEmulatorProvider);
+    final startFrom = currentEmulator?.emulationConfig.startFrom;
+    final endAt = currentEmulator?.emulationConfig.endAt;
+
+    Set<String> subgraphSymbols = const {};
+    if (startFrom != null &&
+        startFrom.isNotEmpty &&
+        endAt != null &&
+        endAt.isNotEmpty) {
+      subgraphSymbols = FidelityCalculator.subgraphBetween(
+        callGraph,
+        startFrom,
+        endAt.first,
+      ).union(executedSymbols);
+    }
+
+    final fidelity = FidelityCalculator.compute(
+      callGraph: callGraph,
+      hookedSymbols: result.resolvedHooks.keys.toSet(),
+      traversedSymbols: executedSymbols,
+      subgraphSymbols: subgraphSymbols,
+    );
+
+    final metrics = ManifestMetrics(
+      overallFidelity: fidelity.overallFidelity,
+      coverageFidelity: fidelity.coverageFidelity,
+      subgraphFidelity: fidelity.subgraphFidelity,
+      intactCount: fidelity.intactFunctions,
+      degradedCount: fidelity.degradedFunctions,
+      hookedCount: fidelity.hookedFunctions,
+    );
+
+    final enrichedManifest = manifest.withMetrics(
+      metrics: metrics,
+      executedSymbols: executedSymbols.toList()..sort(),
+    );
+
+    return SynthesizerResult(
+      success: result.success,
+      totalIterations: result.totalIterations,
+      resolvedHooks: result.resolvedHooks,
+      resolvedHookCode: result.resolvedHookCode,
+      failedSymbol: result.failedSymbol,
+      totalDuration: result.totalDuration,
+      manifest: enrichedManifest,
+    );
+  }
 
   /// Write [manifest] to `<projectDir>/manifests/<run_id>.json`,
   /// creating the directory if needed. Best-effort: any I/O error is

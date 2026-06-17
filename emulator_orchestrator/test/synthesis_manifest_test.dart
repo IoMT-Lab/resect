@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart';
+import 'package:emulator_orchestrator/orchestrator/manifest_builder.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -156,6 +157,328 @@ void main() {
       final reparsed = SynthesisManifest.fromJson(
           jsonDecode(pretty) as Map<String, dynamic>);
       expect(reparsed.decisions.length, 5);
+    });
+  });
+
+  group('SynthesisManifest v2 schema', () {
+    SynthesisManifest v2Sample() => SynthesisManifest(
+          manifestVersion: SynthesisManifest.currentVersion,
+          elfHash: 'abc123',
+          elfFileName: 'aya_ppg.elf',
+          synthesizerRunId: '2026-06-17T10:00:00.000',
+          result: const ManifestRunResult(
+            success: true,
+            totalIterations: 4,
+            durationSeconds: 12.5,
+          ),
+          decisions: [
+            ManifestDecision(
+              symbol: 'HAL_GetTick',
+              appliedHook: AppliedHook(
+                artifactId: 12,
+                bodyHash: List.filled(64, 'a').join(),
+              ),
+              decisionKind: ManifestDecisionKind.binding,
+              decisionSource: 'classifier:rule-3-counter-global',
+              fidelityAtDecision: 0.5,
+              iterationIndex: 0,
+              autoTuneRound: 2,
+            ),
+          ],
+          metrics: const ManifestMetrics(
+            overallFidelity: 0.74,
+            coverageFidelity: 0.82,
+            subgraphFidelity: 0.91,
+            intactCount: 120,
+            degradedCount: 22,
+            hookedCount: 8,
+          ),
+          executedSymbols: const ['Reset_Handler', 'main', 'HAL_GetTick'],
+          timing: const [
+            IterationTiming(iterationIndex: 0, wallClockSeconds: 3.1),
+            IterationTiming(iterationIndex: 1, wallClockSeconds: 4.4),
+          ],
+        );
+
+    test('currentVersion is 2', () {
+      expect(SynthesisManifest.currentVersion, 2);
+    });
+
+    test('v2 manifest with all enrichment fields round-trips', () {
+      final original = v2Sample();
+      final encoded = jsonEncode(original.toJson());
+      final decoded = SynthesisManifest.fromJson(
+          jsonDecode(encoded) as Map<String, dynamic>);
+
+      expect(decoded.manifestVersion, 2);
+      expect(decoded.metrics, isNotNull);
+      expect(decoded.metrics!.overallFidelity, original.metrics!.overallFidelity);
+      expect(decoded.metrics!.coverageFidelity, original.metrics!.coverageFidelity);
+      expect(decoded.metrics!.subgraphFidelity, original.metrics!.subgraphFidelity);
+      expect(decoded.metrics!.intactCount, original.metrics!.intactCount);
+      expect(decoded.metrics!.degradedCount, original.metrics!.degradedCount);
+      expect(decoded.metrics!.hookedCount, original.metrics!.hookedCount);
+      expect(decoded.executedSymbols, original.executedSymbols);
+      expect(decoded.timing?.length, 2);
+      expect(decoded.timing![0].iterationIndex, 0);
+      expect(decoded.timing![0].wallClockSeconds, 3.1);
+      expect(decoded.decisions.first.autoTuneRound, 2);
+    });
+
+    test('v2 manifest with no enrichment leaves new fields null', () {
+      final bare = SynthesisManifest(
+        manifestVersion: SynthesisManifest.currentVersion,
+        elfHash: 'h',
+        elfFileName: 'f.elf',
+        synthesizerRunId: 'r',
+        result: const ManifestRunResult(
+            success: true, totalIterations: 0, durationSeconds: 0.0),
+        decisions: const [],
+      );
+      final encoded = jsonEncode(bare.toJson());
+      final decoded = SynthesisManifest.fromJson(
+          jsonDecode(encoded) as Map<String, dynamic>);
+      expect(decoded.metrics, isNull);
+      expect(decoded.executedSymbols, isNull);
+      expect(decoded.timing, isNull);
+    });
+
+    test('v1 manifest (no enrichment keys) loads in the v2 reader', () {
+      // Hand-crafted v1 JSON — what a manifest written by the prior
+      // build would look like on disk. The v2 reader must accept it.
+      final v1Json = {
+        'manifest_version': 1,
+        'elf_hash': 'abc',
+        'elf_file_name': 'old.elf',
+        'synthesizer_run_id': '2026-03-01T00:00:00.000',
+        'result': {
+          'success': true,
+          'total_iterations': 5,
+          'duration_seconds': 30.0,
+        },
+        'decisions': [
+          {
+            'symbol': 'HAL_GetTick',
+            'applied_hook': {
+              'artifact_id': 12,
+              'body_hash': List.filled(64, 'a').join(),
+            },
+            'decision_kind': 'binding',
+            'decision_source': 'classifier:rule-3-counter-global',
+            'fidelity_at_decision': 0.5,
+            'iteration_index': 0,
+          },
+        ],
+      };
+      final decoded = SynthesisManifest.fromJson(v1Json);
+      expect(decoded.manifestVersion, 1);
+      expect(decoded.metrics, isNull);
+      expect(decoded.executedSymbols, isNull);
+      expect(decoded.timing, isNull);
+      expect(decoded.decisions.single.autoTuneRound, isNull);
+      expect(decoded.decisions.single.symbol, 'HAL_GetTick');
+    });
+
+    test('withMetrics produces a copy with enrichment populated', () {
+      final bare = SynthesisManifest(
+        manifestVersion: SynthesisManifest.currentVersion,
+        elfHash: 'h',
+        elfFileName: 'f.elf',
+        synthesizerRunId: 'r',
+        result: const ManifestRunResult(
+            success: true, totalIterations: 0, durationSeconds: 0.0),
+        decisions: const [],
+      );
+      final enriched = bare.withMetrics(
+        metrics: const ManifestMetrics(
+          overallFidelity: 0.5,
+          coverageFidelity: 0.6,
+          subgraphFidelity: 0.7,
+          intactCount: 1,
+          degradedCount: 2,
+          hookedCount: 3,
+        ),
+        executedSymbols: const ['main'],
+      );
+      expect(bare.metrics, isNull); // original untouched
+      expect(enriched.metrics, isNotNull);
+      expect(enriched.metrics!.overallFidelity, 0.5);
+      expect(enriched.executedSymbols, ['main']);
+      // Other fields preserved.
+      expect(enriched.elfHash, bare.elfHash);
+      expect(enriched.synthesizerRunId, bare.synthesizerRunId);
+    });
+  });
+
+  group('buildManifest reliable creation', () {
+    Map<String, List<ManifestAttempt>> successAttempts() => {
+          'HAL_GetTick': [
+            ManifestAttempt(
+              code: 'return 42',
+              kind: ManifestDecisionKind.binding,
+              source: 'classifier:rule-3-counter-global',
+              artifactId: 12,
+              fidelity: 0.5,
+              iterationIndex: 0,
+            ),
+          ],
+          'app_main': [
+            ManifestAttempt(
+              code: 'return 0',
+              kind: ManifestDecisionKind.iterationFallback,
+              source: 'default_template:#5',
+              artifactId: 5,
+              fidelity: 0.0,
+              iterationIndex: 1,
+            ),
+          ],
+        };
+
+    test('success path: manifest carries all decisions, no failed_symbol',
+        () {
+      final manifest = buildManifest(
+        elfHash: 'abc',
+        elfFileName: 'f.elf',
+        runId: 'r',
+        success: true,
+        totalIterations: 4,
+        duration: const Duration(milliseconds: 12500),
+        failedSymbol: null,
+        attempts: successAttempts(),
+      );
+      expect(manifest, isNotNull);
+      expect(manifest.manifestVersion, SynthesisManifest.currentVersion);
+      expect(manifest.result.success, isTrue);
+      expect(manifest.result.totalIterations, 4);
+      expect(manifest.failedSymbol, isNull);
+      expect(manifest.decisions.length, 2);
+      // Sorted by symbol name.
+      expect(manifest.decisions[0].symbol, 'HAL_GetTick');
+      expect(manifest.decisions[1].symbol, 'app_main');
+    });
+
+    test('exhausted-symbol failure: failed_symbol populated, prior attempts kept',
+        () {
+      final attempts = {
+        'StuckSymbol': [
+          ManifestAttempt(
+            code: 'return 0',
+            kind: ManifestDecisionKind.iterationFallback,
+            source: 'default_template:#1',
+            artifactId: 1,
+            iterationIndex: 0,
+          ),
+          ManifestAttempt(
+            code: 'return 1',
+            kind: ManifestDecisionKind.iterationFallback,
+            source: 'default_template:#2',
+            artifactId: 2,
+            iterationIndex: 1,
+          ),
+        ],
+      };
+      final manifest = buildManifest(
+        elfHash: 'abc',
+        elfFileName: 'f.elf',
+        runId: 'r',
+        success: false,
+        totalIterations: 2,
+        duration: const Duration(seconds: 5),
+        failedSymbol: 'StuckSymbol',
+        attempts: attempts,
+      );
+      expect(manifest.result.success, isFalse);
+      expect(manifest.failedSymbol, 'StuckSymbol');
+      // Last attempt becomes applied_hook; earlier becomes previous_attempts.
+      final d = manifest.decisions.single;
+      expect(d.appliedHook.artifactId, 2);
+      expect(d.previousAttempts, isNotNull);
+      expect(d.previousAttempts!.length, 1);
+      expect(d.previousAttempts!.first.artifactId, 1);
+    });
+
+    test('max-iterations exit: success=false, no failed_symbol, attempts intact',
+        () {
+      final manifest = buildManifest(
+        elfHash: 'abc',
+        elfFileName: 'f.elf',
+        runId: 'r',
+        success: false,
+        totalIterations: 10,
+        duration: const Duration(seconds: 60),
+        failedSymbol: null,
+        attempts: successAttempts(),
+      );
+      expect(manifest.result.success, isFalse);
+      expect(manifest.failedSymbol, isNull);
+      expect(manifest.result.totalIterations, 10);
+      expect(manifest.decisions.length, 2);
+    });
+
+    test('cancellation exit: partial attempts produce a valid manifest', () {
+      // User cancelled after one hook landed; only one symbol's attempt
+      // captured.
+      final attempts = {
+        'EarlySymbol': [
+          ManifestAttempt(
+            code: 'return 0',
+            kind: ManifestDecisionKind.binding,
+            source: 'classifier:rule-1-empty-or-void-return',
+            artifactId: 3,
+            fidelity: 0.25,
+            iterationIndex: 0,
+          ),
+        ],
+      };
+      final manifest = buildManifest(
+        elfHash: 'abc',
+        elfFileName: 'f.elf',
+        runId: 'r',
+        success: false,
+        totalIterations: 1,
+        duration: const Duration(seconds: 2),
+        failedSymbol: null,
+        attempts: attempts,
+      );
+      expect(manifest.decisions.length, 1);
+      expect(manifest.decisions.single.symbol, 'EarlySymbol');
+    });
+
+    test('empty attempts: manifest still builds with zero decisions', () {
+      // Synthesis crashed before any hook was tried. The manifest must
+      // still exist so `result.manifest != null` holds and the auto-tune
+      // orchestrator can snapshot the failed round.
+      final manifest = buildManifest(
+        elfHash: 'abc',
+        elfFileName: 'f.elf',
+        runId: 'r',
+        success: false,
+        totalIterations: 0,
+        duration: Duration.zero,
+        failedSymbol: null,
+        attempts: const {},
+      );
+      expect(manifest, isNotNull);
+      expect(manifest.decisions, isEmpty);
+      expect(manifest.result.success, isFalse);
+      expect(manifest.result.totalIterations, 0);
+    });
+
+    test('every built manifest stamps the current version', () {
+      // Regression guard: a manifest built fresh always claims v2 (or
+      // whatever the current version is). Old code paths that hardcoded
+      // version=1 would surface here.
+      final manifest = buildManifest(
+        elfHash: 'abc',
+        elfFileName: 'f.elf',
+        runId: 'r',
+        success: true,
+        totalIterations: 0,
+        duration: Duration.zero,
+        failedSymbol: null,
+        attempts: const {},
+      );
+      expect(manifest.manifestVersion, SynthesisManifest.currentVersion);
     });
   });
 }

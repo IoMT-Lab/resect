@@ -14,6 +14,7 @@ import '../engine/emulation_controller.dart';
 import '../engine/paused_event.dart';
 import '../events/synthesizer_events.dart';
 import '../hook_spec.dart';
+import '../manifest_builder.dart';
 
 /// Automated hook substitution workflow for emulator creation.
 ///
@@ -96,8 +97,8 @@ class SynthesizerWorkflow {
     // iteration adds another entry per attempt. At result time the
     // LAST entry becomes the applied_hook and the earlier ones become
     // previous_attempts.
-    final attempts = <String, List<_ManifestAttempt>>{};
-    void recordAttempt(String symbol, _ManifestAttempt a) =>
+    final attempts = <String, List<ManifestAttempt>>{};
+    void recordAttempt(String symbol, ManifestAttempt a) =>
         (attempts[symbol] ??= []).add(a);
     final runStart = DateTime.now();
     final runId = runStart.toIso8601String();
@@ -115,7 +116,7 @@ class SynthesizerWorkflow {
       required bool success,
       String? failedSymbol,
     }) {
-      final manifest = _buildManifest(
+      final manifest = buildManifest(
         elfHash: elfHash,
         elfFileName: elfFileName,
         runId: runId,
@@ -152,7 +153,7 @@ class SynthesizerWorkflow {
         overriddenSymbols.add(entry.key);
         recordAttempt(
             entry.key,
-            _ManifestAttempt(
+            ManifestAttempt(
               code: artifact.artifactData,
               kind: ManifestDecisionKind.forcedOverride,
               source: 'user.hookOverrides',
@@ -177,7 +178,7 @@ class SynthesizerWorkflow {
       overriddenSymbols.add(entry.key);
       recordAttempt(
           entry.key,
-          _ManifestAttempt(
+          ManifestAttempt(
             code: entry.value.code,
             kind: ManifestDecisionKind.comms,
             source: 'comms:${entry.value.scope ?? "unscoped"}',
@@ -194,7 +195,7 @@ class SynthesizerWorkflow {
         hookMap[entry.key] = hookName;
         recordAttempt(
             entry.key,
-            _ManifestAttempt(
+            ManifestAttempt(
               code: entry.value,
               kind: ManifestDecisionKind.warmStart,
               source: 'warm_start',
@@ -441,7 +442,7 @@ class SynthesizerWorkflow {
         }
         recordAttempt(
             symbol,
-            _ManifestAttempt(
+            ManifestAttempt(
               code: hookCode,
               kind: attemptKind,
               source: attemptSource,
@@ -718,89 +719,6 @@ class SynthesizerWorkflow {
   }
 }
 
-
-/// Per-symbol, per-attempt scratchpad the manifest builder uses.
-/// One of these gets recorded each time the synthesizer applies a
-/// hook to a symbol (pre-seeded or iteration-driven). The last
-/// entry in a symbol's list becomes the manifest's `applied_hook`;
-/// earlier entries become `previous_attempts`.
-class _ManifestAttempt {
-  _ManifestAttempt({
-    required this.code,
-    required this.kind,
-    required this.source,
-    this.artifactId,
-    this.scope,
-    this.fidelity,
-    this.iterationIndex,
-    this.llmInvocation,
-  });
-
-  final String code;
-  final ManifestDecisionKind kind;
-  final String source;
-  final int? artifactId;
-  final String? scope;
-  final double? fidelity;
-  final int? iterationIndex;
-  final LlmInvocation? llmInvocation;
-}
-
-/// Build a [SynthesisManifest] from the recorded per-symbol attempts.
-SynthesisManifest _buildManifest({
-  required String elfHash,
-  required String elfFileName,
-  required String runId,
-  required bool success,
-  required int totalIterations,
-  required Duration duration,
-  required String? failedSymbol,
-  required Map<String, List<_ManifestAttempt>> attempts,
-}) {
-  final decisions = <ManifestDecision>[];
-  final symbols = attempts.keys.toList()..sort();
-  for (final symbol in symbols) {
-    final list = attempts[symbol]!;
-    if (list.isEmpty) continue;
-    final applied = list.last;
-    final priors = list.length > 1
-        ? list
-            .sublist(0, list.length - 1)
-            .map((a) => PreviousAttempt(
-                  artifactId: a.artifactId ?? -1,
-                  outcome: 'unhandled_access_repeat',
-                ))
-            .toList()
-        : null;
-    decisions.add(ManifestDecision(
-      symbol: symbol,
-      appliedHook: AppliedHook(
-        artifactId: applied.artifactId,
-        bodyHash: AppliedHook.hashBody(applied.code),
-        scope: applied.scope,
-      ),
-      decisionKind: applied.kind,
-      decisionSource: applied.source,
-      fidelityAtDecision: applied.fidelity,
-      iterationIndex: applied.iterationIndex,
-      previousAttempts: priors,
-      llmInvocation: applied.llmInvocation,
-    ));
-  }
-  return SynthesisManifest(
-    manifestVersion: 1,
-    elfHash: elfHash,
-    elfFileName: elfFileName,
-    synthesizerRunId: runId,
-    result: ManifestRunResult(
-      success: success,
-      totalIterations: totalIterations,
-      durationSeconds: duration.inMilliseconds / 1000.0,
-    ),
-    decisions: decisions,
-    failedSymbol: failedSymbol,
-  );
-}
 
 /// Exception thrown when synthesizer operations fail.
 class SynthesizerException implements Exception {
