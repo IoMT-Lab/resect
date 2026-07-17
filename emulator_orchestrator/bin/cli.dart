@@ -21,7 +21,9 @@ import 'package:emulator_orchestrator/data/services/rag_index.dart';
 import 'package:emulator_orchestrator/data/services/recommendation_service.dart';
 import 'package:emulator_orchestrator/orchestrator/auto_tune_engine.dart';
 import 'package:emulator_orchestrator/orchestrator/auto_tune_report_writer.dart';
+import 'package:emulator_orchestrator/orchestrator/comms/comms_bus_service.dart';
 import 'package:emulator_orchestrator/orchestrator/comms/comms_config.dart';
+import 'package:emulator_orchestrator/orchestrator/comms/device_handler.dart';
 import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
 import 'package:emulator_orchestrator/orchestrator/engine/dart/dart_engine.dart';
 
@@ -466,6 +468,7 @@ Future<void> _runAutotune(Map<String, String> flags) async {
   );
 
   final orchestrator = _createOrchestrator();
+  final commsBus = CommsBusService();
 
   try {
     await orchestrator.engineLifecycle.start(engineDir: engineDir);
@@ -535,6 +538,25 @@ Future<void> _runAutotune(Map<String, String> flags) async {
           '${commsClasses.map((c) => c.name).join('/')}');
     }
 
+    // Start the comms-bus UDP server the forwarding hooks talk to. The
+    // i2c/uart read hooks send each read to localhost:<port> and BLOCK
+    // on the reply — without a server listening, the first real read in
+    // the firmware wedges Renode (and the whole synthesis loop) forever.
+    // ZeroDeviceHandler answers every read with zeros so execution
+    // proceeds. Mirrors the UI's CommsBusController.
+    for (final c in commsClasses) {
+      final port = commsPorts[c] ?? 1234;
+      try {
+        await commsBus.start(c, port, const ZeroDeviceHandler());
+        stderr.writeln('Comms bus: ${c.name} server on udp/$port '
+            '(zero-fill)');
+      } on PortInUseException catch (e) {
+        stderr.writeln('Comms bus: ${c.name} port $port unavailable ($e); '
+            'reads on this protocol will block — kill the stale server or '
+            'pick another port.');
+      }
+    }
+
     // One synthesis per round: reset + reload for a clean machine, run
     // the synthesizer with the round's overlays, then enrich the result
     // with metrics + executed symbols (the engine reads those back).
@@ -582,6 +604,13 @@ Future<void> _runAutotune(Map<String, String> flags) async {
           executedSymbols: executed,
           subgraphSymbols: subgraph,
         );
+      } catch (e) {
+        // A synthesis error (e.g. the engine went unresponsive and the
+        // per-op timeout fired) → return null so the engine finishes
+        // the session with `synthesisError` and still writes a report,
+        // instead of the exception aborting the whole process.
+        stderr.writeln('[autotune] synthesis error in round $round: $e');
+        return null;
       } finally {
         await sub.cancel();
       }
@@ -654,6 +683,7 @@ Future<void> _runAutotune(Map<String, String> flags) async {
     ragIndex.close();
   } finally {
     client.close();
+    await commsBus.dispose();
     try {
       await orchestrator.resetEmulation();
     } catch (_) {}

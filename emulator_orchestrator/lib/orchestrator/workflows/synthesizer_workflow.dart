@@ -38,6 +38,16 @@ import '../manifest_builder.dart';
 /// global floor is a stopgap.
 const _kLlmEngageMinScore = 0.5;
 
+/// Per-operation ceiling on a single Renode control round-trip
+/// (reset / load / defineHook / mapHooks / start). Normal ops are
+/// sub-second to a few seconds; this only trips when the engine has
+/// stopped responding. It is a SAFETY NET, not a correctness fix — the
+/// real cause of a comms-read wedge is a missing bus server (see the
+/// CLI's CommsBusService wiring). Without this net, though, any future
+/// unresponsive-engine bug would hang the loop forever instead of
+/// failing the round. Generous so it never false-trips a slow load.
+const _kRenodeOpTimeout = Duration(seconds: 60);
+
 /// True when no specialized candidate (effective score >= [minScore])
 /// remains to try at [nextIndex] in the score-DESC candidate list —
 /// i.e. the symbol's appropriate hooks are used up and it's time to
@@ -250,25 +260,30 @@ class SynthesizerWorkflow {
         // Reset state and reload firmware for a clean CPU state on every
         // iteration (including the first) — emulationWorkflow.start() may
         // have already paused execution mid-firmware.
-        await emulationController.reset();
+        await _renodeOp('reset', () => emulationController.reset());
         await Future.delayed(const Duration(milliseconds: 500));
         await _loadFirmwareWithRetry(baseImagePath, elfPath);
 
         if (memoryMapPath != null && memoryMapPath.isNotEmpty) {
-          await emulationController.loadMemoryMap(memoryMapPath);
+          await _renodeOp('loadMemoryMap',
+              () => emulationController.loadMemoryMap(memoryMapPath));
         }
 
         // (Re)define all hook code (including pre-seeded overrides on iter 1)
         for (final entry in definedHooks.entries) {
-          await emulationController.defineHook(
-            entry.key,
-            entry.value,
-            scope: hookScopes[entry.key],
+          await _renodeOp(
+            'defineHook ${entry.key}',
+            () => emulationController.defineHook(
+              entry.key,
+              entry.value,
+              scope: hookScopes[entry.key],
+            ),
           );
         }
 
         if (hookMap.isNotEmpty) {
-          await emulationController.mapHooks(hookMap);
+          await _renodeOp(
+              'mapHooks', () => emulationController.mapHooks(hookMap));
         }
 
         final pauseEvent = await _startAndWaitForPause(
@@ -531,9 +546,10 @@ class SynthesizerWorkflow {
       ));
       return result;
     } finally {
-      // Best-effort cleanup; control channel may already be disconnected.
+      // Best-effort cleanup; control channel may already be disconnected
+      // or wedged — bound it so teardown can't hang either.
       try {
-        await emulationController.reset();
+        await emulationController.reset().timeout(_kRenodeOpTimeout);
       } catch (_) {}
       _isRunning = false;
     }
@@ -576,10 +592,13 @@ class SynthesizerWorkflow {
     });
 
     try {
-      await emulationController.start(
-        startFrom: startFrom,
-        endAt: endAt,
-        pauseOnUnhandled: pauseOnUnhandled,
+      await _renodeOp(
+        'start',
+        () => emulationController.start(
+          startFrom: startFrom,
+          endAt: endAt,
+          pauseOnUnhandled: pauseOnUnhandled,
+        ),
       );
     } catch (e, st) {
       stderr
@@ -630,6 +649,21 @@ class SynthesizerWorkflow {
     await completer.future;
   }
 
+  /// Run a single Renode control round-trip under [_kRenodeOpTimeout].
+  /// On expiry throws [SynthesizerException] so the run aborts (and the
+  /// caller writes a report) instead of blocking forever on an
+  /// unresponsive engine. See [_kRenodeOpTimeout].
+  Future<T> _renodeOp<T>(String what, Future<T> Function() op) async {
+    try {
+      return await op().timeout(_kRenodeOpTimeout);
+    } on TimeoutException {
+      throw SynthesizerException(
+          'Renode "$what" did not respond within '
+          '${_kRenodeOpTimeout.inSeconds}s — engine unresponsive; '
+          'aborting run.');
+    }
+  }
+
   Future<void> _loadFirmwareWithRetry(String baseImagePath, String elfPath) async {
     const maxRetries = 3;
     const retryDelay = Duration(seconds: 2);
@@ -637,7 +671,8 @@ class SynthesizerWorkflow {
     Object? lastError;
     for (var attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        await emulationController.load(baseImagePath, elfPath);
+        await _renodeOp(
+            'load', () => emulationController.load(baseImagePath, elfPath));
         return;
       } catch (e) {
         lastError = e;
