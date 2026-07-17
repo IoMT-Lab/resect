@@ -33,13 +33,10 @@ dependencies:
     git:
       url: git@github.com:IoMT-Lab/hooks-dart.git
       ref: eca72b7bf5e991f1036afb43ea3de3281d2a4bc3
-  # signatures: not yet pushed to a remote — pubspec_overrides.yaml
-  # routes it to ../signatures-dart for local dev. Pin a real ref
-  # before this slice ships.
   signatures:
     git:
       url: git@github.com:IoMT-Lab/signatures-dart.git
-      ref: HEAD
+      ref: 9ba6ee5d0fc3d3aab4e7a21df8ccaa4da7a27562
 
 dev_dependencies:
   test: ^1.24.0
