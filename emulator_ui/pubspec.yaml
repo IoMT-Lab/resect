@@ -21,7 +21,9 @@ dependencies:
   emulator_orchestrator:
     path: ../emulator_orchestrator
   callgraph:
-    git: git@github.com:IoMT-Lab/callgraph-dart.git
+    git:
+      url: git@github.com:IoMT-Lab/callgraph-dart.git
+      ref: e35507e3211df87331114b92ac00a18a6141496a
 
 dev_dependencies:
   flutter_test:
