@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:emulator_orchestrator/data/models/recommendation.dart';
+import 'package:emulator_orchestrator/orchestrator/recommendation_overlay_applier.dart'
+    as overlay;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../providers/app_providers.dart';
@@ -56,105 +58,41 @@ class RecommendationApplier {
     ProviderContainer container,
     List<Recommendation> recommendations,
   ) {
-    final ordered = _planBatch(recommendations);
-    if (ordered.isEmpty) return const [];
-
+    // Read providers into plain maps, delegate the per-kind mutation
+    // to the shared orchestrator-side applier (one source of truth
+    // with the headless auto-tune engine), then write back.
     final overrides =
         Map<String, int>.from(container.read(hookOverridesProvider));
     final scopes =
         Map<String, String>.from(container.read(hookOverrideScopesProvider));
     final preferences =
         Map<String, int>.from(container.read(hookPreferencesProvider));
-    var iterationCap = container.read(synthesisMaxIterationsProvider);
-
-    for (final rec in ordered) {
-      switch (rec) {
-        case SetForcedOverride(:final symbol, :final artifactId, :final scope):
-          overrides[symbol] = artifactId;
-          if (scope == null || scope.isEmpty) {
-            scopes.remove(symbol);
-          } else {
-            scopes[symbol] = scope;
-          }
-
-        case ClearForcedOverride(:final symbol):
-          overrides.remove(symbol);
-          scopes.remove(symbol);
-
-        case SetPreference(:final symbol, :final artifactId):
-          preferences[symbol] = artifactId;
-
-        case AdjustIterationCap(:final newValue):
-          if (newValue > 0) iterationCap = newValue;
-
-        case GenerateCustomHook():
-          // Pre-processed by the orchestrator; should already be
-          // dropped by _planBatch but skip defensively.
-          break;
-      }
-    }
+    final result = overlay.applyRecommendationsToOverlays(
+      recommendations: recommendations,
+      hookOverrides: overrides,
+      hookOverrideScopes: scopes,
+      hookPreferences: preferences,
+      iterationCap: container.read(synthesisMaxIterationsProvider),
+    );
+    if (result.applied.isEmpty) return const [];
 
     container.read(hookOverridesProvider.notifier).state = overrides;
     container.read(hookOverrideScopesProvider.notifier).state = scopes;
     container.read(hookPreferencesProvider.notifier).state = preferences;
-    container.read(synthesisMaxIterationsProvider.notifier).state = iterationCap;
+    container.read(synthesisMaxIterationsProvider.notifier).state =
+        result.iterationCap;
     container.read(emulatorDirtyProvider.notifier).state = true;
     // Autosave is a no-op for unsaved projects; safe to call
     // unconditionally per the autosave_provider contract.
     unawaited(container.read(autosaveControllerProvider).trigger());
-    return ordered;
+    return result.applied;
   }
 
-  /// Order: ClearForcedOverride → SetForcedOverride → SetPreference
-  /// → AdjustIterationCap. Dedup by symbol last-write-wins
-  /// (AdjustIterationCap doesn't have a symbol and is collapsed to
-  /// the last entry).
-  ///
-  /// `GenerateCustomHook` entries are dropped entirely — the
-  /// orchestrator handles those upstream and may emit follow-on
-  /// `SetForcedOverride` entries referencing the new artifact id.
-  ///
-  /// Exposed `@visibleForTesting`-style as a static so unit tests
-  /// can exercise the planning logic without a `ProviderContainer`.
+  /// Order + dedupe the batch. Delegates to the shared
+  /// [overlay.planRecommendationBatch]; kept as a static entry point
+  /// so existing unit tests can exercise the planning logic without a
+  /// `ProviderContainer`.
   static List<Recommendation> planBatch(
           List<Recommendation> recommendations) =>
-      _planBatch(recommendations);
-
-  static List<Recommendation> _planBatch(
-      List<Recommendation> recommendations) {
-    // Track the last symbol-targeting rec per symbol. Two recs that
-    // both name the same symbol collapse to the second.
-    final bySymbol = <String, Recommendation>{};
-    AdjustIterationCap? lastCap;
-    for (final rec in recommendations) {
-      switch (rec) {
-        case GenerateCustomHook():
-          // Handled by the orchestrator; drop here.
-          break;
-        case SetForcedOverride(:final symbol):
-          bySymbol[symbol] = rec;
-        case ClearForcedOverride(:final symbol):
-          bySymbol[symbol] = rec;
-        case SetPreference(:final symbol):
-          bySymbol[symbol] = rec;
-        case AdjustIterationCap():
-          lastCap = rec;
-      }
-    }
-
-    final ordered = <Recommendation>[];
-    // Clears first, then sets / preferences in input order (modulo
-    // dedupe). Stable across the input.
-    for (final rec in bySymbol.values) {
-      if (rec is ClearForcedOverride) ordered.add(rec);
-    }
-    for (final rec in bySymbol.values) {
-      if (rec is SetForcedOverride) ordered.add(rec);
-    }
-    for (final rec in bySymbol.values) {
-      if (rec is SetPreference) ordered.add(rec);
-    }
-    if (lastCap != null) ordered.add(lastCap);
-    return ordered;
-  }
+      overlay.planRecommendationBatch(recommendations);
 }

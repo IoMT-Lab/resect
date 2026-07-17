@@ -48,6 +48,7 @@ SynthesisManifest buildManifest({
   required Duration duration,
   required String? failedSymbol,
   required Map<String, List<ManifestAttempt>> attempts,
+  String? lastPauseSymbol,
 }) {
   final decisions = <ManifestDecision>[];
   final symbols = attempts.keys.toList()..sort();
@@ -91,5 +92,6 @@ SynthesisManifest buildManifest({
     ),
     decisions: decisions,
     failedSymbol: failedSymbol,
+    lastPauseSymbol: lastPauseSymbol,
   );
 }

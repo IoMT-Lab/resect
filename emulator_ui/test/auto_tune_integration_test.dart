@@ -84,7 +84,7 @@ void main() {
       //   4. Pump the Synthesize tab (or just the orchestrator +
       //      modal) inside a UncontrolledProviderScope.
       //   5. Open the auto-tune dialog (maxRounds=2,
-      //      maxWallClock=10min, no optimizationTarget).
+      //      no optimizationTarget).
       //   6. tester.tap(find.text('Accept all')) + Apply in each
       //      review state.
       //   7. Pump until state is AutoTuneFinished.

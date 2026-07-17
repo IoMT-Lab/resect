@@ -7,6 +7,7 @@ import '../database/artifact_database.dart';
 import '../models/target_arch.dart';
 import 'hook_classifier.dart';
 import 'llm_client.dart';
+import 'llm_profiles.dart';
 import 'rag_index.dart';
 
 export 'hook_classifier.dart' show ClassificationResult, HookInvariant, InvariantResult;
@@ -132,6 +133,16 @@ class LlmHookGenerator {
   /// against the harness's captured return values.
   ClassificationResult? get lastClassification => _lastClassification;
   ClassificationResult? _lastClassification;
+
+  /// Whether the authorship watchdog fired on the most recent
+  /// [generateEvents]/[generate] LLM-path call — i.e. the first
+  /// attempt spiralled past `authorship.watchdogThinkChunks` with no
+  /// response and a narrower think-off retry ran. Exposed so the
+  /// auto-tune orchestrator can record `watchdog_fired` in the
+  /// per-round trace. Reset at the start of each LLM-path call;
+  /// false after a classifier short-circuit (no LLM ran).
+  bool get lastWatchdogFired => _lastWatchdogFired;
+  bool _lastWatchdogFired = false;
 
   /// How many chunks total to inject into the prompt's `## Project context`
   /// block. 10 × ~500 tokens ≈ 5 KB of text, well under Gemma's window.
@@ -379,6 +390,11 @@ don't exist:
   ///      for the few-shot block.
   ///   3. Pulling top-(K - kHookExamples) from `{doc, symbol}` for the
   ///      project-context block.
+  /// Response-only convenience wrapper — delegates to
+  /// [generateEvents] and yields just the hook-body text. The
+  /// synthesizer's mid-run fallback buffers this, so it must see
+  /// ONLY body chunks (no thinking); filtering to [LlmResponseChunk]
+  /// guarantees that and inherits the watchdog protection below.
   Stream<String> generate({
     required String userPrompt,
     String? targetSymbol,
@@ -389,11 +405,40 @@ don't exist:
     FunctionSignature? signature,
     TargetArch? targetArch,
   }) async* {
-    // Classifier-first dispatch. When the deterministic rules
-    // match, we materialise the catalog hook and skip the LLM
-    // entirely. The classifier needs signature + decompilation +
-    // data_symbols, all from artifactDb; without it we fall straight
-    // through.
+    await for (final ev in generateEvents(
+      userPrompt: userPrompt,
+      targetSymbol: targetSymbol,
+      elfHash: elfHash,
+      targetCallers: targetCallers,
+      targetCallees: targetCallees,
+      platform: platform,
+      signature: signature,
+      targetArch: targetArch,
+    )) {
+      if (ev is LlmResponseChunk) yield ev.text;
+    }
+  }
+
+  /// Discriminated-event hook authorship.
+  ///
+  /// Yields thinking + response chunks via [LlmStreamEvent] so the
+  /// Hook Database dialog and the auto-tune modal can surface the
+  /// model's reasoning trace alongside the streaming hook body.
+  /// Classifier hits short-circuit by emitting a single
+  /// [LlmResponseChunk] with the catalog hook code — no LLM
+  /// round-trip. The LLM path runs the think-on `authorship` profile
+  /// wrapped by a watchdog (Gemma thinking is uncappable, so an
+  /// unproductive spiral is bounded and retried once, narrower).
+  Stream<LlmStreamEvent> generateEvents({
+    required String userPrompt,
+    String? targetSymbol,
+    String? elfHash,
+    List<String> targetCallers = const [],
+    List<String> targetCallees = const [],
+    PlatformFacts? platform,
+    FunctionSignature? signature,
+    TargetArch? targetArch,
+  }) async* {
     _lastClassification = null;
     final cls = await _tryClassify(
       targetSymbol: targetSymbol,
@@ -402,10 +447,7 @@ don't exist:
     );
     if (cls != null) {
       _lastClassification = cls;
-      // Yield the materialised hook body as a single chunk so the
-      // dialog's stream-into-editor handler appends it whole. No
-      // LLM round-trip, no streaming latency.
-      yield cls.hook.code;
+      yield LlmResponseChunk(cls.hook.code);
       return;
     }
 
@@ -420,10 +462,71 @@ don't exist:
       targetArch: targetArch,
     );
 
-    yield* client.generate(
+    yield* _authorWithWatchdog(prompt);
+  }
+
+  /// Stream the hook body under the `authorship` profile, watching
+  /// for an unproductive thinking spiral. If the model emits more
+  /// than `watchdogThinkChunks` thinking chunks without a single
+  /// response byte, the first attempt is abandoned (breaking the
+  /// `await for` cancels the subscription; the closed connection
+  /// aborts Ollama's generation) and ONE narrower retry runs with
+  /// thinking disabled and an explicit "emit the body now"
+  /// directive. Applies to every consumer (dialog, auto-tune,
+  /// synthesizer) since they all route through here.
+  Stream<LlmStreamEvent> _authorWithWatchdog(String prompt) async* {
+    const p = LlmProfiles.authorship;
+    _lastWatchdogFired = false;
+
+    var thinkingChunks = 0;
+    var sawResponse = false;
+    var tripped = false;
+
+    await for (final ev in client.generateEvents(
       prompt,
       system: systemPrompt,
       stop: _kStopSequences,
+      think: p.think,
+      temperature: p.temperature,
+      topP: p.topP,
+      topK: p.topK,
+      numCtx: p.numCtx,
+      numPredict: p.numPredict,
+    )) {
+      if (ev is LlmThinkingChunk) {
+        thinkingChunks++;
+        final limit = p.watchdogThinkChunks;
+        if (!sawResponse && limit != null && thinkingChunks > limit) {
+          tripped = true;
+          break; // abandon attempt 1; connection close aborts Ollama.
+        }
+      } else if (ev is LlmResponseChunk) {
+        sawResponse = true;
+      }
+      yield ev;
+    }
+
+    if (!tripped) return;
+
+    // Watchdog fired — one narrower retry: thinking off, an explicit
+    // directive to stop reasoning and emit the body. Stage-1 shape
+    // selection (see TODO) would give a tighter scaffold here; until
+    // then, disabling thinking is the decisive lever.
+    _lastWatchdogFired = true;
+    final narrowed = '$prompt\n\n'
+        '## Constraint\n'
+        'Do NOT reason further. Emit ONLY the Python hook body now, '
+        'nothing else.';
+    yield* client.generateEvents(
+      narrowed,
+      system: systemPrompt,
+      stop: _kStopSequences,
+      think: false,
+      temperature: 0.0,
+      topP: p.topP,
+      topK: p.topK,
+      numCtx: p.numCtx,
+      numPredict: p.numPredict,
     );
   }
 

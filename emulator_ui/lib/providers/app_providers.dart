@@ -458,6 +458,8 @@ final recommendationServiceProvider = Provider<RecommendationService>(
   (ref) => RecommendationService(
     llmClient: ref.watch(llmClientProvider),
     insightService: ref.watch(lastRunInsightServiceProvider),
+    artifactDb: ref.watch(artifactDatabaseProvider),
+    ragIndex: ref.watch(ragIndexProvider),
   ),
 );
 
@@ -475,11 +477,19 @@ final lastRunInsightProvider =
 final lastRunInsightGeneratingProvider =
     StateProvider<bool>((ref) => false);
 
-/// In-flight buffer of streamed tokens for the recommendation panel.
-/// Lives in a provider so multiple widgets (panel body + a future
-/// debug surface) can subscribe; cleared back to empty when the
-/// stream ends or is cancelled.
+/// In-flight buffer of streamed response tokens for the recommendation
+/// panel. Lives in a provider so multiple widgets (panel body + a
+/// future debug surface) can subscribe; cleared back to empty when
+/// the stream ends or is cancelled.
 final lastRunInsightStreamBufferProvider =
+    StateProvider<String>((ref) => '');
+
+/// In-flight buffer of the model's reasoning trace (the `thinking`
+/// channel from Ollama) for the recommendation panel. Surfaced in a
+/// dimmed pane above the response buffer while the LLM is running.
+/// Cleared alongside [lastRunInsightStreamBufferProvider] on stream
+/// end/cancel.
+final lastRunInsightThinkingBufferProvider =
     StateProvider<String>((ref) => '');
 
 /// Per-project RAG index. Null until an emulator is loaded with a

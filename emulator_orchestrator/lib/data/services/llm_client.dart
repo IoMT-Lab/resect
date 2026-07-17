@@ -114,6 +114,15 @@ class LlmClient {
   /// `numPredict` without raising `numCtx`, and don't lower
   /// `temperature` without resampling `top_p` / `top_k` to keep the
   /// recipe coherent.
+  /// Response-only convenience wrapper around [generateEvents].
+  ///
+  /// Yields only `LlmResponseChunk.text` strings so existing
+  /// callers (and JSON-buffering consumers like
+  /// [RecommendationService]) don't see thinking tokens mixed
+  /// into the response stream. Callers that want the
+  /// reasoning trace (the auto-tune modal, the Last Run card,
+  /// the Hook Database dialog) should call [generateEvents]
+  /// directly and pattern-match on [LlmStreamEvent] subtypes.
   Stream<String> generate(
     String prompt, {
     String? system,
@@ -125,6 +134,46 @@ class LlmClient {
     int numCtx = 16384,
     int numPredict = 4000,
     List<String>? stop,
+    Map<String, Object?>? format,
+  }) async* {
+    await for (final ev in generateEvents(
+      prompt,
+      system: system,
+      modelOverride: modelOverride,
+      temperature: temperature,
+      topP: topP,
+      topK: topK,
+      think: think,
+      numCtx: numCtx,
+      numPredict: numPredict,
+      stop: stop,
+      format: format,
+    )) {
+      if (ev is LlmResponseChunk) yield ev.text;
+    }
+  }
+
+  /// Discriminated stream yielding both thinking and response
+  /// channels. Per-NDJSON-line order matches Ollama's wire order:
+  /// thinking events arrive first while the model reasons, then
+  /// response events as the final answer streams out.
+  ///
+  /// All other arguments match [generate]. Use this when the
+  /// caller wants to drive a UI surface for the reasoning trace
+  /// — the auto-tune modal's `_LlmStreamingBody` and the Last
+  /// Run card's `_streamingBody` are the in-tree examples.
+  Stream<LlmStreamEvent> generateEvents(
+    String prompt, {
+    String? system,
+    String? modelOverride,
+    double temperature = 1.0,
+    double topP = 0.95,
+    int topK = 64,
+    bool think = true,
+    int numCtx = 16384,
+    int numPredict = 4000,
+    List<String>? stop,
+    Map<String, Object?>? format,
   }) async* {
     // Defaults are the Gemma 4 model-card recommendation
     // (temperature=1.0, top_p=0.95, top_k=64). `think=true` and
@@ -144,12 +193,19 @@ class LlmClient {
     // the key when no stops are passed — Ollama interprets an
     // empty list as "no constraint" but the omission is cleaner.
     final hasStops = stop != null && stop.isNotEmpty;
+    // `format` is Ollama's constrained-decoding hook — a JSON schema
+    // object that forces the response channel to conform. Only ever
+    // passed with `think: false`: format+think interaction is
+    // undocumented upstream, so callers that want structured output
+    // disable thinking (see LlmProfiles). Omitted from the body when
+    // null so unstructured calls are unchanged.
     final body = <String, Object?>{
       'model': modelOverride ?? model,
       'prompt': prompt,
       'stream': true,
       'think': think,
       'system': ?system,
+      'format': ?format,
       'options': <String, Object?>{
         'num_ctx': numCtx,
         'num_predict': numPredict,
@@ -169,18 +225,8 @@ class LlmClient {
         'Ollama /api/generate returned ${resp.statusCode}: $detail',
       );
     }
-    await for (final line
-        in resp.transform(utf8.decoder).transform(const LineSplitter())) {
-      if (line.isEmpty) continue;
-      final obj = jsonDecode(line) as Map<String, dynamic>;
-      final err = obj['error'];
-      if (err is String) {
-        throw LlmClientException('Ollama generate error: $err');
-      }
-      final chunk = obj['response'];
-      if (chunk is String && chunk.isNotEmpty) yield chunk;
-      if (obj['done'] == true) break;
-    }
+    yield* parseGenerateNdjson(
+        resp.transform(utf8.decoder).transform(const LineSplitter()));
   }
 
   /// Embed [text] with the configured [embeddingModel]. Used both for
@@ -272,4 +318,109 @@ class LlmClientException implements Exception {
   final String message;
   @override
   String toString() => 'LlmClientException: $message';
+}
+
+/// One chunk produced by [LlmClient.generateEvents] — either a
+/// reasoning ("thinking") token or a final-response token.
+///
+/// Discriminated as a sealed hierarchy so callers can
+/// pattern-match exhaustively: the auto-tune modal and the
+/// Last Run card route thinking chunks to a dedicated UI pane
+/// while routing response chunks to the buffer that JSON-parses
+/// or commits the final advisory.
+sealed class LlmStreamEvent {
+  const LlmStreamEvent();
+}
+
+/// A chunk of the model's reasoning trace, streamed before the
+/// final answer. Surfaced live in the UI when the model has
+/// `think=true` (the LlmClient default). Empty/whitespace-only
+/// thinking chunks are filtered upstream — every event here
+/// carries non-empty text.
+class LlmThinkingChunk extends LlmStreamEvent {
+  const LlmThinkingChunk(this.text);
+  final String text;
+}
+
+/// A chunk of the model's final answer. Concatenating every
+/// `LlmResponseChunk.text` in order reproduces the same string
+/// that the legacy [LlmClient.generate] response-only stream
+/// yields.
+class LlmResponseChunk extends LlmStreamEvent {
+  const LlmResponseChunk(this.text);
+  final String text;
+}
+
+/// Terminal event yielded exactly once at the end of a successful
+/// [LlmClient.generateEvents] stream. Carries the diagnostic
+/// fields from Ollama's final NDJSON line — `done_reason`,
+/// `eval_count` (response tokens emitted) — plus a local count
+/// of how many [LlmThinkingChunk]s preceded it.
+///
+/// The recommendation-service flow uses this to distinguish
+/// "model finished naturally with empty response" (a real
+/// content failure) from "model hit `num_predict` budget mid-think"
+/// (a configuration issue) — the two have identical raw output
+/// but very different remediation.
+///
+/// `doneReason` is the verbatim Ollama string: `"stop"` for
+/// natural completion, `"length"` when `num_predict` clamped
+/// the stream, `"load"` when the model is still warming up.
+class LlmStreamDone extends LlmStreamEvent {
+  const LlmStreamDone({
+    required this.doneReason,
+    required this.responseTokens,
+    required this.thinkingChunks,
+  });
+
+  final String doneReason;
+  final int responseTokens;
+  final int thinkingChunks;
+}
+
+/// Parse Ollama's `/api/generate` NDJSON line stream into
+/// discriminated [LlmStreamEvent]s. One NDJSON line in →
+/// zero, one, or two thinking/response events out (a single line
+/// can carry both `thinking` and `response` text), followed by
+/// a single terminal [LlmStreamDone] event when Ollama signals
+/// `done: true`.
+///
+/// Pure function on top of an in-memory string stream — the
+/// network is the caller's problem. Exposed as a top-level
+/// function so the parsing contract can be unit-tested
+/// without spinning up Ollama or mocking HttpClient.
+Stream<LlmStreamEvent> parseGenerateNdjson(Stream<String> lines) async* {
+  var thinkingChunks = 0;
+  await for (final line in lines) {
+    if (line.isEmpty) continue;
+    final obj = jsonDecode(line) as Map<String, dynamic>;
+    final err = obj['error'];
+    if (err is String) {
+      throw LlmClientException('Ollama generate error: $err');
+    }
+    // Thinking and response are separate fields on Ollama's
+    // NDJSON line. A single line can carry either or both.
+    // Emit them in field order — thinking first when present
+    // since that matches how the model produces them
+    // chronologically.
+    final thinking = obj['thinking'];
+    if (thinking is String && thinking.isNotEmpty) {
+      thinkingChunks++;
+      yield LlmThinkingChunk(thinking);
+    }
+    final chunk = obj['response'];
+    if (chunk is String && chunk.isNotEmpty) {
+      yield LlmResponseChunk(chunk);
+    }
+    if (obj['done'] == true) {
+      final doneReason = obj['done_reason'];
+      final evalCount = obj['eval_count'];
+      yield LlmStreamDone(
+        doneReason: doneReason is String ? doneReason : 'unknown',
+        responseTokens: evalCount is num ? evalCount.toInt() : 0,
+        thinkingChunks: thinkingChunks,
+      );
+      break;
+    }
+  }
 }

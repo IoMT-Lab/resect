@@ -82,12 +82,21 @@ class HookCatalog {
 
   /// Canonical default-hook code bodies, in the same order as
   /// [ArtifactLibraryService._defaultHookCodes]. Includes the two legacy
-  /// `RegisterValue.Create(N, 64)` return bodies plus the catalog-built
-  /// returnHook / readHook / writeHook / incrementHook variants. The UI
-  /// uses this set to identify which DB rows are write-protected defaults.
+  /// The catalog-built returnHook / readHook / writeHook /
+  /// incrementHook variants. The UI uses this set to identify which
+  /// DB rows are write-protected defaults.
+  ///
+  /// Pre-2026-06-17 this set also contained two legacy
+  /// `RegisterValue.Create(N, 64)`-style return bodies — they were
+  /// removed because they shipped duplicate-of-catalog-`return`
+  /// templates that confused both the LLM (two equivalent options
+  /// in the artifact catalog) and the user (the Hook Database
+  /// dialog showed indistinguishable rows). Existing user DBs
+  /// still carrying those rows migrate via the manual "Reseed
+  /// defaults" button; `_matchCanonical` in
+  /// `artifact_library_service.dart` remaps `Create(N, 64)`-shaped
+  /// obsolete bodies to the catalog return body.
   Set<String> defaultCodes() => {
-        _legacyReturn0,
-        _legacyReturn1,
         build('return', const {'value': 0}).code,
         build('return', const {'value': 1}).code,
         build('read', const {'scope': '', 'defaultValue': 0}).code,
@@ -97,17 +106,6 @@ class HookCatalog {
         build('increment', const {'scope': '', 'defaultValue': 0}).code,
         build('increment', const {'scope': '', 'defaultValue': 1}).code,
       };
-
-  static const _legacyReturn0 = '''
-from Antmicro.Renode.Peripherals.CPU import RegisterValue
-cpu.SetRegister(0, RegisterValue.Create(0, 64))
-cpu.PC = cpu.LR
-''';
-  static const _legacyReturn1 = '''
-from Antmicro.Renode.Peripherals.CPU import RegisterValue
-cpu.SetRegister(0, RegisterValue.Create(1, 64))
-cpu.PC = cpu.LR
-''';
 }
 
 List<HookBuilderDescriptor> _systemDescriptors() => [
@@ -227,7 +225,8 @@ List<HookBuilderDescriptor> _systemDescriptors() => [
         // TODO in the plan, this becomes a parameter once non-STM glues
         // (nordic_glue.py, esp_idf_glue.py, …) exist.
         build: (params) =>
-            i2cReadHook(params['port'] as int? ?? 1234, 'stm32_glue'),
+            i2cReadHook(
+                'localhost', params['port'] as int? ?? 1234, 'stm32_glue'),
       ),
       HookBuilderDescriptor(
         kindId: 'i2c_write',
@@ -261,7 +260,8 @@ List<HookBuilderDescriptor> _systemDescriptors() => [
           ),
         ],
         build: (params) =>
-            uartReadHook(params['port'] as int? ?? 1236, 'stm32_glue'),
+            uartReadHook(
+                'localhost', params['port'] as int? ?? 1236, 'stm32_glue'),
       ),
       HookBuilderDescriptor(
         kindId: 'uart_write',

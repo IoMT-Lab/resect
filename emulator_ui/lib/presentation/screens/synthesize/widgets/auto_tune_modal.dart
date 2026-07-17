@@ -97,6 +97,8 @@ class _AutoTuneModalState extends State<AutoTuneModal> {
         'Auto-tune — synthesizing round $round',
       AutoTuneLlmGenerating(:final round) =>
         'Auto-tune — LLM thinking (round $round)',
+      AutoTuneGeneratingHook(:final round, :final symbol) =>
+        'Auto-tune — generating hook for `$symbol` (round $round)',
       AutoTuneReviewing(:final round) => 'Auto-tune — review round $round',
       AutoTuneParseFailed(:final round) =>
         'Auto-tune — parse failed (round $round)',
@@ -122,8 +124,26 @@ class _AutoTuneModalState extends State<AutoTuneModal> {
           const _StatusBody(text: 'Running baseline synthesis…'),
         AutoTuneSynthesizing(:final round) =>
           _StatusBody(text: 'Synthesizing round $round…'),
-        AutoTuneLlmGenerating(:final round, :final streamedText) =>
-          _LlmStreamingBody(round: round, streamedText: streamedText),
+        AutoTuneLlmGenerating(
+          :final round,
+          :final thinkingText,
+          :final responseText,
+        ) =>
+          _LlmStreamingBody(
+            round: round,
+            thinkingText: thinkingText,
+            responseText: responseText,
+          ),
+        AutoTuneGeneratingHook(
+          :final round,
+          :final thinkingText,
+          :final responseText,
+        ) =>
+          _LlmStreamingBody(
+            round: round,
+            thinkingText: thinkingText,
+            responseText: responseText,
+          ),
         AutoTuneReviewing(:final result) => _ReviewBody(
             result: result,
             actions: _actions,
@@ -144,7 +164,8 @@ class _AutoTuneModalState extends State<AutoTuneModal> {
               }
             }),
           ),
-        AutoTuneParseFailed(:final raw) => _ParseFailureBody(raw: raw),
+        AutoTuneParseFailed(:final raw, :final kind, :final diagnostic) =>
+          _ParseFailureBody(raw: raw, kind: kind, diagnostic: diagnostic),
         AutoTuneFinished() => _DoneBody(state: state),
       },
     );
@@ -171,6 +192,7 @@ class _AutoTuneModalState extends State<AutoTuneModal> {
       case AutoTuneRunningBaseline():
       case AutoTuneSynthesizing():
       case AutoTuneLlmGenerating():
+      case AutoTuneGeneratingHook():
         return [
           TextButton(
             onPressed: () => widget.orchestrator.cancel(),
@@ -274,14 +296,17 @@ class _StatusBody extends StatelessWidget {
 class _LlmStreamingBody extends StatelessWidget {
   const _LlmStreamingBody({
     required this.round,
-    required this.streamedText,
+    required this.thinkingText,
+    required this.responseText,
   });
 
   final int round;
-  final String streamedText;
+  final String thinkingText;
+  final String responseText;
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -298,12 +323,64 @@ class _LlmStreamingBody extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 12),
+        // Reasoning pane on top, dimmed/italic so the user can tell
+        // it apart from the final response. Hidden until the first
+        // thinking chunk arrives.
+        if (thinkingText.isNotEmpty) ...[
+          Row(
+            children: [
+              Icon(Icons.psychology_outlined,
+                  size: 14, color: scheme.outline),
+              const SizedBox(width: 4),
+              Text('Reasoning',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.outline,
+                    letterSpacing: 0.5,
+                  )),
+            ],
+          ),
+          const SizedBox(height: 4),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 200),
+            child: SingleChildScrollView(
+              reverse: true,
+              child: SelectableText(
+                thinkingText,
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  fontStyle: FontStyle.italic,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Icon(Icons.code, size: 14, color: scheme.outline),
+              const SizedBox(width: 4),
+              Text('Response',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.outline,
+                    letterSpacing: 0.5,
+                  )),
+            ],
+          ),
+          const SizedBox(height: 4),
+        ],
         Expanded(
           child: SingleChildScrollView(
             child: SelectableText(
-              streamedText.isEmpty
-                  ? '(waiting for first tokens)'
-                  : streamedText,
+              responseText.isEmpty
+                  ? (thinkingText.isEmpty
+                      ? '(waiting for first tokens)'
+                      : '(model still thinking — response will start streaming when the reasoning concludes)')
+                  : responseText,
               style: const TextStyle(
                 fontFamily: 'monospace',
                 fontSize: 12,
@@ -389,11 +466,21 @@ class _ReviewBody extends StatelessWidget {
 }
 
 class _ParseFailureBody extends StatelessWidget {
-  const _ParseFailureBody({required this.raw});
+  const _ParseFailureBody({
+    required this.raw,
+    this.kind,
+    this.diagnostic,
+  });
+
   final String raw;
+  final RecommendationParseFailureKind? kind;
+  final RecommendationDiagnostic? diagnostic;
 
   @override
   Widget build(BuildContext context) {
+    if (kind == RecommendationParseFailureKind.emptyResponse) {
+      return _BudgetExhaustedBody(diagnostic: diagnostic);
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -422,6 +509,74 @@ class _ParseFailureBody extends StatelessWidget {
               ),
             ),
           ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Body for the `emptyResponse` parse-failure variant. The LLM
+/// consumed its `num_predict` budget on the thinking phase and
+/// never produced a response token. Render the diagnostic stats
+/// from Ollama's final NDJSON line so the user knows exactly why
+/// the round produced nothing — vs the legacy "(empty)" placeholder
+/// which left them guessing.
+class _BudgetExhaustedBody extends StatelessWidget {
+  const _BudgetExhaustedBody({required this.diagnostic});
+
+  final RecommendationDiagnostic? diagnostic;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final diag = diagnostic;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'LLM ran out of budget before responding.',
+          style: TextStyle(color: theme.colorScheme.error),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Thinking chunks: ${diag?.thinkingChunks ?? "?"}',
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                ),
+              ),
+              Text(
+                'Response tokens: ${diag?.responseTokens ?? "?"}',
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                ),
+              ),
+              Text(
+                'Stop reason:     ${diag?.doneReason ?? "?"}',
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'The model spent its entire output budget on reasoning. '
+          'Click Retry to ask again, or Stop to end the session.',
+          style: TextStyle(fontSize: 12),
         ),
       ],
     );
@@ -477,8 +632,6 @@ class _DoneBody extends StatelessWidget {
         return 'Session cancelled.';
       case AutoTuneFinishReason.maxRounds:
         return 'Session ended — max rounds reached.';
-      case AutoTuneFinishReason.budgetExhausted:
-        return 'Session ended — wall-clock budget exhausted.';
       case AutoTuneFinishReason.parseFailed:
         return 'Session ended — LLM output could not be parsed.';
       case AutoTuneFinishReason.baselineFailed:
@@ -507,9 +660,6 @@ class _DoneBody extends StatelessWidget {
         return 'The session was cancelled mid-run.';
       case AutoTuneFinishReason.maxRounds:
         return 'The configured maxRounds cap was reached.';
-      case AutoTuneFinishReason.budgetExhausted:
-        return 'The wall-clock budget elapsed before the loop could '
-            'reach a terminal state.';
       case AutoTuneFinishReason.parseFailed:
         return 'The LLM emitted invalid JSON and the user declined '
             'to retry.';

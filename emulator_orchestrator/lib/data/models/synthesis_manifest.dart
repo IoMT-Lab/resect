@@ -30,6 +30,7 @@ class SynthesisManifest {
     required this.result,
     required this.decisions,
     this.failedSymbol,
+    this.lastPauseSymbol,
     this.metrics,
     this.executedSymbols,
     this.timing,
@@ -65,6 +66,18 @@ class SynthesisManifest {
   /// The symbol whose hook candidates were exhausted (or whose
   /// forced override failed) — non-null iff `result.success == false`.
   final String? failedSymbol;
+
+  /// The LAST symbol the firmware tried to call (via an unhandled
+  /// access) before the synthesizer terminated, regardless of
+  /// `result.success`. Distinct from [failedSymbol]:
+  ///   - On `success == false`: typically equal to [failedSymbol].
+  ///   - On `success == true`: the symbol where the firmware last
+  ///     paused even though all paused symbols had hooks — i.e. the
+  ///     end of the trace, useful for the LLM advisor when deciding
+  ///     "where is the firmware actually stuck".
+  /// Null on legacy manifests that pre-date the field. Optional
+  /// (no schema-version bump).
+  final String? lastPauseSymbol;
 
   /// Run-level aggregate fidelity metrics (v2+). Populated by the
   /// caller after the synthesizer returns, by running
@@ -104,6 +117,7 @@ class SynthesisManifest {
         'result': result.toJson(),
         'decisions': decisions.map((d) => d.toJson()).toList(),
         if (failedSymbol != null) 'failed_symbol': failedSymbol,
+        if (lastPauseSymbol != null) 'last_pause_symbol': lastPauseSymbol,
         if (metrics != null) 'metrics': metrics!.toJson(),
         if (executedSymbols != null) 'executed_symbols': executedSymbols,
         if (timing != null)
@@ -130,6 +144,7 @@ class SynthesisManifest {
               ManifestDecision.fromJson(e as Map<String, dynamic>))
           .toList(),
       failedSymbol: json['failed_symbol'] as String?,
+      lastPauseSymbol: json['last_pause_symbol'] as String?,
       metrics: json['metrics'] == null
           ? null
           : ManifestMetrics.fromJson(json['metrics'] as Map<String, dynamic>),
@@ -160,6 +175,7 @@ class SynthesisManifest {
         result: result,
         decisions: decisions,
         failedSymbol: failedSymbol,
+        lastPauseSymbol: lastPauseSymbol,
         metrics: metrics,
         executedSymbols: executedSymbols,
         timing: timing ?? this.timing,

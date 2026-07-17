@@ -24,6 +24,14 @@ class SynthesizerResult {
   /// The symbol that exhausted all hook candidates (if !success).
   final String? failedSymbol;
 
+  /// The LAST symbol the firmware tried to call (via an unhandled
+  /// access) before the synthesizer terminated, regardless of
+  /// [success]. Mirrors [SynthesisManifest.lastPauseSymbol]. Useful
+  /// when `success == true` but the firmware was still spinning on
+  /// a busy-ready flag at the end — that's the symbol the LLM
+  /// advisor should focus on.
+  final String? lastPauseSymbol;
+
   /// Total time the synthesis process took.
   final Duration totalDuration;
 
@@ -42,6 +50,7 @@ class SynthesizerResult {
     required this.resolvedHooks,
     required this.totalDuration, this.resolvedHookCode = const {},
     this.failedSymbol,
+    this.lastPauseSymbol,
     this.manifest,
   });
 
@@ -55,6 +64,7 @@ class SynthesizerResult {
               ?.map((k, v) => MapEntry(k, v as String)) ??
           {},
       failedSymbol: json['failedSymbol'] as String?,
+      lastPauseSymbol: json['lastPauseSymbol'] as String?,
       totalDuration: Duration(milliseconds: json['totalDurationMs'] as int? ?? 0),
       manifest: json['manifest'] == null
           ? null
@@ -67,6 +77,7 @@ class SynthesizerResult {
       'resolvedHooks': resolvedHooks,
       'resolvedHookCode': resolvedHookCode,
       if (failedSymbol != null) 'failedSymbol': failedSymbol,
+      if (lastPauseSymbol != null) 'lastPauseSymbol': lastPauseSymbol,
       'totalDurationMs': totalDuration.inMilliseconds,
       if (manifest != null) 'manifest': manifest!.toJson(),
     };

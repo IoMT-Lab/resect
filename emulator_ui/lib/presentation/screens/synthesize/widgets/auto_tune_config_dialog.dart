@@ -32,7 +32,6 @@ class AutoTuneConfigDialog extends StatefulWidget {
 
 class _AutoTuneConfigDialogState extends State<AutoTuneConfigDialog> {
   late final TextEditingController _maxRoundsCtl;
-  late final TextEditingController _maxMinutesCtl;
   late final TextEditingController _snapshotCapCtl;
   late final TextEditingController _windowCtl;
   OptimizationTarget? _target;
@@ -43,8 +42,6 @@ class _AutoTuneConfigDialogState extends State<AutoTuneConfigDialog> {
     super.initState();
     final init = widget.initial ?? const AutoTuneConfig();
     _maxRoundsCtl = TextEditingController(text: '${init.maxRounds}');
-    _maxMinutesCtl = TextEditingController(
-        text: '${init.maxWallClock.inMinutes}');
     _snapshotCapCtl = TextEditingController(text: '${init.snapshotCap}');
     _windowCtl = TextEditingController(text: '${init.snapshotWindowSize}');
     _target = init.optimizationTarget;
@@ -53,7 +50,6 @@ class _AutoTuneConfigDialogState extends State<AutoTuneConfigDialog> {
   @override
   void dispose() {
     _maxRoundsCtl.dispose();
-    _maxMinutesCtl.dispose();
     _snapshotCapCtl.dispose();
     _windowCtl.dispose();
     super.dispose();
@@ -61,16 +57,10 @@ class _AutoTuneConfigDialogState extends State<AutoTuneConfigDialog> {
 
   void _submit() {
     final maxRounds = int.tryParse(_maxRoundsCtl.text);
-    final maxMinutes = int.tryParse(_maxMinutesCtl.text);
     final snapshotCap = int.tryParse(_snapshotCapCtl.text);
     final window = int.tryParse(_windowCtl.text);
     if (maxRounds == null || maxRounds < 1) {
       setState(() => _errorText = 'Max rounds must be a positive integer.');
-      return;
-    }
-    if (maxMinutes == null || maxMinutes < 1) {
-      setState(() =>
-          _errorText = 'Max wall-clock must be at least 1 minute.');
       return;
     }
     if (snapshotCap == null || snapshotCap < 0) {
@@ -85,7 +75,6 @@ class _AutoTuneConfigDialogState extends State<AutoTuneConfigDialog> {
     Navigator.of(context).pop(
       AutoTuneConfig(
         maxRounds: maxRounds,
-        maxWallClock: Duration(minutes: maxMinutes),
         snapshotCap: snapshotCap,
         snapshotWindowSize: window,
         optimizationTarget: _target,
@@ -116,15 +105,6 @@ class _AutoTuneConfigDialogState extends State<AutoTuneConfigDialog> {
                 labelText: 'Max LLM rounds',
                 helperText:
                     'Hard cap on rounds (excluding the round-0 baseline).',
-              ),
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _maxMinutesCtl,
-              decoration: const InputDecoration(
-                labelText: 'Max wall-clock (minutes)',
-                helperText: 'Total session budget; checked before each round.',
               ),
               keyboardType: TextInputType.number,
             ),

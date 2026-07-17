@@ -1,13 +1,18 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:emulator_orchestrator/data/models/auto_tune_config.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
+import 'package:emulator_orchestrator/data/models/hook_binding.dart';
 import 'package:emulator_orchestrator/data/models/recommendation.dart';
 import 'package:emulator_orchestrator/data/models/round_snapshot.dart';
 import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart';
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
+import 'package:emulator_orchestrator/data/services/coverage_frontier.dart';
 import 'package:emulator_orchestrator/data/services/fidelity_calculator.dart';
+import 'package:emulator_orchestrator/data/services/llm_client.dart';
 import 'package:emulator_orchestrator/data/services/recommendation_service.dart';
+import 'package:emulator_orchestrator/orchestrator/auto_tune_progress.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -56,7 +61,6 @@ class LlmSynthesisOrchestrator extends ChangeNotifier {
   Completer<_ReviewSubmission>? _reviewCompleter;
   Completer<_ParseFailureChoice>? _parseFailureCompleter;
   bool _cancelled = false;
-  DateTime? _sessionStart;
 
   /// Run a complete auto-tune session against the currently-open
   /// project. Returns when the loop terminates (any reason); the
@@ -80,7 +84,6 @@ class LlmSynthesisOrchestrator extends ChangeNotifier {
     }
 
     _cancelled = false;
-    _sessionStart = DateTime.now();
     _setState(const AutoTuneRunningBaseline());
 
     // Round 0: baseline. Run a synthesis if we don't have a recent
@@ -90,6 +93,23 @@ class LlmSynthesisOrchestrator extends ChangeNotifier {
     final needsBaseline = lastSnapshot == null ||
         current.synthesisResult?.manifest?.synthesizerRunId !=
             lastSnapshot.synthesizerRunId;
+
+    // The PREVIOUS round's failure: the symbol its synthesis failed
+    // at plus the set of artifact ids tried for that symbol. Null when
+    // the prior round didn't crash. Threaded across loop iterations so
+    // the no-progress guard can tell a true repeat (same symbol, no
+    // new hook tried) from legitimate exploration. Carried from each
+    // round's own SynthesizerResult — the round snapshot only holds a
+    // runId, and the live provider always holds the CURRENT run (that
+    // was the original self-comparison bug).
+    ({String symbol, Set<int> tried})? prevFailure;
+
+    ({String symbol, Set<int> tried})? failureOf(SynthesizerResult? r) {
+      final m = r?.manifest;
+      final failed = m?.failedSymbol;
+      if (m == null || failed == null) return null;
+      return (symbol: failed, tried: triedArtifactsForFailedSymbol(m));
+    }
 
     if (needsBaseline) {
       final baseline = await _runSynthesisAndAwait();
@@ -103,6 +123,9 @@ class LlmSynthesisOrchestrator extends ChangeNotifier {
         return;
       }
       _appendSnapshot(round: 0, result: baseline, llmInput: null);
+      prevFailure = failureOf(baseline);
+    } else {
+      prevFailure = failureOf(current.synthesisResult);
     }
 
     // Rounds 1..maxRounds.
@@ -110,10 +133,6 @@ class LlmSynthesisOrchestrator extends ChangeNotifier {
     while (round <= config.maxRounds) {
       if (_cancelled) {
         _finish(AutoTuneFinishReason.cancelled, round: round - 1);
-        return;
-      }
-      if (_budgetExhausted(config)) {
-        _finish(AutoTuneFinishReason.budgetExhausted, round: round - 1);
         return;
       }
 
@@ -130,9 +149,27 @@ class LlmSynthesisOrchestrator extends ChangeNotifier {
 
       // Parse failure → modal pauses for user choice (Retry / Stop).
       if (llmResult.parseFailure) {
+        // Surface the diagnostic to stderr too — the previous
+        // failure mode died silently in the terminal log, leaving
+        // the user with only "(empty)" in the modal. Concrete
+        // line: `[AutoTune] round N parse failure: <kind> ...`.
+        final kind = llmResult.parseFailureKind;
+        final diag = llmResult.diagnostic;
+        if (kind == RecommendationParseFailureKind.emptyResponse) {
+          debugPrint(
+              '[AutoTune] round $round parse failure: emptyResponse '
+              '${diag?.toLogLine() ?? '(no diagnostic captured)'}');
+        } else {
+          debugPrint(
+              '[AutoTune] round $round parse failure: '
+              '${kind?.name ?? "unknown"} '
+              '(${(llmResult.raw ?? "").length} bytes of raw output)');
+        }
         _setState(AutoTuneParseFailed(
           round: round,
           raw: llmResult.raw ?? '',
+          kind: kind,
+          diagnostic: diag,
         ));
         final choice = await _waitForParseFailureChoice();
         if (choice == _ParseFailureChoice.retry) continue;
@@ -166,23 +203,32 @@ class LlmSynthesisOrchestrator extends ChangeNotifier {
         return;
       }
 
-      // Apply the user-approved batch. GenerateCustomHook recs are
-      // currently logged-and-dropped — full wiring (calling
-      // LlmHookGenerator + seeding the new binding) is the next
-      // increment. The Applier drops them silently per its contract.
+      // Author + seed any accepted GenerateCustomHook recs BEFORE
+      // the applier runs — the applier filters these out by
+      // design, so we need to handle them ourselves. The body
+      // generated here lands in the artifact DB as a user-origin
+      // row, and a hookBinding is set so the next synthesis run
+      // picks it up.
       final generateRecs =
           acceptedOrEdited.whereType<GenerateCustomHook>().toList();
       if (generateRecs.isNotEmpty) {
-        debugPrint(
-            '[AutoTune] ${generateRecs.length} GenerateCustomHook '
-            'recommendation(s) accepted but not yet wired — they '
-            'will be dropped by the applier.');
+        final ok = await _generateAndSeedCustomHooks(
+            generateRecs, round: round);
+        if (!ok) return; // _generateAndSeedCustomHooks called _finish
+        if (_cancelled) {
+          _finish(AutoTuneFinishReason.cancelled, round: round - 1);
+          return;
+        }
       }
       const applier = RecommendationApplier();
       applier.apply(container, acceptedOrEdited);
 
-      // Run synthesis with the new overlay.
-      _setState(AutoTuneSynthesizing(round: round));
+      // Run synthesis with the new overlay. Display round+1 — the
+      // user just applied round N's recommendations, so the
+      // synthesis that's running now is round N+1's input. The
+      // internal `round` counter stays at N until the loop-tail
+      // increment; only the user-facing state shows N+1.
+      _setState(AutoTuneSynthesizing(round: round + 1));
       final runResult = await _runSynthesisAndAwait();
       if (_cancelled) {
         _finish(AutoTuneFinishReason.cancelled, round: round);
@@ -206,31 +252,28 @@ class LlmSynthesisOrchestrator extends ChangeNotifier {
         ),
       );
 
-      // Same-symbol no-progress check.
-      final priorSnap = container
-          .read(currentEmulatorProvider)
-          ?.snapshotForRound(round - 1);
-      final priorFailed = priorSnap?.manifestRef.runId == null
-          ? null
-          : container
-              .read(currentEmulatorProvider)
-              ?.synthesisResult
-              ?.manifest
-              ?.failedSymbol;
-      // Best-effort: compare last manifest's failed_symbol with
-      // what's on the snapshot's manifest. The snapshot doesn't
-      // carry failed_symbol directly; for now we look at the prior
-      // ROUND's manifest via the on-disk manifestRef if available.
-      // Until manifestRef.failedSymbol lands, we fall back to a
-      // simpler check using the live synthesisResultProvider.
-      final priorRoundFailed = priorFailed;
+      // No-progress check: stop only on a TRUE repeat — this round
+      // failed at the same symbol as the prior round AND no new hook
+      // was tried for it (the tried-set gained nothing). A new hook at
+      // the same symbol, or a different symbol, is progress and the
+      // loop continues (still bounded by maxRounds + llmEmpty).
+      // `prevFailure` was carried from the prior round (or baseline)
+      // at the bottom of the loop.
       final currentFailed = runResult.manifest!.failedSymbol;
-      if (currentFailed != null &&
-          priorRoundFailed != null &&
-          currentFailed == priorRoundFailed) {
+      final currentTried =
+          triedArtifactsForFailedSymbol(runResult.manifest!);
+      if (isNoProgress(
+        currentFailed: currentFailed,
+        prevFailed: prevFailure?.symbol,
+        currentTried: currentTried,
+        prevTried: prevFailure?.tried ?? const {},
+      )) {
         _finish(AutoTuneFinishReason.noProgressOnSymbol, round: round);
         return;
       }
+      prevFailure = currentFailed == null
+          ? null
+          : (symbol: currentFailed, tried: currentTried);
 
       round++;
     }
@@ -301,11 +344,131 @@ class LlmSynthesisOrchestrator extends ChangeNotifier {
     ));
   }
 
-  bool _budgetExhausted(AutoTuneConfig config) {
-    final start = _sessionStart;
-    if (start == null) return false;
-    return DateTime.now().difference(start) > config.maxWallClock;
+  /// For each accepted [GenerateCustomHook] in [recs], stream the
+  /// hook-body generation via [LlmHookGenerator], persist the
+  /// resulting body as a user-origin artifact, and seed a
+  /// [HookBinding] so the next synthesis run picks it up. Updates
+  /// the modal with [AutoTuneGeneratingHook] state during each
+  /// stream so the user sees progress.
+  ///
+  /// Returns false (and calls [_finish] with `llmError`) when the
+  /// hook generator isn't wired (no project loaded) or a generation
+  /// errors out; the caller should `return` early. Returns true
+  /// when every rec generated and seeded successfully.
+  Future<bool> _generateAndSeedCustomHooks(
+    List<GenerateCustomHook> recs, {
+    required int round,
+  }) async {
+    final generator = container.read(llmHookGeneratorProvider);
+    if (generator == null) {
+      _finish(AutoTuneFinishReason.llmError,
+          round: round,
+          errorMessage:
+              'LlmHookGenerator unavailable (no project / RAG index '
+              'not ready); cannot author custom hooks.');
+      return false;
+    }
+    final artifactDb = container.read(artifactDatabaseProvider);
+    final emulator = container.read(currentEmulatorProvider);
+    final elfHash = emulator?.synthesisResult?.manifest?.elfHash;
+
+    for (final rec in recs) {
+      if (_cancelled) return false;
+      final thinkingBuf = StringBuffer();
+      final responseBuf = StringBuffer();
+      _setState(AutoTuneGeneratingHook(
+        round: round + 1,
+        symbol: rec.symbol,
+        thinkingText: '',
+        responseText: '',
+      ));
+      try {
+        // Streaming generation — route thinking to a side buffer
+        // for live UI display, accumulate response chunks for the
+        // hook body itself. Same shape the recommendation flow
+        // uses.
+        await for (final ev in generator.generateEvents(
+          userPrompt: rec.intent ?? _defaultHookIntent(rec.symbol),
+          targetSymbol: rec.symbol,
+          elfHash: elfHash,
+        )) {
+          switch (ev) {
+            case LlmThinkingChunk(:final text):
+              thinkingBuf.write(text);
+              _setState(AutoTuneGeneratingHook(
+                round: round + 1,
+                symbol: rec.symbol,
+                thinkingText: thinkingBuf.toString(),
+                responseText: responseBuf.toString(),
+              ));
+            case LlmResponseChunk(:final text):
+              responseBuf.write(text);
+              _setState(AutoTuneGeneratingHook(
+                round: round + 1,
+                symbol: rec.symbol,
+                thinkingText: thinkingBuf.toString(),
+                responseText: responseBuf.toString(),
+              ));
+            case LlmStreamDone():
+              break;
+          }
+        }
+      } catch (e) {
+        _finish(AutoTuneFinishReason.llmError,
+            round: round,
+            errorMessage:
+                'Hook generation failed for ${rec.symbol}: $e');
+        return false;
+      }
+      final body = responseBuf.toString().trim();
+      if (body.isEmpty) {
+        _finish(AutoTuneFinishReason.llmError,
+            round: round,
+            errorMessage:
+                'Hook generation produced no output for ${rec.symbol}.');
+        return false;
+      }
+
+      final newId = await artifactDb.addArtifact(
+        artifactType: 'renode_hook',
+        artifactData: body,
+        origin: 'user',
+        name: 'llm:auto-tune-r$round:${rec.symbol}',
+        architecture: 'ARM',
+        targetSymbolName: rec.symbol,
+        intrinsicScore: 0.5,
+      );
+
+      final currentBindings = Map<String, HookBinding>.from(
+          container.read(hookBindingsProvider));
+      currentBindings[rec.symbol] = HookBinding(
+        artifactId: newId,
+        fidelity: 0.5,
+        provenance: 'llm:auto-tune-r$round',
+        createdAt: DateTime.now(),
+      );
+      container.read(hookBindingsProvider.notifier).state =
+          currentBindings;
+      container.read(emulatorDirtyProvider.notifier).state = true;
+      debugPrint(
+          '[AutoTune] generated custom hook for ${rec.symbol} '
+          '→ artifact #$newId (round $round)'
+          '${generator.lastWatchdogFired ? ' [watchdog_fired: '
+              'a thinking spiral was bounded and retried think-off]' : ''}');
+    }
+    return true;
   }
+
+  /// Fallback `userPrompt` when the LLM didn't include an
+  /// `intent` on the GenerateCustomHook recommendation. Generic
+  /// enough that the hook-gen LLM falls back to its own
+  /// reasoning over the symbol's decompilation.
+  static String _defaultHookIntent(String symbol) =>
+      'Author a Renode hook for the firmware function `$symbol`. '
+      "Its existing template-based hook didn't progress the "
+      'firmware past this symbol; design a behavior (returning a '
+      'sentinel value, toggling a status bit, etc.) that lets '
+      'execution continue.';
 
   Future<SynthesizerResult?> _runSynthesisAndAwait() async {
     final emulator = container.read(currentEmulatorProvider);
@@ -327,7 +490,11 @@ class LlmSynthesisOrchestrator extends ChangeNotifier {
     required int round,
     required AutoTuneConfig config,
   }) async {
-    _setState(AutoTuneLlmGenerating(round: round, streamedText: ''));
+    _setState(AutoTuneLlmGenerating(
+      round: round,
+      thinkingText: '',
+      responseText: '',
+    ));
     final emulator = container.read(currentEmulatorProvider);
     final manifest = emulator?.synthesisResult?.manifest;
     final callGraph = emulator?.cachedCallGraph;
@@ -341,27 +508,127 @@ class LlmSynthesisOrchestrator extends ChangeNotifier {
     final history = emulator!.roundSnapshots
         .take(config.snapshotWindowSize.clamp(1, 100))
         .toList();
+    // Derive the coverage frontier — the boundary functions where
+    // execution stopped expanding. This is the Job-2 (proactive
+    // coverage) signal; RecommendationService includes it in the
+    // prompt + narrows the output schema to it when the run didn't
+    // crash. Empty for job-1 (crash) runs, which is fine — recommend()
+    // only uses it in job2 mode.
+    final executed = manifest.executedSymbols?.toSet() ?? <String>{};
+    final frontier =
+        computeFrontier(executedSymbols: executed, callGraph: callGraph);
     final service = container.read(recommendationServiceProvider);
-    final buf = StringBuffer();
+    final thinkingBuf = StringBuffer();
+    final responseBuf = StringBuffer();
+    String? composedPrompt;
     try {
-      return await service.recommend(
+      final result = await service.recommend(
         currentManifest: manifest,
         currentState: overlayState,
         callGraph: callGraph,
         history: history,
         optimizationTarget: config.optimizationTarget,
+        frontier: frontier,
+        onPromptComposed: (p) => composedPrompt = p,
         onToken: (tok) {
-          buf.write(tok);
+          responseBuf.write(tok);
           _setState(AutoTuneLlmGenerating(
             round: round,
-            streamedText: buf.toString(),
+            thinkingText: thinkingBuf.toString(),
+            responseText: responseBuf.toString(),
+          ));
+        },
+        onThinking: (chunk) {
+          thinkingBuf.write(chunk);
+          _setState(AutoTuneLlmGenerating(
+            round: round,
+            thinkingText: thinkingBuf.toString(),
+            responseText: responseBuf.toString(),
           ));
         },
       );
+      _persistLlmTrace(
+        round: round,
+        emulator: emulator,
+        prompt: composedPrompt ?? '(prompt not captured)',
+        thinking: thinkingBuf.toString(),
+        response: responseBuf.toString(),
+        result: result,
+      );
+      return result;
     } catch (e) {
+      _persistLlmTrace(
+        round: round,
+        emulator: emulator,
+        prompt: composedPrompt ?? '(prompt not captured)',
+        thinking: thinkingBuf.toString(),
+        response: responseBuf.toString(),
+        result: null,
+        errorMessage: e.toString(),
+      );
       _finish(AutoTuneFinishReason.llmError,
           round: round - 1, errorMessage: e.toString());
       return null;
+    }
+  }
+
+  /// Overwrite the per-project debug trace file with the round's
+  /// full LLM exchange — prompt, thinking stream, response stream,
+  /// and the done_reason / token-count footer.
+  ///
+  /// Behavior: single file at `<emulatorDir>/last_recommendation_trace.txt`,
+  /// overwritten on every round. No append, no rotation — the
+  /// user always sees the most recent round's trace.
+  /// Best-effort: any IO error is swallowed via debugPrint so the
+  /// auto-tune flow keeps running even if the disk is read-only or
+  /// the project hasn't been saved (no path to write to).
+  void _persistLlmTrace({
+    required int round,
+    required Emulator emulator,
+    required String prompt,
+    required String thinking,
+    required String response,
+    required RecommendationResult? result,
+    String? errorMessage,
+  }) {
+    final emulatorPath = emulator.emulatorPath;
+    if (emulatorPath == null) return;
+    try {
+      final dir = File(emulatorPath).parent;
+      final out = File('${dir.path}/last_recommendation_trace.txt');
+      final modelTag = result?.model ?? '(unknown)';
+      final timestamp = DateTime.now().toIso8601String();
+      final buf = StringBuffer()
+        ..writeln(
+            '=== Auto-tune round $round | $timestamp | model: $modelTag ===')
+        ..writeln()
+        ..writeln('--- Prompt ---')
+        ..writeln(prompt)
+        ..writeln()
+        ..writeln('--- Thinking ---')
+        ..writeln(thinking.isEmpty ? '(no thinking emitted)' : thinking)
+        ..writeln()
+        ..writeln('--- Response ---')
+        ..writeln(response.isEmpty ? '(no response emitted)' : response)
+        ..writeln()
+        ..writeln('--- Result ---');
+      if (errorMessage != null) {
+        buf.writeln('exception: $errorMessage');
+      } else if (result == null) {
+        buf.writeln('result: null (no result returned)');
+      } else {
+        final diag = result.diagnostic;
+        buf
+          ..writeln('done_reason: ${diag?.doneReason ?? "(unknown)"}')
+          ..writeln('response_tokens: ${diag?.responseTokens ?? "(unknown)"}')
+          ..writeln('thinking_chunks: ${diag?.thinkingChunks ?? "(unknown)"}')
+          ..writeln(
+              'parse_failure_kind: ${result.parseFailureKind?.name ?? "(none)"}')
+          ..writeln('recommendations_count: ${result.recommendations.length}');
+      }
+      out.writeAsStringSync(buf.toString());
+    } catch (e) {
+      debugPrint('[AutoTune] failed to write LLM trace: $e');
     }
   }
 
@@ -471,10 +738,53 @@ class AutoTuneSynthesizing extends AutoTuneState {
 class AutoTuneLlmGenerating extends AutoTuneState {
   const AutoTuneLlmGenerating({
     required this.round,
-    required this.streamedText,
+    required this.thinkingText,
+    required this.responseText,
   });
+
+  /// Round number the LLM is currently generating recommendations
+  /// for.
   final int round;
-  final String streamedText;
+
+  /// Accumulated reasoning trace tokens streamed from Ollama's
+  /// `thinking` channel. Surfaced as a dimmed pane above the
+  /// response so the user has something meaningful to watch while
+  /// the model decides.
+  final String thinkingText;
+
+  /// Accumulated response-channel tokens (the eventual JSON
+  /// payload). Surfaced as the primary streaming view.
+  final String responseText;
+}
+
+/// State while an accepted [GenerateCustomHook] recommendation is
+/// being authored by [LlmHookGenerator]. Hook generation is slow
+/// (30-90s on a 12B model) so the modal needs a state with
+/// streaming progress instead of freezing. Reuses the same
+/// thinking/response stream shape as [AutoTuneLlmGenerating].
+class AutoTuneGeneratingHook extends AutoTuneState {
+  const AutoTuneGeneratingHook({
+    required this.round,
+    required this.symbol,
+    required this.thinkingText,
+    required this.responseText,
+  });
+
+  /// Round number whose accepted GenerateCustomHook recs are being
+  /// authored. Same `round + 1`-ish display semantics as
+  /// [AutoTuneSynthesizing] — the user just applied round N's
+  /// recommendations.
+  final int round;
+
+  /// Symbol the hook is being generated for.
+  final String symbol;
+
+  /// Reasoning trace from the hook-gen model. Streamed live.
+  final String thinkingText;
+
+  /// Accumulated Python hook body the model is writing. Streamed
+  /// into the body pane as it comes.
+  final String responseText;
 }
 
 class AutoTuneReviewing extends AutoTuneState {
@@ -484,9 +794,28 @@ class AutoTuneReviewing extends AutoTuneState {
 }
 
 class AutoTuneParseFailed extends AutoTuneState {
-  const AutoTuneParseFailed({required this.round, required this.raw});
+  const AutoTuneParseFailed({
+    required this.round,
+    required this.raw,
+    this.kind,
+    this.diagnostic,
+  });
+
   final int round;
   final String raw;
+
+  /// Why the parser failed. When `null`, the modal falls back to the
+  /// legacy "couldn't be parsed as JSON" body. New code threads
+  /// [RecommendationParseFailureKind] from `RecommendationResult`
+  /// through here so the modal can render a remediation tailored to
+  /// the actual failure mode.
+  final RecommendationParseFailureKind? kind;
+
+  /// Diagnostic stats from Ollama's final NDJSON line, present when
+  /// [kind] is [RecommendationParseFailureKind.emptyResponse]. Lets
+  /// the modal show `done_reason`, response/thinking token counts so
+  /// the user knows exactly why no response landed.
+  final RecommendationDiagnostic? diagnostic;
 }
 
 class AutoTuneFinished extends AutoTuneState {
@@ -511,7 +840,6 @@ enum AutoTuneFinishReason {
   noProgressOnSymbol,
   cancelled,
   maxRounds,
-  budgetExhausted,
   synthesisError,
   llmError,
 }

@@ -1,10 +1,12 @@
 import 'package:emulator_orchestrator/data/models/comms_assignment.dart';
+import 'package:emulator_orchestrator/orchestrator/comms/comms_config.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-/// Built-in device handler kinds available in v1. Future handlers
-/// (register-model, recorded playback, real-hardware bridge) plug in
-/// behind the same DeviceHandler interface in B4 and would appear here.
-enum CommsDeviceHandlerKind { zero, random }
+// `CommsProtocolConfig` + `CommsDeviceHandlerKind` moved into the orchestrator
+// package so the headless CLI builds comms hooks through the identical path.
+// Re-export them so existing UI imports of this file keep resolving.
+export 'package:emulator_orchestrator/orchestrator/comms/comms_config.dart'
+    show CommsDeviceHandlerKind, CommsProtocolConfig;
 
 extension CommsDeviceHandlerKindLabel on CommsDeviceHandlerKind {
   String get label {
@@ -15,42 +17,6 @@ extension CommsDeviceHandlerKindLabel on CommsDeviceHandlerKind {
         return 'Random bytes';
     }
   }
-}
-
-/// Per-protocol bus configuration (UDP port + device handler + virtualized flag).
-/// Currently session-scoped; B3/B4 will move this onto the Emulator for
-/// persistence, alongside the bus-hook application and the UDP server.
-class CommsProtocolConfig {
-  final int port;
-  final CommsDeviceHandlerKind handler;
-  final bool virtualized;
-
-  /// When [virtualized] is on, any symbol in this class with a known protocol
-  /// but no read/write role gets the catalog's default return0 hook instead
-  /// of being left to run the firmware's real implementation. Default on —
-  /// the bus virtualization promise is "this protocol is covered."
-  final bool fillUnmappedWithReturnZero;
-
-  const CommsProtocolConfig({
-    this.port = 1234,
-    this.handler = CommsDeviceHandlerKind.zero,
-    this.virtualized = false,
-    this.fillUnmappedWithReturnZero = true,
-  });
-
-  CommsProtocolConfig copyWith({
-    int? port,
-    CommsDeviceHandlerKind? handler,
-    bool? virtualized,
-    bool? fillUnmappedWithReturnZero,
-  }) =>
-      CommsProtocolConfig(
-        port: port ?? this.port,
-        handler: handler ?? this.handler,
-        virtualized: virtualized ?? this.virtualized,
-        fillUnmappedWithReturnZero:
-            fillUnmappedWithReturnZero ?? this.fillUnmappedWithReturnZero,
-      );
 }
 
 /// Class selected in the Comms tab's top dropdown.

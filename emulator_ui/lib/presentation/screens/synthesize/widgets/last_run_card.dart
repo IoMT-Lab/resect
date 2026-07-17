@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:emulator_orchestrator/data/models/last_run_insight.dart';
-import 'package:emulator_orchestrator/data/services/last_run_insight_service.dart';
+import 'package:emulator_orchestrator/data/services/llm_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -25,7 +25,7 @@ class LastRunCard extends ConsumerStatefulWidget {
 }
 
 class _LastRunCardState extends ConsumerState<LastRunCard> {
-  StreamSubscription<String>? _sub;
+  StreamSubscription<LlmStreamEvent>? _sub;
 
   @override
   void dispose() {
@@ -43,6 +43,7 @@ class _LastRunCardState extends ConsumerState<LastRunCard> {
     final insight = ref.watch(lastRunInsightProvider);
     final generating = ref.watch(lastRunInsightGeneratingProvider);
     final buffer = ref.watch(lastRunInsightStreamBufferProvider);
+    final thinkingBuffer = ref.watch(lastRunInsightThinkingBufferProvider);
     // Gate the LLM-dependent recommendation panel on the same module
     // flag the other LLM-driven UI (rag_card, hook_database_dialog,
     // llm_hook_gen_dialog) uses. The card's headline metrics
@@ -90,6 +91,7 @@ class _LastRunCardState extends ConsumerState<LastRunCard> {
             stale: stale,
             generating: generating,
             buffer: buffer,
+            thinkingBuffer: thinkingBuffer,
             onGenerate: !llmEnabled ||
                     emulator == null ||
                     result.manifest == null
@@ -112,38 +114,45 @@ class _LastRunCardState extends ConsumerState<LastRunCard> {
     }
     final service = ref.read(lastRunInsightServiceProvider);
     // Fallback model tag for the rare case where the service can't
-    // reach /api/tags and the first sentinel never fires. Overwritten
-    // by whatever the service picks (smallest installed).
+    // reach /api/tags and the onModelSelected callback never fires.
+    // Overwritten by whatever the service picks (smallest installed).
     var actualModelTag = ref.read(llmClientProvider).model;
 
     ref.read(lastRunInsightGeneratingProvider.notifier).state = true;
     ref.read(lastRunInsightStreamBufferProvider.notifier).state = '';
+    ref.read(lastRunInsightThinkingBufferProvider.notifier).state = '';
 
-    final stream = service.generate(
+    final stream = service.generateEvents(
       manifest: manifest,
       currentState: decisionState,
       callGraph: callGraph,
+      onModelSelected: (tag) => actualModelTag = tag,
     );
 
-    final buf = StringBuffer();
+    final respBuf = StringBuffer();
+    final thinkBuf = StringBuffer();
     await _sub?.cancel();
     _sub = stream.listen(
-      (token) {
-        // First token from the service is a model-tag sentinel
-        // (`\x00!model:<name>`) so the panel records which model
-        // actually wrote the cached insight. Strip it from the visible
-        // stream buffer.
-        if (token.startsWith(LastRunInsightService.modelSentinelPrefix)) {
-          actualModelTag = token
-              .substring(LastRunInsightService.modelSentinelPrefix.length);
-          return;
+      (event) {
+        switch (event) {
+          case LlmThinkingChunk(:final text):
+            thinkBuf.write(text);
+            ref.read(lastRunInsightThinkingBufferProvider.notifier).state =
+                thinkBuf.toString();
+          case LlmResponseChunk(:final text):
+            respBuf.write(text);
+            ref.read(lastRunInsightStreamBufferProvider.notifier).state =
+                respBuf.toString();
+          case LlmStreamDone():
+            // Terminal stats event — `onDone` below already handles
+            // closing out the advisor card, and the Last Run flow
+            // doesn't surface budget diagnostics today (only the
+            // auto-tune flow does, via RecommendationService).
+            break;
         }
-        buf.write(token);
-        ref.read(lastRunInsightStreamBufferProvider.notifier).state =
-            buf.toString();
       },
       onDone: () {
-        final text = buf.toString().trim();
+        final text = respBuf.toString().trim();
         if (text.isNotEmpty) {
           ref.read(lastRunInsightProvider.notifier).state = LastRunInsight(
             text: text,
@@ -155,10 +164,12 @@ class _LastRunCardState extends ConsumerState<LastRunCard> {
         }
         ref.read(lastRunInsightGeneratingProvider.notifier).state = false;
         ref.read(lastRunInsightStreamBufferProvider.notifier).state = '';
+        ref.read(lastRunInsightThinkingBufferProvider.notifier).state = '';
       },
       onError: (Object e) {
         ref.read(lastRunInsightGeneratingProvider.notifier).state = false;
         ref.read(lastRunInsightStreamBufferProvider.notifier).state = '';
+        ref.read(lastRunInsightThinkingBufferProvider.notifier).state = '';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('LLM call failed: $e')),
         );
@@ -305,6 +316,7 @@ class _RecommendationPanel extends StatelessWidget {
     required this.stale,
     required this.generating,
     required this.buffer,
+    required this.thinkingBuffer,
     required this.onGenerate,
     required this.onCancel,
   });
@@ -314,6 +326,7 @@ class _RecommendationPanel extends StatelessWidget {
   final bool stale;
   final bool generating;
   final String buffer;
+  final String thinkingBuffer;
   final VoidCallback? onGenerate;
   final VoidCallback onCancel;
 
@@ -401,8 +414,55 @@ class _RecommendationPanel extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Reasoning pane — surfaces the model's thinking trace
+                // as it arrives so the user has live feedback during
+                // the seconds-to-minutes the LLM spends reasoning.
+                // Hidden until the first thinking chunk lands.
+                if (thinkingBuffer.isNotEmpty) ...[
+                  const Text(
+                    'REASONING',
+                    style: TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 160),
+                    child: SingleChildScrollView(
+                      reverse: true,
+                      child: Text(
+                        thinkingBuffer,
+                        style: const TextStyle(
+                          color: AppTheme.textMuted,
+                          fontFamily: 'monospace',
+                          fontSize: 11,
+                          fontStyle: FontStyle.italic,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'RESPONSE',
+                    style: TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                ],
                 Text(
-                  buffer.isEmpty ? 'Thinking…' : buffer,
+                  buffer.isEmpty
+                      ? (thinkingBuffer.isEmpty
+                          ? 'Thinking…'
+                          : '(model still reasoning — response will stream when it concludes)')
+                      : buffer,
                   style: const TextStyle(
                     color: AppTheme.textPrimary,
                     fontSize: 12,

@@ -279,6 +279,66 @@ void main() {
       expect(decoded.decisions.single.symbol, 'HAL_GetTick');
     });
 
+    test('lastPauseSymbol round-trips on success=true manifests', () {
+      // The exact case the user complained about: success=true
+      // (every paused symbol got a hook) but the firmware was
+      // still spinning on LL_RCC_LSI_IsReady at the end. The
+      // manifest needs to carry that signal so the LLM advisor
+      // doesn't fall back to the wrong "Halt point" symbol.
+      final manifest = SynthesisManifest(
+        manifestVersion: SynthesisManifest.currentVersion,
+        elfHash: 'h',
+        elfFileName: 'f.elf',
+        synthesizerRunId: 'r',
+        result: const ManifestRunResult(
+            success: true, totalIterations: 9, durationSeconds: 38.8),
+        decisions: const [],
+        lastPauseSymbol: 'LL_RCC_LSI_IsReady',
+      );
+      final encoded = jsonEncode(manifest.toJson());
+      // Wire-format check: the JSON key is `last_pause_symbol`
+      // (snake_case), matching the rest of the manifest schema.
+      expect(encoded, contains('"last_pause_symbol":"LL_RCC_LSI_IsReady"'));
+      final decoded = SynthesisManifest.fromJson(
+          jsonDecode(encoded) as Map<String, dynamic>);
+      expect(decoded.lastPauseSymbol, 'LL_RCC_LSI_IsReady');
+      expect(decoded.failedSymbol, isNull);
+    });
+
+    test('lastPauseSymbol is omitted from JSON when null (legacy compat)',
+        () {
+      final manifest = SynthesisManifest(
+        manifestVersion: SynthesisManifest.currentVersion,
+        elfHash: 'h',
+        elfFileName: 'f.elf',
+        synthesizerRunId: 'r',
+        result: const ManifestRunResult(
+            success: true, totalIterations: 0, durationSeconds: 0.0),
+        decisions: const [],
+      );
+      final encoded = jsonEncode(manifest.toJson());
+      expect(encoded, isNot(contains('last_pause_symbol')));
+    });
+
+    test('v1 manifests load with lastPauseSymbol null', () {
+      // Legacy on-disk manifests don't carry the field — loader
+      // must tolerate its absence.
+      final v1Json = {
+        'manifest_version': 1,
+        'elf_hash': 'abc',
+        'elf_file_name': 'old.elf',
+        'synthesizer_run_id': '2026-03-01T00:00:00.000',
+        'result': {
+          'success': true,
+          'total_iterations': 5,
+          'duration_seconds': 30.0,
+        },
+        'decisions': const <dynamic>[],
+      };
+      final decoded = SynthesisManifest.fromJson(v1Json);
+      expect(decoded.lastPauseSymbol, isNull);
+    });
+
     test('withMetrics produces a copy with enrichment populated', () {
       final bare = SynthesisManifest(
         manifestVersion: SynthesisManifest.currentVersion,

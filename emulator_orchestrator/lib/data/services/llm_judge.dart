@@ -25,6 +25,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'llm_client.dart';
+import 'llm_profiles.dart';
 
 /// Outcome of one judge evaluation. The score is the candidate's
 /// quality on a 0-1 scale; lower means the baseline was preferred,
@@ -127,17 +128,22 @@ class LlmJudge {
       hookB: hookB,
     );
     final buf = StringBuffer();
+    // Judge params come from the shared profile (think-off / temp-0 /
+    // 256 tokens — a short structured-output task; reasoning would
+    // eat the budget before any response bytes appear). The verdict
+    // schema makes the output constrained-decoded, so `_parseVerdict`
+    // below is now the safety net rather than the load-bearing path.
+    const p = LlmProfiles.judge;
     await for (final chunk in client.generate(
       prompt,
       system: _kJudgeSystemPrompt,
-      // The judge is a short, structured-output task ("verdict JSON
-      // with winner + confidence + reason"). Reasoning would consume
-      // the 256-token budget before any response bytes appear. The
-      // hook-gen path defaults are tuned for the opposite trade —
-      // override them here.
-      think: false,
-      temperature: 0.0,
-      numPredict: 256,
+      think: p.think,
+      temperature: p.temperature,
+      topP: p.topP,
+      topK: p.topK,
+      numCtx: p.numCtx,
+      numPredict: p.numPredict,
+      format: _kVerdictSchema,
     )) {
       buf.write(chunk);
     }
@@ -165,7 +171,25 @@ double _qualityFromVerdict(_Verdict v, {required String candidateLabel}) {
   return candidateWon ? 0.5 + 0.5 * v.confidence : 0.5 - 0.5 * v.confidence;
 }
 
-const String _kJudgeSystemPrompt = '''
+/// Ollama constrained-decoding schema for the verdict. Mirrors the
+/// shape `_parseVerdict` expects; with this in effect the response
+/// channel can only emit a conforming object, so malformed-JSON
+/// verdicts (previously → winner 'unknown' → score 0.5) become
+/// unreachable. `winner` matches the prompt's "A" | "B" | "tie".
+const _kVerdictSchema = <String, Object?>{
+  'type': 'object',
+  'properties': {
+    'winner': {
+      'type': 'string',
+      'enum': ['A', 'B', 'tie'],
+    },
+    'confidence': {'type': 'number'},
+    'reason': {'type': 'string'},
+  },
+  'required': ['winner', 'confidence', 'reason'],
+};
+
+const _kJudgeSystemPrompt = '''
 You are evaluating substitute hooks for emulated firmware functions.
 
 Definition of "good substitute": the hook lets the firmware's caller

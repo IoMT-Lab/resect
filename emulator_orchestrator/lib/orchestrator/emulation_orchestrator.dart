@@ -6,16 +6,14 @@ import '../data/models/emulation_state.dart';
 import '../data/models/emulator.dart';
 import '../data/models/graph_point.dart';
 import '../data/models/hook_binding.dart';
-import '../data/services/llm_hook_generator.dart'
-    show LlmHookGenerator, PlatformFacts;
 import '../data/models/synthesizer_result.dart';
 import '../data/repositories/emulator_repository.dart';
-
+import '../data/services/llm_hook_generator.dart'
+    show LlmHookGenerator, PlatformFacts;
 import 'engine/call_graph_source.dart';
 import 'engine/emulation_controller.dart';
 import 'engine/engine_lifecycle.dart';
 import 'engine/trace_source.dart';
-
 import 'events/orchestrator_events.dart';
 import 'hook_spec.dart';
 import 'workflows/analysis_workflow.dart';

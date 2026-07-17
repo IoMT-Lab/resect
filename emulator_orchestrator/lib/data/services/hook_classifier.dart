@@ -408,9 +408,9 @@ ClassificationResult? _rule1EmptyOrVoidReturn(
 // a known data_symbol AND the name suggests a counter / tick / event
 // counter.
 
-final RegExp _kReturnIdentifier = RegExp(r'^return\s+([A-Za-z_]\w*)\s*;$');
-final RegExp _kCounterName =
-    RegExp(r'tick|counter|cnt|ms_count|systicks', caseSensitive: false);
+final _kReturnIdentifier = RegExp(r'^return\s+([A-Za-z_]\w*)\s*;$');
+final _kCounterName =
+    RegExp('tick|counter|cnt|ms_count|systicks', caseSensitive: false);
 
 ClassificationResult? _rule3CounterGlobal(
   String functionName,
@@ -440,7 +440,7 @@ ClassificationResult? _rule3CounterGlobal(
 // or 0xHEX). The constant is the value the original always
 // returned, and the substitute reproduces it verbatim.
 
-final RegExp _kReturnLiteral =
+final _kReturnLiteral =
     RegExp(r'^return\s+(0x[0-9a-fA-F]+|-?\d+)\s*;$');
 
 ClassificationResult? _rule2ReturnLiteral(
@@ -486,11 +486,11 @@ ClassificationResult? _rule2ReturnLiteral(
 // 64 MHz (the STM32WB05 typical core clock). Future work: derive
 // the default from chip ID / .repl peripherals.
 
-final RegExp _kClockName = RegExp(
-  r'(SystemCoreClock|SystemClock|HCLK|PCLK|AHB.*Clock|APB.*Clock)',
+final _kClockName = RegExp(
+  '(SystemCoreClock|SystemClock|HCLK|PCLK|AHB.*Clock|APB.*Clock)',
   caseSensitive: false,
 );
-const int _kDefaultChipClockHz = 64000000;
+const _kDefaultChipClockHz = 64000000;
 
 ClassificationResult? _rule4ChipConfigGlobal(
   String functionName,
@@ -524,11 +524,11 @@ ClassificationResult? _rule4ChipConfigGlobal(
 //   /ready|active|isset|valid|present/i → returnHook(1)  (ready)
 //   else                 → no match (LLM path)
 
-final RegExp _kFlagMaskReturn =
+final _kFlagMaskReturn =
     RegExp(r'^return\s+.*?\([^)]*?&[^)]*?\)[^;]*;$');
-final RegExp _kBusyName = RegExp(r'busy', caseSensitive: false);
-final RegExp _kReadyName =
-    RegExp(r'ready|active|isset|valid|present', caseSensitive: false);
+final _kBusyName = RegExp('busy', caseSensitive: false);
+final _kReadyName =
+    RegExp('ready|active|isset|valid|present', caseSensitive: false);
 
 ClassificationResult? _rule5BusyReadyFlag(
   String functionName,
@@ -564,8 +564,8 @@ ClassificationResult? _rule5BusyReadyFlag(
 // pattern is "wait for hardware to be ready or time out"; the
 // substitute just reports HAL_OK (= 0) immediately.
 
-final RegExp _kHalGetTickCall = RegExp(r'\bHAL_GetTick\s*\(');
-final RegExp _kDoWhileLoop = RegExp(r'\bdo\s*\{[\s\S]*?\}\s*while\b');
+final _kHalGetTickCall = RegExp(r'\bHAL_GetTick\s*\(');
+final _kDoWhileLoop = RegExp(r'\bdo\s*\{[\s\S]*?\}\s*while\b');
 
 ClassificationResult? _rule7HalPollingLoop(
   String functionName,
@@ -602,8 +602,8 @@ ClassificationResult? _rule7HalPollingLoop(
 // AND the return type is `void`. No reads, no branches, no calls.
 // Empty body matches Rule 1 instead.
 
-final RegExp _kPeripheralWriteStmt = RegExp(
-  r'^('
+final _kPeripheralWriteStmt = RegExp(
+  '^('
   r'_DAT_[0-9a-fA-F]+\s*=\s*[^;]+;'
   r'|[A-Za-z_]\w*\s*->\s*\w+\s*=\s*[^;]+;'
   r'|[A-Za-z_]\w*\s*\.\s*\w+\s*=\s*[^;]+;'

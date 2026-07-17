@@ -29,6 +29,28 @@ import '../manifest_builder.dart';
 /// The synthesizer uses the existing EmulationWorkflow for the initial engine
 /// startup, then manages subsequent reset/restart cycles directly via the
 /// emulation control channel (avoiding engine restarts between iterations).
+/// Minimum effective score for a candidate to count as "specialized"
+/// (a classifier binding or user artifact, both 0.5 today) rather than
+/// a generic template (≤0.2). Once no candidate at or above this score
+/// remains for a symbol, the synthesizer engages the LLM to author one
+/// instead of grinding through generics. Tunable; see the "per-symbol
+/// hook appropriateness scoring" item in TODO.txt for why this flat
+/// global floor is a stopgap.
+const _kLlmEngageMinScore = 0.5;
+
+/// True when no specialized candidate (effective score >= [minScore])
+/// remains to try at [nextIndex] in the score-DESC candidate list —
+/// i.e. the symbol's appropriate hooks are used up and it's time to
+/// author one. Running past the end of the list (full exhaustion) also
+/// counts. Pure so the LLM-engage decision is unit-testable without a
+/// live synthesizer/Renode.
+bool specializedCandidatesExhausted({
+  required int nextIndex,
+  required List<double> scoresDesc,
+  required double minScore,
+}) =>
+    nextIndex >= scoresDesc.length || scoresDesc[nextIndex] < minScore;
+
 class SynthesizerWorkflow {
   final EmulationController emulationController;
   final ArtifactDatabase artifactDb;
@@ -105,6 +127,14 @@ class SynthesizerWorkflow {
     final elfFileName = p.basename(elfPath);
 
     var iteration = 0;
+    // Tracks the LAST symbol the firmware tried to call before the
+    // synthesizer terminated, regardless of success. Distinct from
+    // `failedSymbol` (set only on !success). Updated each loop
+    // iteration when an unhandled pause is observed. Used by the
+    // LLM advisor's halt-point line so it can name the right symbol
+    // on `success=true` runs that ended with the firmware still
+    // spinning on a busy-ready hook.
+    String? lastObservedPauseSymbol;
 
     Map<String, String> buildHookCodeMap() => {
         for (final entry in hookMap.entries)
@@ -125,6 +155,7 @@ class SynthesizerWorkflow {
         duration: stopwatch.elapsed,
         failedSymbol: failedSymbol,
         attempts: attempts,
+        lastPauseSymbol: lastObservedPauseSymbol,
       );
       return SynthesizerResult(
         success: success,
@@ -132,6 +163,7 @@ class SynthesizerWorkflow {
         resolvedHooks: Map.unmodifiable(hookMap),
         resolvedHookCode: Map.unmodifiable(buildHookCodeMap()),
         failedSymbol: failedSymbol,
+        lastPauseSymbol: lastObservedPauseSymbol,
         totalDuration: stopwatch.elapsed,
         manifest: manifest,
       );
@@ -264,6 +296,7 @@ class SynthesizerWorkflow {
         }
 
         final symbol = pauseEvent.symbol!;
+        lastObservedPauseSymbol = symbol;
         print('[Synthesizer] Unhandled access at symbol: $symbol');
 
         // Forced override that failed: bail out, don't try alternatives.
@@ -282,6 +315,21 @@ class SynthesizerWorkflow {
           return result;
         }
 
+        // Effective score for a candidate under THIS symbol: the
+        // per-project binding's fidelity when the binding points at
+        // the artifact, else the artifact's global intrinsic floor.
+        // Hoisted to per-symbol scope (recomputed each iteration, so
+        // it sees bindings the LLM fallback adds mid-run) so both the
+        // candidate sort AND the LLM-engage gate below use the same
+        // scoring.
+        final binding = activeBindings[symbol];
+        double scoreFor(Artifact a) {
+          if (binding != null && binding.artifactId == a.id) {
+            return binding.fidelity;
+          }
+          return a.intrinsicScore ?? 0.0;
+        }
+
         if (!hookCache.containsKey(symbol)) {
           var hooks = await artifactDb.getArtifactsForSymbolByName(
             elfHash,
@@ -294,13 +342,6 @@ class SynthesizerWorkflow {
           // intrinsic floor when present. Without a binding, the intrinsic
           // floor drives ordering — generic `return 0` (0.0) sinks below
           // anything user-authored or specialized.
-          final binding = activeBindings[symbol];
-          double scoreFor(Artifact a) {
-            if (binding != null && binding.artifactId == a.id) {
-              return binding.fidelity;
-            }
-            return a.intrinsicScore ?? 0.0;
-          }
           hooks = [...hooks]..sort((a, b) {
               final byScore = scoreFor(b).compareTo(scoreFor(a));
               if (byScore != 0) return byScore;
@@ -345,37 +386,51 @@ class SynthesizerWorkflow {
         }
 
         final currentIndex = hookIndex[symbol] ?? 0;
+        final atExhaustion = currentIndex >= hooks.length;
 
-        if (currentIndex >= hooks.length) {
-          // On-demand LLM fallback: when every DB-cached candidate has
-          // been tried and none survives, ask the LLM for a hook —
-          // once per symbol. Insert the result as a Replacement
-          // artifact + a binding at fidelity 0.5 (pre-harness, per
-          // plan §2.1), then refresh the cache so the next loop
-          // iteration tries the new candidate.
-          if (llmGenerator != null && !triedLlm.contains(symbol)) {
-            triedLlm.add(symbol);
-            final llmBinding = await _tryLlmFallback(
-              symbol: symbol,
-              iteration: iteration,
-              elfHash: elfHash,
-              llmGenerator: llmGenerator,
-              platform: platform,
-            );
-            if (llmBinding != null) {
-              activeBindings[symbol] = llmBinding;
-              // Clear the per-symbol cache so the next iteration
-              // re-queries with the new artifact in the candidate
-              // list. Reset the hookIndex so the fresh sort starts
-              // from index 0.
-              hookCache.remove(symbol);
-              hookIndex.remove(symbol);
-              continue;
-            }
-            // Generation failed (empty output, network error, etc.) —
-            // fall through to the exhausted branch below.
+        // Engage the LLM as soon as no SPECIALIZED candidate (score >=
+        // _kLlmEngageMinScore — a classifier binding or user artifact)
+        // remains to try for this symbol, rather than waiting for the
+        // whole DB to be exhausted. Waiting for exhaustion made the
+        // fallback unreachable: a symbol's candidate list is the whole
+        // artifact DB (~17), larger than the iteration cap (10), so a
+        // hard symbol hit MAX_ITERATIONS before the LLM was ever asked.
+        // Generics (score < threshold) are still tried, but only as a
+        // last resort AFTER the LLM (the LLM's authored hook seeds a
+        // 0.5 binding and sorts to the front on the retry). Once the
+        // LLM has been tried for this symbol, we fall through to those
+        // remaining generics, then to symbol-exhausted failure.
+        final specializedOut = specializedCandidatesExhausted(
+          nextIndex: currentIndex,
+          scoresDesc: [for (final a in hooks) scoreFor(a)],
+          minScore: _kLlmEngageMinScore,
+        );
+        if (specializedOut &&
+            llmGenerator != null &&
+            !triedLlm.contains(symbol)) {
+          triedLlm.add(symbol);
+          final llmBinding = await _tryLlmFallback(
+            symbol: symbol,
+            iteration: iteration,
+            elfHash: elfHash,
+            llmGenerator: llmGenerator,
+            platform: platform,
+          );
+          if (llmBinding != null) {
+            activeBindings[symbol] = llmBinding;
+            // Clear the per-symbol cache so the next iteration
+            // re-queries with the new artifact in the candidate
+            // list. Reset the hookIndex so the fresh sort starts
+            // from index 0 (the authored hook sorts to the front).
+            hookCache.remove(symbol);
+            hookIndex.remove(symbol);
+            continue;
           }
+          // Generation failed (empty output, network error, etc.) —
+          // fall through to any remaining generic candidates below.
+        }
 
+        if (atExhaustion) {
           stopwatch.stop();
           _eventController.add(SynthesizerSymbolExhausted(
             iteration: iteration,
@@ -398,8 +453,8 @@ class SynthesizerWorkflow {
         // symbol (covers classifier-seeded, LLM-seeded, and
         // user-Replacement-back-fill bindings); llm_on_demand when
         // the LLM was just invoked for this symbol and produced the
-        // chosen artifact; iteration_fallback otherwise.
-        final binding = activeBindings[symbol];
+        // chosen artifact; iteration_fallback otherwise. `binding` is
+        // the per-symbol binding hoisted above.
         final bindingMatches =
             binding != null && binding.artifactId == hookArtifact.id;
 

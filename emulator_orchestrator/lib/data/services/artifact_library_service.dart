@@ -181,19 +181,17 @@ class ArtifactLibraryService {
   Map<String, double> _catalogIntrinsicScores() {
     final scores = <String, double>{};
 
-    // 0.0 — bare-no-op return-N templates (catalog + the two legacy bodies).
+    // 0.0 — bare-no-op return-N templates.
     for (final v in [0, 1]) {
       scores[_catalog.build('return', {'value': v}).code] = 0.0;
     }
-    // The legacy `_legacyReturn0` / `_legacyReturn1` bodies live in
-    // `HookCatalog.defaultCodes()` but aren't catalog-built (they're
-    // string constants). Score them by looking them up via the set
-    // minus the catalog-built bodies.
+    // Safety net: anything in `defaultCodes()` that hasn't been
+    // classified above falls through to 0.0 here. The remaining
+    // entries (read/write/increment) get their real score from the
+    // explicit blocks below, which overwrite this floor.
     final knownBuilt = scores.keys.toSet();
     for (final body in _catalog.defaultCodes()) {
       if (knownBuilt.contains(body)) continue;
-      // The other defaultCodes entries — legacy returns, read/write,
-      // increment — get classified below or default to 0.0.
       scores[body] = 0.0;
     }
 
@@ -253,7 +251,7 @@ class ArtifactLibraryService {
   Future<void> migrateLegacyHookBodies() async {
     final legacy = RegExp(
       r'^\s*(?:import|from)\s+'
-      r'(set_return_value|variables|comms|i2c_local|i2c_remote|'
+      '(set_return_value|variables|comms|i2c_local|i2c_remote|'
       r'uart_remote|pointer|stm32_glue)\b',
       multiLine: true,
     );
@@ -349,11 +347,16 @@ class ArtifactLibraryService {
       canonicalBody =
           _catalog.build('read', {'scope': '', 'defaultValue': n}).code;
     }
+    // Pre-A2 `RegisterValue.Create(N, 64)` legacy bodies route to
+    // the catalog `return` body — the legacy templates were
+    // removed from the seed set on 2026-06-17 because they
+    // duplicated the catalog-built returns. Existing DBs carrying
+    // the old bodies migrate on the next manual Reseed.
     if (canonicalBody == null && obsoleteBody.contains('Create(0,')) {
-      canonicalBody = _legacyReturn0HookCode;
+      canonicalBody = _catalog.build('return', {'value': 0}).code;
     }
     if (canonicalBody == null && obsoleteBody.contains('Create(1,')) {
-      canonicalBody = _legacyReturn1HookCode;
+      canonicalBody = _catalog.build('return', {'value': 1}).code;
     }
     if (canonicalBody == null) {
       final ret = RegExp(r'setReturnValue\(cpu,\s*(-?\d+)\)')
@@ -366,24 +369,16 @@ class ArtifactLibraryService {
     return canonicalBody == null ? null : survivors[canonicalBody];
   }
 
-  /// Pre-A2 hardcoded return0/return1 hook bodies — kept available
-  /// alongside the catalog variants per earlier guidance.
-  static const _legacyReturn0HookCode = '''
-from Antmicro.Renode.Peripherals.CPU import RegisterValue
-cpu.SetRegister(0, RegisterValue.Create(0, 64))
-cpu.PC = cpu.LR
-''';
-  static const _legacyReturn1HookCode = '''
-from Antmicro.Renode.Peripherals.CPU import RegisterValue
-cpu.SetRegister(0, RegisterValue.Create(1, 64))
-cpu.PC = cpu.LR
-''';
-
-  /// 10 canonical default template bodies: two legacy returns + two
-  /// catalog returns + read/write/increment × value 0/1.
+  /// 8 canonical default template bodies: catalog returns +
+  /// read/write/increment × value 0/1.
+  ///
+  /// Two pre-A2 `RegisterValue.Create(N, 64)` legacy return bodies
+  /// were removed on 2026-06-17 because they duplicated the
+  /// catalog-built returns; existing DBs migrate via the manual
+  /// "Reseed defaults" button in the Hook Database dialog, which
+  /// routes the old bodies to the catalog ids via
+  /// `_matchCanonical`.
   List<String> _defaultTemplateCodes() => [
-        _legacyReturn0HookCode,
-        _legacyReturn1HookCode,
         _catalog.build('return', {'value': 0}).code,
         _catalog.build('return', {'value': 1}).code,
         _catalog.build('read', {'scope': '', 'defaultValue': 0}).code,
