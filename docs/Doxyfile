@@ -1,0 +1,30 @@
+# Doxygen configuration for the Resect documentation site.
+#
+# Run from the repository root:
+#
+#     doxygen docs/Doxyfile
+#
+# Output lands in docs/generated/html/ (gitignored). Only the options that
+# differ from the doxygen 1.14 defaults (`doxygen -g`) are set here; every
+# other option keeps its default. Notably, the defaults already give us
+# MARKDOWN_SUPPORT = YES and GENERATE_TREEVIEW = YES.
+#
+# This site is hand-written architecture documentation only — Doxygen has no
+# Dart parser, so no source code is scanned. API-level documentation lives in
+# /// doc comments in the Dart source.
+
+PROJECT_NAME           = "Resect"
+PROJECT_BRIEF          = "Firmware re-hosting workbench — architecture documentation"
+
+OUTPUT_DIRECTORY       = docs/generated
+GENERATE_LATEX         = NO
+
+INPUT                  = docs/pages
+FILE_PATTERNS          = *.md
+USE_MDFILE_AS_MAINPAGE = docs/pages/index.md
+
+# Only headings up to ### become tree-view entries; deeper headings are
+# still rendered, just not indexed.
+TOC_INCLUDE_HEADINGS   = 3
+
+QUIET                  = YES

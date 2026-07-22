@@ -36,6 +36,15 @@ an HTTP API server — all backed by the same orchestrator.
 Supported targets: ARM (via `arm-none-eabi-objdump`) and x86_64 (via stock
 `objdump`).
 
+## Documentation
+
+The architecture documentation lives in [docs/pages/](docs/pages/) as a
+Doxygen site — start with `docs/pages/index.md`, or generate the browsable
+version with `doxygen docs/Doxyfile` (from the repo root) and open
+`docs/generated/html/index.html`. Those pages are the source of truth for
+the architecture: design changes are written there first, then the code is
+aligned to them.
+
 ## Architecture
 
 ```
