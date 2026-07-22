@@ -1,6 +1,7 @@
 import '../../data/models/comms_assignment.dart';
 import '../../data/models/emulator.dart';
 import '../../data/services/hook_catalog.dart';
+import '../../data/services/signatures_service.dart';
 import '../hook_spec.dart';
 
 /// Built-in device handler kinds available for a virtualized comms bus.
@@ -65,6 +66,7 @@ Map<String, HookSpec> buildCommsHooks({
   required Emulator emulator,
   required Map<CommsClass, CommsProtocolConfig> configs,
   required HookCatalog catalog,
+  Map<String, int?> argCounts = const {},
 }) {
   final hooks = <String, HookSpec>{};
   for (final entry in emulator.commsAssignments.entries) {
@@ -86,8 +88,61 @@ Map<String, HookSpec> buildCommsHooks({
     final kindId = '${assignment.protocol.name}_${role.name}';
     if (catalog.descriptor(kindId) == null) continue;
 
+    // Only forward-hook functions that actually take the arguments the
+    // extractor reads. The stm32_glue I2C extractor reads the 6th argument
+    // (Size, at [SP+4]); UART reads the 3rd (r2). A function with fewer args
+    // — e.g. `get_i2c`, a zero-arg accessor that just returns the bus handle —
+    // would make the extractor read register/stack leftovers and forward a
+    // bogus, out-of-spec request. Skip it and let it run natively (do NOT fall
+    // through to the return-0 fill, which would clobber the accessor's real
+    // return value). An unknown arg count (no signature cached) → attach, so
+    // the gate only removes hooks it can prove are misapplied.
+    final argCount = argCounts[symbol];
+    if (argCount != null &&
+        argCount < _minExtractorArgs(assignment.protocol)) {
+      continue;
+    }
+
     final hook = catalog.build(kindId, {'port': config.port});
     hooks[symbol] = (code: hook.code, scope: hook.scope);
   }
   return hooks;
+}
+
+/// Minimum argument count a symbol must have for the `stm32_glue` extractor to
+/// read genuine arguments rather than register/stack leftovers. Coupled to the
+/// extractor's fixed ABI assumptions (see hooks-dart `stm32_glue.py`):
+/// - I2C read/write read up to the 6th arg (`Size` at `[SP+4]`) → need ≥6.
+/// - UART read/write read up to the 3rd arg (`r2`) → need ≥3.
+/// SPI has no forwarding extractor, so no gate applies.
+int _minExtractorArgs(CommsClass protocol) {
+  switch (protocol) {
+    case CommsClass.i2c:
+      return 6;
+    case CommsClass.uart:
+      return 3;
+    case CommsClass.spi:
+    case CommsClass.unclassified:
+      return 0;
+  }
+}
+
+/// Pre-fetch each comms-classified symbol's argument count from the signatures
+/// cache, so [buildCommsHooks] can gate forwarding-hook attachment on a
+/// function actually having the arguments the extractor reads. Values are the
+/// parameter count, or `null` when no signature is cached (Ghidra module off,
+/// or the symbol isn't in the ELF) — [buildCommsHooks] treats `null` as
+/// "unknown, attach". Async (DB reads); call once before [buildCommsHooks].
+Future<Map<String, int?>> fetchCommsArgCounts({
+  required Emulator emulator,
+  required SignaturesService signatures,
+  required String elfHash,
+}) async {
+  final out = <String, int?>{};
+  for (final symbol in emulator.commsAssignments.keys) {
+    final sig =
+        await signatures.signatureFor(elfHash: elfHash, symbolName: symbol);
+    out[symbol] = sig?.parameters.length;
+  }
+  return out;
 }

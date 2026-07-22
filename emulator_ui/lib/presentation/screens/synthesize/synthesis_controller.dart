@@ -67,10 +67,33 @@ class SynthesisController {
     _pauseSub?.cancel();
     _pauseSub = null;
 
+    // Firmware record (elfHash) is needed both to gate comms hooks on function
+    // signatures and by the synthesizer below.
+    final firmwareRecord = ref.read(artifactProcessingProvider).valueOrNull;
+    if (firmwareRecord == null) {
+      ref.read(synthesisProgressProvider.notifier).state = null;
+      throw StateError(
+        'Firmware not processed. Ensure the call graph has loaded.',
+      );
+    }
+    final elfHash = firmwareRecord.elfHash;
+
+    // Gate forwarding hooks on each symbol's real argument count so non-transfer
+    // accessors (e.g. get_i2c) aren't wrongly hooked as bus reads. Only fetch
+    // when a protocol is actually virtualized (default is off).
+    final commsConfigs = ref.read(commsProtocolConfigProvider);
+    final commsArgCounts = commsConfigs.values.any((c) => c.virtualized)
+        ? await fetchCommsArgCounts(
+            emulator: emulator,
+            signatures: ref.read(signaturesServiceProvider),
+            elfHash: elfHash,
+          )
+        : const <String, int?>{};
     final commsHooks = buildCommsHooks(
       emulator: emulator,
-      configs: ref.read(commsProtocolConfigProvider),
+      configs: commsConfigs,
       catalog: ref.read(hookCatalogProvider),
+      argCounts: commsArgCounts,
     );
 
     await orchestrator.restartEmulation(
@@ -84,15 +107,6 @@ class SynthesisController {
       commsHooks: commsHooks,
       memoryMapPath: config.memoryMapPath,
     );
-
-    final firmwareRecord = ref.read(artifactProcessingProvider).valueOrNull;
-    if (firmwareRecord == null) {
-      ref.read(synthesisProgressProvider.notifier).state = null;
-      throw StateError(
-        'Firmware not processed. Ensure the call graph has loaded.',
-      );
-    }
-    final elfHash = firmwareRecord.elfHash;
 
     ref.read(synthesisProgressProvider.notifier).state = SynthesisProgress(
       countdownStart: DateTime.now(),
@@ -152,10 +166,21 @@ class SynthesisController {
     _subscribeTrace();
     _subscribePauseEvents();
 
+    final commsConfigs = ref.read(commsProtocolConfigProvider);
+    final firmwareRecord = ref.read(artifactProcessingProvider).valueOrNull;
+    final commsArgCounts = (firmwareRecord != null &&
+            commsConfigs.values.any((c) => c.virtualized))
+        ? await fetchCommsArgCounts(
+            emulator: emulator,
+            signatures: ref.read(signaturesServiceProvider),
+            elfHash: firmwareRecord.elfHash,
+          )
+        : const <String, int?>{};
     final commsHooks = buildCommsHooks(
       emulator: emulator,
-      configs: ref.read(commsProtocolConfigProvider),
+      configs: commsConfigs,
       catalog: ref.read(hookCatalogProvider),
+      argCounts: commsArgCounts,
     );
 
     await orchestrator.restartEmulation(

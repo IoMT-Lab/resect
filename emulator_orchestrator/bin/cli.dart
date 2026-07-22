@@ -19,6 +19,7 @@ import 'package:emulator_orchestrator/data/services/llm_client.dart';
 import 'package:emulator_orchestrator/data/services/llm_hook_generator.dart';
 import 'package:emulator_orchestrator/data/services/rag_index.dart';
 import 'package:emulator_orchestrator/data/services/recommendation_service.dart';
+import 'package:emulator_orchestrator/data/services/signatures_service.dart';
 import 'package:emulator_orchestrator/orchestrator/auto_tune_engine.dart';
 import 'package:emulator_orchestrator/orchestrator/auto_tune_report_writer.dart';
 import 'package:emulator_orchestrator/orchestrator/comms/comms_bus_service.dart';
@@ -523,10 +524,19 @@ Future<void> _runAutotune(Map<String, String> flags) async {
       for (final c in commsClasses)
         c: CommsProtocolConfig(port: commsPorts[c] ?? 1234, virtualized: true),
     };
+    // Gate forwarding hooks on each symbol's real argument count so non-transfer
+    // accessors (e.g. get_i2c, a 0-arg handle getter) aren't wrongly hooked as
+    // bus reads and made to forward stack-leftover garbage.
+    final commsArgCounts = await fetchCommsArgCounts(
+      emulator: emulator,
+      signatures: SignaturesService(db: orchestrator.artifactDb),
+      elfHash: elfHash,
+    );
     final commsHooks = buildCommsHooks(
       emulator: emulator,
       configs: commsConfigs,
       catalog: HookCatalog.system(),
+      argCounts: commsArgCounts,
     );
     // Status map the decision-state builder + recommend prompt read.
     final commsStatus = <CommsClass, CommsProtocolStatus>{

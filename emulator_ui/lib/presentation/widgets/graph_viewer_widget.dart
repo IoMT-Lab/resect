@@ -101,7 +101,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
   /// Drives the Refresh / Regenerate button-label flip on the "stopped"
   /// state — Shift turns the cheap in-memory refresh into a forced
   /// artifact-DB invalidate + Ghidra re-extract.
-  bool _shiftHeld = false;
+  var _shiftHeld = false;
 
   /// Mode captured when the user CLICKED the call-graph button — used
   /// for the in-flight spinner label so it doesn't flip back to

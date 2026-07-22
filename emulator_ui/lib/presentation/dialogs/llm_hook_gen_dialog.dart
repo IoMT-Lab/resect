@@ -78,7 +78,7 @@ class _LlmHookGenDialogState extends ConsumerState<LlmHookGenDialog> {
   /// extraction is in flight; "none" otherwise. Drives the
   /// dialog's Context line and tells the user whether they're
   /// going to get Ghidra-derived argument storage in the prompt.
-  String _signatureCacheStatus = 'none';
+  var _signatureCacheStatus = 'none';
 
   /// Result of the most recent [HookTestHarness.runHook] pass over
   /// the just-generated code. Populated automatically when the
@@ -565,7 +565,7 @@ class _LlmHookGenDialogState extends ConsumerState<LlmHookGenDialog> {
   /// Baseline hook the LLM judge compares the candidate against:
   /// the bare-minimum no-op substitute. If the candidate doesn't
   /// beat this, the candidate isn't adding value.
-  static const String _kBaselineSubstitute =
+  static const _kBaselineSubstitute =
       'import set_return_value\nsetReturnValue(cpu, 0)\n';
 
   /// Run [HookStaticAnalyzer] when we have everything it needs

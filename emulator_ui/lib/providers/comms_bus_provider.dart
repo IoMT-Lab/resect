@@ -9,7 +9,7 @@ import 'comms_config_providers.dart';
 // `buildCommsHooks` moved into the orchestrator package (shared with the
 // headless CLI). Re-exported so existing UI imports keep resolving.
 export 'package:emulator_orchestrator/orchestrator/comms/comms_config.dart'
-    show buildCommsHooks;
+    show buildCommsHooks, fetchCommsArgCounts;
 
 /// The CommsBusService instance for the running app.
 final commsBusServiceProvider = Provider<CommsBusService>((ref) {
