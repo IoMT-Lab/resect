@@ -28,7 +28,7 @@ dependencies:
   callgraph:
     git:
       url: git@github.com:IoMT-Lab/callgraph-dart.git
-      ref: e35507e3211df87331114b92ac00a18a6141496a
+      ref: f29d7639dd872180cfb05ffaceb46b735154ee82
   hooks:
     git:
       url: git@github.com:IoMT-Lab/hooks-dart.git
