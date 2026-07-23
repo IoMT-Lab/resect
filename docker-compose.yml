@@ -1,0 +1,64 @@
+# Resect development stack.
+#
+#   renode       - Renode emulation environment
+#   ollama       — LLM inference + embeddings server (HTTP)
+#   ollama-init  — one-shot: pulls the shipped models into the persistent volume
+#
+
+services:
+  renode:
+    image: nexus.medmakers.io/docker/renode:latest
+    network_mode: "host"
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    environment:
+      # Bind all interfaces so the resect + ollama-init containers can reach it
+      # by service name over the Compose network.
+      OLLAMA_HOST: 0.0.0.0:11434
+    volumes:
+      - ollama-models:/root/.ollama
+    # networks: [resect-net]
+    network_mode: "host"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      # Probe fast only while starting (start_interval, Docker 25+), then back
+      # off to every 30s so the logs aren't spammed with a heartbeat. The CLI
+      # logs HEAD / + GET /api/tags on the server each probe.
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+      start_interval: 3s
+    restart: unless-stopped
+
+  ollama-init:
+    # Pulls the shipped inference + embedding models into the ollama-models
+    # volume, then exits. Idempotent: already-present models report "up to date"
+    # and this returns immediately on warm boots.
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: 127.0.0.1:11434
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        echo "Pulling inference model: ${RESECT_LLM_MODEL:-gemma4:e4b}"
+        ollama pull "${RESECT_LLM_MODEL:-gemma4:e4b}"
+        echo "Pulling embedding model: nomic-embed-text"
+        ollama pull nomic-embed-text
+        echo "Model pull complete."
+    # networks: [resect-net]
+    network_mode: "host"
+    restart: "no"
+
+#
+
+volumes:
+  ollama-models: # LLM model store (large; re-pullable)
+
