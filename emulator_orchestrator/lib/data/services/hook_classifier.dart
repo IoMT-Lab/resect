@@ -17,8 +17,8 @@
 /// it's the definition the plan demands.
 library;
 
-import 'package:hooks/hooks.dart' show incrementHook, returnHook;
 import 'package:renode/renode.dart' show Hook;
+import 'package:resect_hooks/resect_hooks.dart' show incrementHook, returnHook;
 import 'package:signatures/signatures.dart'
     show DataSymbol, FunctionSignature;
 

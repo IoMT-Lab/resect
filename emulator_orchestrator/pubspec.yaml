@@ -22,17 +22,14 @@ dependencies:
   # pubspec_overrides.yaml at the workspace root redirects these to sibling
   # checkouts (see that file).
   renode:
-    git:
-      url: git@github.com:IoMT-Lab/renode-dart.git
-      ref: 0267af18a39e12cd2d898cc32681f01a696911c5
+    hosted: https://nexus.medmakers.io/repository/pub
+    version: 1.1.0
   callgraph:
     git:
       url: git@github.com:IoMT-Lab/callgraph-dart.git
-      ref: e35507e3211df87331114b92ac00a18a6141496a
-  hooks:
-    git:
-      url: git@github.com:IoMT-Lab/hooks-dart.git
-      ref: eca72b7bf5e991f1036afb43ea3de3281d2a4bc3
+  resect_hooks: 
+    hosted: https://nexus.medmakers.io/repository/pub
+    version: ^1.0.0
   # signatures: not yet pushed to a remote — pubspec_overrides.yaml
   # routes it to ../signatures-dart for local dev. Pin a real ref
   # before this slice ships.

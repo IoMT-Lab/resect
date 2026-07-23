@@ -1,5 +1,5 @@
-import 'package:hooks/hooks.dart';
 import 'package:renode/renode.dart';
+import 'package:resect_hooks/resect_hooks.dart';
 
 /// Type tag for a [HookParamSpec] — keeps the UI rendering generic over kind
 /// (a future parameter form widget can switch on this).

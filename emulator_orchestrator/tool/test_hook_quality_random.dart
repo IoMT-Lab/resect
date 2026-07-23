@@ -42,8 +42,8 @@ import 'package:emulator_orchestrator/data/services/llm_client.dart';
 import 'package:emulator_orchestrator/data/services/llm_hook_generator.dart';
 import 'package:emulator_orchestrator/data/services/llm_judge.dart';
 import 'package:emulator_orchestrator/data/services/rag_index.dart';
-import 'package:hooks/hooks.dart' show includeSystemModules;
 import 'package:path/path.dart' as p;
+import 'package:resect_hooks/resect_hooks.dart' show includeSystemModules;
 import 'package:signatures/signatures.dart';
 
 class _Args {

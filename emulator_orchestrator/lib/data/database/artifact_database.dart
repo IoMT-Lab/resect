@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
-import 'package:hooks/hooks.dart' show includeSystemModules, substituteImport;
+import 'package:resect_hooks/resect_hooks.dart' show includeSystemModules, substituteImport;
 import '../../core/app_paths.dart';
 
 part 'artifact_database.g.dart';

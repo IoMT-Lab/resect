@@ -1,4 +1,4 @@
-import 'package:hooks/hooks.dart' as hooks;
+import 'package:resect_hooks/resect_hooks.dart' as hooks;
 
 /// Models the host-side device that a virtualized firmware bus talks to.
 ///
