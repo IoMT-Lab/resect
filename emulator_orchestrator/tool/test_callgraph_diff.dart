@@ -6,9 +6,9 @@
 //   cd emulator_orchestrator
 //   dart run tool/test_callgraph_diff.dart [<elf>]
 
-import 'package:callgraph/callgraph.dart' as cg;
+import 'package:resect_callgraph/resect_callgraph.dart' as cg;
 import 'package:emulator_orchestrator/data/services/ghidra_installer.dart';
-import 'package:signatures/signatures.dart';
+import 'package:resect_signatures/resect_signatures.dart';
 
 Future<void> main(List<String> args) async {
   final elf = args.isNotEmpty

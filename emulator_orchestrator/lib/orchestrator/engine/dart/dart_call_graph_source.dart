@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:callgraph/callgraph.dart' as cg;
+import 'package:resect_callgraph/resect_callgraph.dart' as cg;
 
 import '../../../config/env_config.dart';
 import '../../../data/models/call_graph.dart';

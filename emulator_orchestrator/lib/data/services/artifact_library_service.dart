@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'package:callgraph/callgraph.dart' show Machine, getMachineForElf;
+import 'package:resect_callgraph/resect_callgraph.dart' show Machine, getMachineForElf;
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import '../database/artifact_database.dart';

@@ -24,23 +24,23 @@ dependencies:
   renode:
     hosted: https://nexus.medmakers.io/repository/pub
     version: 1.1.0
-  callgraph:
-    git:
-      url: git@github.com:IoMT-Lab/callgraph-dart.git
+  resect_callgraph:
+    hosted: https://nexus.medmakers.io/repository/pub
+    version: ^1.0.0
   resect_hooks: 
     hosted: https://nexus.medmakers.io/repository/pub
     version: ^1.0.0
   # signatures: not yet pushed to a remote — pubspec_overrides.yaml
   # routes it to ../signatures-dart for local dev. Pin a real ref
   # before this slice ships.
-  signatures:
-    git:
-      url: git@github.com:IoMT-Lab/signatures-dart.git
-      ref: HEAD
+  resect_signatures:
+    hosted: https://nexus.medmakers.io/repository/pub
+    version: ^1.0.0
 
 dev_dependencies:
   test: ^1.24.0
   drift_dev: ^2.15.0
   build_runner: ^2.4.0
   iomt_lab_lints:
-    git: git@github.com:IoMT-Lab/lints-dart.git
+    hosted: https://nexus.medmakers.io/repository/pub
+    version: ^1.0.0

@@ -4,7 +4,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:drift/drift.dart';
-import 'package:signatures/signatures.dart';
+import 'package:resect_signatures/resect_signatures.dart';
 
 import '../../config/env_config.dart';
 import '../database/artifact_database.dart';
@@ -13,7 +13,7 @@ import 'ghidra_installer.dart';
 // Re-export the signature types so UI code can reference them
 // through `signatures_service.dart` without taking a direct
 // dependency on the `signatures` package.
-export 'package:signatures/signatures.dart'
+export 'package:resect_signatures/resect_signatures.dart'
     show FunctionSignature, Parameter;
 
 /// Phase update emitted during extraction. The dialog/library card

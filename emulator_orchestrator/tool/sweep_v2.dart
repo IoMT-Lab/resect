@@ -23,7 +23,7 @@ import 'package:emulator_orchestrator/data/services/hook_classifier.dart';
 import 'package:emulator_orchestrator/data/services/llm_client.dart';
 import 'package:emulator_orchestrator/data/services/llm_hook_generator.dart';
 import 'package:emulator_orchestrator/data/services/rag_index.dart';
-import 'package:signatures/signatures.dart';
+import 'package:resect_signatures/resect_signatures.dart';
 
 const _kElfName = 'aya_ppg.elf';
 const _kProjectDir = '/home/evan/.config/call_graph_viewer/projects';

@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:drift/drift.dart';
-import 'package:signatures/signatures.dart' show DataSymbol, FunctionSignature;
+import 'package:resect_signatures/resect_signatures.dart' show DataSymbol, FunctionSignature;
 
 import '../database/artifact_database.dart';
 import '../models/hook_binding.dart';

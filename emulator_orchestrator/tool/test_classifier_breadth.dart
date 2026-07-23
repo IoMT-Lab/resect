@@ -11,7 +11,7 @@ import 'dart:math' as math;
 import 'package:drift/drift.dart';
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
 import 'package:emulator_orchestrator/data/services/hook_classifier.dart';
-import 'package:signatures/signatures.dart';
+import 'package:resect_signatures/resect_signatures.dart';
 
 Future<void> main(List<String> argv) async {
   var count = 100;

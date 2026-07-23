@@ -13,7 +13,7 @@ import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
 import 'package:emulator_orchestrator/data/services/hook_static_analyzer.dart';
-import 'package:signatures/signatures.dart';
+import 'package:resect_signatures/resect_signatures.dart';
 
 const String _replPath =
     '/home/evan/Development/resect/emulation_engine/'

@@ -17,7 +17,7 @@
 import 'dart:io';
 
 import 'package:emulator_orchestrator/data/services/ghidra_installer.dart';
-import 'package:signatures/signatures.dart';
+import 'package:resect_signatures/resect_signatures.dart';
 
 Future<void> main(List<String> args) async {
   final elf = args.isNotEmpty

@@ -44,7 +44,7 @@ import 'package:emulator_orchestrator/data/services/llm_judge.dart';
 import 'package:emulator_orchestrator/data/services/rag_index.dart';
 import 'package:path/path.dart' as p;
 import 'package:resect_hooks/resect_hooks.dart' show includeSystemModules;
-import 'package:signatures/signatures.dart';
+import 'package:resect_signatures/resect_signatures.dart';
 
 class _Args {
   final int count;

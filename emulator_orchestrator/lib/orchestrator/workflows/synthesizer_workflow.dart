@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
-import 'package:signatures/signatures.dart' show FunctionSignature;
+import 'package:resect_signatures/resect_signatures.dart' show FunctionSignature;
 
 import '../../data/database/artifact_database.dart';
 import '../../data/models/hook_binding.dart';

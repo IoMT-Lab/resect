@@ -14,7 +14,7 @@ import 'package:emulator_orchestrator/data/services/hook_classifier.dart';
 import 'package:emulator_orchestrator/data/services/llm_client.dart';
 import 'package:emulator_orchestrator/data/services/llm_hook_generator.dart';
 import 'package:emulator_orchestrator/data/services/rag_index.dart';
-import 'package:signatures/signatures.dart';
+import 'package:resect_signatures/resect_signatures.dart';
 
 Future<void> main(List<String> argv) async {
   if (argv.length != 1) {
