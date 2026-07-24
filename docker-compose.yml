@@ -7,8 +7,8 @@
 
 services:
   renode:
-    image: nexus.medmakers.io/docker/renode:latest
-    network_mode: "host"
+    image: nexus.medmakers.io/docker-hosted/renode:latest
+    networks: [resect-net]
     restart: unless-stopped
 
   ollama:
@@ -19,8 +19,7 @@ services:
       OLLAMA_HOST: 0.0.0.0:11434
     volumes:
       - ollama-models:/root/.ollama
-    # networks: [resect-net]
-    network_mode: "host"
+    networks: [resect-net]
     healthcheck:
       test: ["CMD", "ollama", "list"]
       # Probe fast only while starting (start_interval, Docker 25+), then back
@@ -42,7 +41,7 @@ services:
       ollama:
         condition: service_healthy
     environment:
-      OLLAMA_HOST: 127.0.0.1:11434
+      OLLAMA_HOST: ollama:11434
     entrypoint:
       - /bin/sh
       - -c
@@ -53,12 +52,37 @@ services:
         echo "Pulling embedding model: nomic-embed-text"
         ollama pull nomic-embed-text
         echo "Model pull complete."
-    # networks: [resect-net]
-    network_mode: "host"
+    networks: [resect-net]
     restart: "no"
 
+  resect:
+    init: true
+    image: nexus.medmakers.io/docker-hosted/resect:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.cli
+    volumes:
+      - resect-state:/root/.config/call_graph_viewer
+      - ./workdir:/workdir
+    working_dir: /workdir
+    profiles:
+      - cli
+    depends_on:
+      renode:
+        condition: service_started
+      ollama:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    networks: [resect-net]
+    restart: "no"
+
+networks:
+  resect-net:
+    driver: bridge
 #
 
 volumes:
   ollama-models: # LLM model store (large; re-pullable)
+  resect-state: # Persistent state for the resect container
 

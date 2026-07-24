@@ -55,6 +55,7 @@ class DartEngine {
 
     // resect.config overrides the passed defaults when present.
     final cfg = EnvConfig.load();
+    final host = cfg.get('RENODE_HOST') ?? this.host;
     final port = int.tryParse(cfg.get('RENODE_PORT') ?? '') ?? renodePort;
 
 

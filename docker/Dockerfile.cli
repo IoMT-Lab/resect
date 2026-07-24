@@ -1,0 +1,17 @@
+FROM nexus.medmakers.io/docker-hosted/flutter:latest AS builder
+
+WORKDIR /src
+COPY . .
+RUN dart build cli --target emulator_orchestrator/bin/cli.dart
+
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    binutils-arm-none-eabi \
+    libsqlite3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /src/build/cli/linux_x64/bundle/bin/cli /bin/cli
+COPY docker/resect.config /resect.config
+ENV RESECT_CONFIG=/resect.config
+ENTRYPOINT ["/bin/cli"]
