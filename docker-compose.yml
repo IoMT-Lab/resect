@@ -7,7 +7,7 @@
 
 services:
   renode:
-    image: nexus.medmakers.io/docker-hosted/renode:latest
+    image: nexus.medmakers.io/docker/renode:latest
     networks: [resect-net]
     restart: unless-stopped
 
@@ -55,9 +55,13 @@ services:
     networks: [resect-net]
     restart: "no"
 
-  resect:
+  resect-cli:
+    stdin_open: true # docker run -i
+    tty: true
     init: true
-    image: nexus.medmakers.io/docker-hosted/resect:latest
+    image: nexus.medmakers.io/docker/resect_cli:latest
+    profiles:
+      - cli
     build:
       context: .
       dockerfile: docker/Dockerfile.cli
@@ -65,8 +69,6 @@ services:
       - resect-state:/root/.config/call_graph_viewer
       - ./workdir:/workdir
     working_dir: /workdir
-    profiles:
-      - cli
     depends_on:
       renode:
         condition: service_started
@@ -75,6 +77,31 @@ services:
       ollama-init:
         condition: service_completed_successfully
     networks: [resect-net]
+    restart: "no"
+  resect-gui:
+    stdin_open: true # docker run -i
+    tty: true
+    init: true
+    image: nexus.medmakers.io/docker/resect_gui:latest
+    profiles:
+      - gui
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gui
+    volumes:
+      - resect-state:/root/.config/call_graph_viewer
+      - ./workdir:/workdir
+    working_dir: /workdir
+    depends_on:
+      renode:
+        condition: service_started
+      ollama:
+        condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+    networks: [resect-net]
+    ports:
+      - "5900:5900" # VNC server for GUI
     restart: "no"
 
 networks:
