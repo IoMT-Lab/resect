@@ -29,7 +29,7 @@ dependencies:
     version: ^1.0.0
   resect_hooks: 
     hosted: https://nexus.medmakers.io/repository/pub
-    version: ^1.0.0
+    version: ^1.3.0
   # signatures: not yet pushed to a remote — pubspec_overrides.yaml
   # routes it to ../signatures-dart for local dev. Pin a real ref
   # before this slice ships.

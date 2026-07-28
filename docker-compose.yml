@@ -6,10 +6,23 @@
 #
 
 services:
-  renode:
+  renode-cli:
     image: nexus.medmakers.io/docker/renode:latest
     networks: [resect-net]
     restart: unless-stopped
+    profiles:
+      - cli
+    environment:
+      RENODE_COMMS_HOST: 'resect-cli'
+
+  renode-gui:
+    image: nexus.medmakers.io/docker/renode:latest
+    networks: [resect-net]
+    restart: unless-stopped
+    profiles:
+      - gui
+    environment:
+      RENODE_COMMS_HOST: 'resect-gui'
 
   ollama:
     image: ollama/ollama:latest
@@ -70,7 +83,7 @@ services:
       - ./workdir:/workdir
     working_dir: /workdir
     depends_on:
-      renode:
+      renode-cli:
         condition: service_started
       ollama:
         condition: service_healthy
@@ -78,9 +91,8 @@ services:
         condition: service_completed_successfully
     networks: [resect-net]
     restart: "no"
+
   resect-gui:
-    stdin_open: true # docker run -i
-    tty: true
     init: true
     image: nexus.medmakers.io/docker/resect_gui:latest
     profiles:
@@ -93,7 +105,7 @@ services:
       - ./workdir:/workdir
     working_dir: /workdir
     depends_on:
-      renode:
+      renode-gui:
         condition: service_started
       ollama:
         condition: service_healthy
