@@ -12,7 +12,7 @@ import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
-import 'package:emulator_orchestrator/data/services/hook_static_analyzer.dart';
+import 'package:emulator_orchestrator/services/quality/hook_static_analyzer.dart';
 import 'package:signatures/signatures.dart';
 
 const String _replPath =

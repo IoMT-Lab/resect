@@ -6,7 +6,7 @@ import 'package:emulator_orchestrator/core/constants.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/models/hook_binding.dart';
 import 'package:emulator_orchestrator/data/models/rag_index_status.dart';
-import 'package:emulator_orchestrator/data/services/hook_binding_seeder.dart';
+import 'package:emulator_orchestrator/services/hooks/hook_binding_seeder.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;

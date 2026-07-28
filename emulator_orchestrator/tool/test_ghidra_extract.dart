@@ -16,7 +16,7 @@
 
 import 'dart:io';
 
-import 'package:emulator_orchestrator/data/services/ghidra_installer.dart';
+import 'package:emulator_orchestrator/services/external/ghidra_installer.dart';
 import 'package:signatures/signatures.dart';
 
 Future<void> main(List<String> args) async {

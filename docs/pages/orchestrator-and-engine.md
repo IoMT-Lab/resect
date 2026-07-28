@@ -31,10 +31,10 @@ swapping the emulator (or adding a second engine) means writing one new
 
 @note **Deviation from the current code.**
 **Today:** four data services import `package:renode` directly —
-`hook_catalog.dart`, `hook_classifier.dart`, `hook_test_harness.dart`, and
-`hook_progress_runner.dart` (all under
-`emulator_orchestrator/lib/data/services/`) — so the "only engines talk to
-Renode" rule leaks. Separately, the two `CallGraphSource` implementations
+`hooks/hook_catalog.dart`, `hooks/hook_classifier.dart`,
+`quality/hook_test_harness.dart`, and `quality/hook_progress_runner.dart`
+(under `emulator_orchestrator/lib/services/`) — so the "only engines
+talk to Renode" rule leaks. Separately, the two `CallGraphSource` implementations
 are wired unevenly: the UI picks `GhidraCallGraphSource` or the
 objdump-based `DartCallGraphSource` by configuration
 (`callGraphSourceProvider` in `emulator_ui/lib/providers/app_providers.dart`),

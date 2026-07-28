@@ -13,7 +13,7 @@
 import 'dart:io';
 
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
-import 'package:emulator_orchestrator/data/services/hook_progress_runner.dart';
+import 'package:emulator_orchestrator/services/quality/hook_progress_runner.dart';
 
 const String _replPath =
     '/home/evan/Development/resect/emulation_engine/'

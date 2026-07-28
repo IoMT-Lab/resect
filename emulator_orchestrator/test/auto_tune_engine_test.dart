@@ -6,14 +6,15 @@ import 'package:emulator_orchestrator/data/models/call_graph.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/models/hook_decision_state.dart';
 import 'package:emulator_orchestrator/data/models/recommendation.dart';
+import 'package:emulator_orchestrator/data/models/symbol_group.dart';
 import 'package:emulator_orchestrator/data/models/round_snapshot.dart';
 import 'package:emulator_orchestrator/data/models/symbol.dart' as cg_sym;
 import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart';
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
-import 'package:emulator_orchestrator/data/services/coverage_frontier.dart';
-import 'package:emulator_orchestrator/data/services/last_run_insight_service.dart';
-import 'package:emulator_orchestrator/data/services/llm_client.dart';
-import 'package:emulator_orchestrator/data/services/recommendation_service.dart';
+import 'package:emulator_orchestrator/services/analysis/coverage_frontier.dart';
+import 'package:emulator_orchestrator/services/llm/last_run_insight_service.dart';
+import 'package:emulator_orchestrator/services/llm/llm_client.dart';
+import 'package:emulator_orchestrator/services/llm/recommendation_service.dart';
 import 'package:emulator_orchestrator/orchestrator/auto_tune_engine.dart';
 import 'package:test/test.dart';
 
@@ -504,6 +505,8 @@ class _ScriptedRecommender extends RecommendationService {
     List<FrontierEntry> frontier = const [],
     RoundFeedback? feedback,
     int maxRecommendations = RecommendationService.defaultMaxRecommendations,
+    List<SymbolGroup> symbolGroups = const [],
+    Map<String, GroupOverrideState> groupOverrides = const {},
     void Function(String token)? onToken,
     void Function(String chunk)? onThinking,
     void Function(String prompt)? onPromptComposed,

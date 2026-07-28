@@ -9,7 +9,7 @@ symbols, and shared.
 @note **Deviation from the current code.**
 **Today:** this controller does not exist as one class. Its closest
 ancestor is `ArtifactLibraryService`
-(`emulator_orchestrator/lib/data/services/artifact_library_service.dart`),
+(`emulator_orchestrator/lib/services/hooks/artifact_library_service.dart`),
 which wraps the database and owns firmware registration and template
 seeding — but two dialogs (`hook_database_dialog.dart`,
 `llm_hook_gen_dialog.dart`) run their own SQL against `ArtifactDatabase`,

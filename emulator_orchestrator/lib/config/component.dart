@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import '../data/services/ghidra_installer.dart';
-import '../data/services/ollama_installer.dart';
+import '../services/external/ghidra_installer.dart';
+import '../services/external/ollama_installer.dart';
 import 'config_schema.dart' show which;
 import 'env_config.dart';
 

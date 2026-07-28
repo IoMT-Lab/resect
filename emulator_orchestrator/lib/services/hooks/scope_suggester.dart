@@ -1,4 +1,4 @@
-import 'comms_classifier.dart' show tokenize;
+import '../comms/comms_classifier.dart' show tokenize;
 
 /// Returns a guess at a useful Renode hook `scope` string for [symbolName],
 /// or an empty string when no good guess is available.

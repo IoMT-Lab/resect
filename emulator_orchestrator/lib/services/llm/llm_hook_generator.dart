@@ -3,14 +3,14 @@ import 'dart:io';
 
 import 'package:signatures/signatures.dart';
 
-import '../database/artifact_database.dart';
-import '../models/target_arch.dart';
-import 'hook_classifier.dart';
+import '../../data/database/artifact_database.dart';
+import '../../data/models/target_arch.dart';
+import '../hooks/hook_classifier.dart';
 import 'llm_client.dart';
 import 'llm_profiles.dart';
-import 'rag_index.dart';
+import '../rag/rag_index.dart';
 
-export 'hook_classifier.dart' show ClassificationResult, HookInvariant, InvariantResult;
+export '../hooks/hook_classifier.dart' show ClassificationResult, HookInvariant, InvariantResult;
 
 /// Authoritative platform context fed to the LLM ahead of any
 /// retrieval / few-shot blocks. The whole point of this struct is to

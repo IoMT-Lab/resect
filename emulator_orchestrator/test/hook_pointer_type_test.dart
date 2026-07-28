@@ -1,4 +1,4 @@
-import 'package:emulator_orchestrator/data/services/llm_hook_generator.dart';
+import 'package:emulator_orchestrator/services/llm/llm_hook_generator.dart';
 import 'package:test/test.dart';
 
 // Pins the behavior of `basePointerTypeName` — the function that

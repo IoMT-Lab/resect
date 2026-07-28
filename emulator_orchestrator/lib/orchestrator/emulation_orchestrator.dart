@@ -6,9 +6,10 @@ import '../data/models/emulation_state.dart';
 import '../data/models/emulator.dart';
 import '../data/models/graph_point.dart';
 import '../data/models/hook_binding.dart';
+import '../data/models/symbol_group.dart';
 import '../data/models/synthesizer_result.dart';
 import '../data/repositories/emulator_repository.dart';
-import '../data/services/llm_hook_generator.dart'
+import '../services/llm/llm_hook_generator.dart'
     show LlmHookGenerator, PlatformFacts;
 import 'engine/call_graph_source.dart';
 import 'engine/emulation_controller.dart';
@@ -227,6 +228,8 @@ class EmulationOrchestrator {
     Map<String, String> resolvedHooks = const {},
     Map<String, HookSpec> commsHooks = const {},
     Map<String, HookBinding> hookBindings = const {},
+    List<SymbolGroup> symbolGroups = const [],
+    Map<String, GroupOverrideState> groupOverrides = const {},
     String? memoryMapPath,
     LlmHookGenerator? llmGenerator,
     PlatformFacts? platform,
@@ -243,6 +246,8 @@ class EmulationOrchestrator {
       resolvedHooks: resolvedHooks,
       commsHooks: commsHooks,
       hookBindings: hookBindings,
+      symbolGroups: symbolGroups,
+      groupOverrides: groupOverrides,
       memoryMapPath: memoryMapPath,
       llmGenerator: llmGenerator,
       platform: platform,

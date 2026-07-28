@@ -21,7 +21,7 @@ Renode.
 ## Step 1 — Birth: three ways a hook comes to exist
 
 1. **From the catalog.** `HookCatalog`
-   (`emulator_orchestrator/lib/data/services/hook_catalog.dart`) builds
+   (`emulator_orchestrator/lib/services/hooks/hook_catalog.dart`) builds
    parameterized templates: `return`, `read`, `write`, `increment`, and the
    comms forwarders `i2c_read`, `i2c_write`, `uart_read`, `uart_write`.
    The default set is seeded into the database on first run.

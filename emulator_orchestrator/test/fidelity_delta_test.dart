@@ -1,5 +1,5 @@
 import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart';
-import 'package:emulator_orchestrator/data/services/fidelity_delta.dart';
+import 'package:emulator_orchestrator/services/analysis/fidelity_delta.dart';
 import 'package:test/test.dart';
 
 ManifestMetrics metrics({

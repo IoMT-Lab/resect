@@ -1,4 +1,5 @@
 import '../data/models/recommendation.dart';
+import '../data/models/symbol_group.dart';
 
 /// Pure recommendation → overlay-map mutation, shared by the UI's
 /// `RecommendationApplier` (which wraps it with Riverpod provider
@@ -18,6 +19,7 @@ import '../data/models/recommendation.dart';
 List<Recommendation> planRecommendationBatch(
     List<Recommendation> recommendations) {
   final bySymbol = <String, Recommendation>{};
+  final byScope = <String, Recommendation>{}; // group actions, deduped by scope
   AdjustIterationCap? lastCap;
   for (final rec in recommendations) {
     switch (rec) {
@@ -29,12 +31,18 @@ List<Recommendation> planRecommendationBatch(
         bySymbol[symbol] = rec;
       case SetPreference(:final symbol):
         bySymbol[symbol] = rec;
+      case SetGroupOverride(:final scope):
+        byScope[scope] = rec;
+      case ClearGroupOverride(:final scope):
+        byScope[scope] = rec;
       case AdjustIterationCap():
         lastCap = rec;
     }
   }
 
   final ordered = <Recommendation>[];
+  // Group actions first, so per-symbol overrides can still refine a member.
+  ordered.addAll(byScope.values);
   for (final rec in bySymbol.values) {
     if (rec is ClearForcedOverride) ordered.add(rec);
   }
@@ -60,6 +68,7 @@ List<Recommendation> planRecommendationBatch(
   required Map<String, String> hookOverrideScopes,
   required Map<String, int> hookPreferences,
   required int iterationCap,
+  Map<String, GroupOverrideState> groupOverrides = const {},
 }) {
   final ordered = planRecommendationBatch(recommendations);
   var cap = iterationCap;
@@ -77,6 +86,10 @@ List<Recommendation> planRecommendationBatch(
         hookOverrideScopes.remove(symbol);
       case SetPreference(:final symbol, :final artifactId):
         hookPreferences[symbol] = artifactId;
+      case SetGroupOverride(:final scope):
+        groupOverrides[scope] = GroupOverrideState.forced;
+      case ClearGroupOverride(:final scope):
+        groupOverrides[scope] = GroupOverrideState.suppressed;
       case AdjustIterationCap(:final newValue):
         if (newValue > 0) cap = newValue;
       case GenerateCustomHook():

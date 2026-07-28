@@ -8,12 +8,12 @@ import 'package:crypto/crypto.dart' show sha256;
 import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart';
 
-import '../database/artifact_database.dart';
-import '../models/call_graph.dart';
-import '../models/emulator.dart';
-import '../models/rag_index_status.dart';
-import '../models/symbol.dart' as cg;
-import 'llm_client.dart';
+import '../../data/database/artifact_database.dart';
+import '../../data/models/call_graph.dart';
+import '../../data/models/emulator.dart';
+import '../../data/models/rag_index_status.dart';
+import '../../data/models/symbol.dart' as cg;
+import '../llm/llm_client.dart';
 import 'rag_chunker.dart';
 
 /// Per-project RAG store backing the LLM hook-generation prompt.

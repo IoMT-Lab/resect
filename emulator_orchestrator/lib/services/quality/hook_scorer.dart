@@ -15,7 +15,7 @@
 /// decide what to do with it.
 library;
 
-import 'hook_classifier.dart';
+import '../hooks/hook_classifier.dart';
 import 'hook_progress_runner.dart';
 import 'hook_static_analyzer.dart';
 import 'hook_test_harness.dart';

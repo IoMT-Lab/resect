@@ -5,6 +5,7 @@ import 'comms_assignment.dart';
 import 'hook_binding.dart';
 import 'last_run_insight.dart';
 import 'round_snapshot.dart';
+import 'symbol_group.dart';
 import 'synthesizer_result.dart';
 
 /// Represents an emulator configuration containing firmware files, settings,
@@ -69,6 +70,13 @@ class Emulator {
   /// synthesizer's iteration ordering — see [HookBinding.fidelity].
   final Map<String, HookBinding> hookBindings;
 
+  /// Per-object-group decisions (group scope → [GroupOverrideState]).
+  /// `forced` pre-installs the group's coherent member hooks every run;
+  /// `suppressed` stops the group from being applied at all. A scope absent
+  /// from this map keeps the default deterministic-on-fault behavior. Set by
+  /// the auto-tune LLM's group actions. See `SymbolGroupClassifier`.
+  final Map<String, GroupOverrideState> groupOverrides;
+
   /// Open-ended metadata for future expansion
   final Map<String, dynamic> metadata;
 
@@ -129,6 +137,7 @@ class Emulator {
     this.hookPreferences = const {},
     this.hookOverrides = const {},
     this.hookOverrideScopes = const {},
+    this.groupOverrides = const {},
     this.hookBindings = const {},
     this.metadata = const {},
     this.documents = const [],
@@ -186,6 +195,14 @@ class Emulator {
             ?.map((k, v) =>
                 MapEntry(k, HookBinding.fromJson(v as Map<String, dynamic>))) ??
         <String, HookBinding>{};
+    final groupOverrides = (json['group_overrides'] as Map<String, dynamic>?)
+            ?.map((k, v) => MapEntry(
+                k,
+                GroupOverrideState.values.firstWhere(
+                  (s) => s.name == v as String,
+                  orElse: () => GroupOverrideState.forced,
+                ))) ??
+        <String, GroupOverrideState>{};
     final metadata = json['metadata'] as Map<String, dynamic>? ?? {};
     final documents = (json['documents'] as List<dynamic>?)
         ?.map((d) => DocumentEntry.fromJson(d as Map<String, dynamic>))
@@ -223,6 +240,7 @@ class Emulator {
       hookPreferences: hookPreferences,
       hookOverrides: hookOverrides,
       hookOverrideScopes: hookOverrideScopes,
+      groupOverrides: groupOverrides,
       hookBindings: hookBindings,
       metadata: metadata,
       documents: documents,
@@ -260,6 +278,9 @@ class Emulator {
       if (hookOverrides.isNotEmpty) 'hook_overrides': hookOverrides,
       if (hookOverrideScopes.isNotEmpty)
         'hook_override_scopes': hookOverrideScopes,
+      if (groupOverrides.isNotEmpty)
+        'group_overrides':
+            groupOverrides.map((k, v) => MapEntry(k, v.name)),
       if (hookBindings.isNotEmpty)
         'hook_bindings':
             hookBindings.map((k, v) => MapEntry(k, v.toJson())),
@@ -294,6 +315,7 @@ class Emulator {
     Map<String, int>? hookOverrides,
     Map<String, String>? hookOverrideScopes,
     Map<String, HookBinding>? hookBindings,
+    Map<String, GroupOverrideState>? groupOverrides,
     Map<String, dynamic>? metadata,
     List<DocumentEntry>? documents,
     CallGraph? cachedCallGraph,
@@ -320,6 +342,7 @@ class Emulator {
       hookPreferences: hookPreferences ?? this.hookPreferences,
       hookOverrides: hookOverrides ?? this.hookOverrides,
       hookOverrideScopes: hookOverrideScopes ?? this.hookOverrideScopes,
+      groupOverrides: groupOverrides ?? this.groupOverrides,
       hookBindings: hookBindings ?? this.hookBindings,
       metadata: metadata ?? this.metadata,
       documents: documents ?? this.documents,

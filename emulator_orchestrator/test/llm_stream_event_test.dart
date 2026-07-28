@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:emulator_orchestrator/data/services/llm_client.dart';
+import 'package:emulator_orchestrator/services/llm/llm_client.dart';
 import 'package:test/test.dart';
 
 /// Run [lines] through [parseGenerateNdjson] and collect the events.

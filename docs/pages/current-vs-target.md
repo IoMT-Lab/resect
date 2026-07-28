@@ -100,7 +100,7 @@ models → services → orchestrator layering:
   `orchestrator/engine/paused_event.dart` — a data model reaching *up* into
   the orchestrator.
 - `emulator_orchestrator/lib/data/models/auto_tune_config.dart` imports
-  `data/services/recommendation_service.dart` just to get the
+  `services/llm/recommendation_service.dart` just to get the
   `OptimizationTarget` enum, which lives in the wrong file.
 
 Closed by roadmap phase @ref phase_p1.
@@ -121,10 +121,11 @@ else. Closed by roadmap phase @ref phase_p6.
 These are recorded so they aren't forgotten, but no roadmap phase covers
 them yet:
 
-- Four data services import `package:renode` directly (`hook_catalog`,
-  `hook_classifier`, `hook_test_harness`, `hook_progress_runner`) — the
-  "only the engine layer talks to Renode" boundary leaks. They are genuinely
-  engine-bound; revisit only if a second engine becomes real.
+- Four data services import `package:renode` directly (`hooks/hook_catalog`,
+  `hooks/hook_classifier`, `quality/hook_test_harness`,
+  `quality/hook_progress_runner`) — the "only the engine layer talks to
+  Renode" boundary leaks. They are genuinely engine-bound; revisit only if a
+  second engine becomes real.
 - The two [call-graph](@ref gloss_call_graph) sources are wired unevenly.
   The UI picks per config (`callGraphSourceProvider` in
   `emulator_ui/lib/providers/app_providers.dart`): `GhidraCallGraphSource`

@@ -6,8 +6,8 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 
-import '../data/services/artifact_library_service.dart';
-import '../data/services/fidelity_calculator.dart';
+import '../services/hooks/artifact_library_service.dart';
+import '../services/analysis/fidelity_calculator.dart';
 import '../orchestrator/emulation_orchestrator.dart';
 import '../orchestrator/engine/call_graph_source.dart';
 

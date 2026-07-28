@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:emulator_orchestrator/data/models/last_run_insight.dart';
-import 'package:emulator_orchestrator/data/services/llm_client.dart';
+import 'package:emulator_orchestrator/services/llm/llm_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 

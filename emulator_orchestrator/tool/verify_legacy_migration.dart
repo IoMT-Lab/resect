@@ -12,7 +12,7 @@
 import 'dart:io';
 
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
-import 'package:emulator_orchestrator/data/services/artifact_library_service.dart';
+import 'package:emulator_orchestrator/services/hooks/artifact_library_service.dart';
 
 final _legacy = RegExp(
   r'^\s*(?:import|from)\s+'

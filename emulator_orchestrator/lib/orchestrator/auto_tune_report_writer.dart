@@ -4,7 +4,7 @@ import '../data/models/call_graph.dart';
 import '../data/models/recommendation.dart';
 import '../data/models/synthesis_manifest.dart';
 import '../data/models/synthesizer_result.dart';
-import '../data/services/coverage_frontier.dart';
+import '../services/analysis/coverage_frontier.dart';
 import 'auto_tune_engine.dart';
 
 /// [AutoTuneSink] that writes a self-contained report for a headless
@@ -277,12 +277,15 @@ class AutoTuneReportSink implements AutoTuneSink {
   static bool _reactive(ManifestDecisionKind k) =>
       k == ManifestDecisionKind.binding ||
       k == ManifestDecisionKind.iterationFallback ||
-      k == ManifestDecisionKind.llmOnDemand;
+      k == ManifestDecisionKind.llmOnDemand ||
+      k == ManifestDecisionKind.groupOverride;
 
   String _hookGlyph(ManifestDecisionKind k) {
     switch (k) {
       case ManifestDecisionKind.llmOnDemand:
         return _magenta('✦');
+      case ManifestDecisionKind.groupOverride:
+        return _cyan('◇');
       case ManifestDecisionKind.iterationFallback:
         return _yellow('◆');
       default:
@@ -316,6 +319,10 @@ class AutoTuneReportSink implements AutoTuneSink {
         return '${_magenta('generate_custom_hook')} ${_bold(symbol)}';
       case AdjustIterationCap(:final newValue):
         return '${_dim('adjust_iteration_cap →')} ${_bold('$newValue')}';
+      case SetGroupOverride(:final scope):
+        return '${_cyan('set_group_override')} ${_bold(scope)}';
+      case ClearGroupOverride(:final scope):
+        return '${_dim('clear_group_override')} ${_bold(scope)}';
     }
   }
 
@@ -511,6 +518,10 @@ class AutoTuneReportSink implements AutoTuneSink {
         return 'generate_custom_hook `$symbol`$i';
       case AdjustIterationCap(:final newValue):
         return 'adjust_iteration_cap → $newValue';
+      case SetGroupOverride(:final scope):
+        return 'set_group_override `$scope`';
+      case ClearGroupOverride(:final scope):
+        return 'clear_group_override `$scope`';
     }
   }
 

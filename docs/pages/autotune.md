@@ -39,8 +39,12 @@ work), each [round](@ref gloss_round) goes:
    constrained decoding forces the reply into typed
    [recommendations](@ref gloss_recommendation): set/clear an
    [override](@ref gloss_override), set a
-   [preference](@ref gloss_preference), generate a custom hook, or adjust
-   the iteration cap.
+   [preference](@ref gloss_preference), generate a custom hook, adjust
+   the iteration cap, or — when a recognized [object group](@ref gloss_object_group)
+   is in play — force or clear a whole group (`set_group_override` /
+   `clear_group_override`; see @ref symbol_groups). The prompt lists the
+   round's relevant object groups so the model can act on a peripheral as a
+   unit rather than one symbol at a time.
 2. **Review.** The [review policy](@ref gloss_review_policy) decides each
    recommendation's fate (see "Two seams" below).
 3. **Filter no-ops.** Accepted recommendations that are already in effect

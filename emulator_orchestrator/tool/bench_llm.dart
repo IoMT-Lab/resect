@@ -22,10 +22,10 @@ import 'package:emulator_orchestrator/data/database/artifact_database.dart';
 import 'package:emulator_orchestrator/data/models/call_graph.dart';
 import 'package:emulator_orchestrator/data/models/hook_decision_state.dart';
 import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart';
-import 'package:emulator_orchestrator/data/services/coverage_frontier.dart';
-import 'package:emulator_orchestrator/data/services/last_run_insight_service.dart';
-import 'package:emulator_orchestrator/data/services/llm_client.dart';
-import 'package:emulator_orchestrator/data/services/recommendation_service.dart';
+import 'package:emulator_orchestrator/services/analysis/coverage_frontier.dart';
+import 'package:emulator_orchestrator/services/llm/last_run_insight_service.dart';
+import 'package:emulator_orchestrator/services/llm/llm_client.dart';
+import 'package:emulator_orchestrator/services/llm/recommendation_service.dart';
 
 const _host = 'localhost:11435';
 const _model = 'gemma4:12b';

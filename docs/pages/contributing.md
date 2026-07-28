@@ -58,6 +58,36 @@ it do what you claimed.
 - The analyzer ruleset comes from the shared `iomt_lab_lints` package;
   keep `dart analyze` clean, then verify behavior anyway.
 
+## How services are organized
+
+Services live in `emulator_orchestrator/lib/services/`, grouped into
+folders by **capability domain** — what the service *does*, not which
+component uses it (the [synthesis](@ref synthesis) and
+[auto-tune](@ref autotune) loops in `orchestrator/` consume services; they
+don't own them). Put a new service in the folder that matches its job:
+
+- **`hooks/`** — producing and classifying [hooks](@ref gloss_hook): the
+  catalog, the classifiers (`hook_classifier`, `symbol_group_classifier`),
+  the binding seeder, scope suggester, starter template, and the artifact
+  library store.
+- **`llm/`** — talking to the model and building prompts: the LLM client,
+  profiles, hook generator, the recommender, and the last-run advisor.
+- **`rag/`** — the retrieval index and chunker.
+- **`analysis/`** — pure computation over the call graph:
+  [fidelity](@ref gloss_fidelity), the coverage [frontier](@ref gloss_frontier),
+  round-over-round deltas, call-graph reads.
+- **`quality/`** — the hook-quality subsystem (scorer, test harness,
+  progress runner, static analyzer, judge). Wired into `tool/` and tests
+  today, not the live loops.
+- **`comms/`** — the comms symbol classifier (the rest of comms lives in
+  `orchestrator/comms/`).
+- **`external/`** — external-tool integration and installers (Ghidra
+  signatures, Ghidra/Ollama installers).
+
+Services depend downward on models + database + sibling packages, and may
+depend on each other across folders (e.g. `llm/recommendation_service`
+reads `analysis/coverage_frontier`). Import siblings by relative path.
+
 ## Working on these docs
 
 The docs are the architecture's source of truth

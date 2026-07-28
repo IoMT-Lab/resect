@@ -10,10 +10,10 @@ import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:emulator_orchestrator/config/env_config.dart';
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
-import 'package:emulator_orchestrator/data/services/hook_classifier.dart';
-import 'package:emulator_orchestrator/data/services/llm_client.dart';
-import 'package:emulator_orchestrator/data/services/llm_hook_generator.dart';
-import 'package:emulator_orchestrator/data/services/rag_index.dart';
+import 'package:emulator_orchestrator/services/hooks/hook_classifier.dart';
+import 'package:emulator_orchestrator/services/llm/llm_client.dart';
+import 'package:emulator_orchestrator/services/llm/llm_hook_generator.dart';
+import 'package:emulator_orchestrator/services/rag/rag_index.dart';
 import 'package:signatures/signatures.dart';
 
 Future<void> main(List<String> argv) async {

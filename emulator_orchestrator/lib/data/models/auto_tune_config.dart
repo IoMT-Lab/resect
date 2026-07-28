@@ -1,4 +1,4 @@
-import '../services/recommendation_service.dart';
+import '../../services/llm/recommendation_service.dart';
 
 /// Per-session configuration the user provides before kicking off
 /// the closed-loop LLM-orchestrated synthesizer.

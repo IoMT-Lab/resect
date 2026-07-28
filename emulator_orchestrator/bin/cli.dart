@@ -11,14 +11,15 @@ import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/models/hook_decision_state.dart';
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
 import 'package:emulator_orchestrator/data/repositories/emulator_repository.dart';
-import 'package:emulator_orchestrator/data/services/artifact_library_service.dart';
-import 'package:emulator_orchestrator/data/services/fidelity_calculator.dart';
-import 'package:emulator_orchestrator/data/services/hook_catalog.dart';
-import 'package:emulator_orchestrator/data/services/last_run_insight_service.dart';
-import 'package:emulator_orchestrator/data/services/llm_client.dart';
-import 'package:emulator_orchestrator/data/services/llm_hook_generator.dart';
-import 'package:emulator_orchestrator/data/services/rag_index.dart';
-import 'package:emulator_orchestrator/data/services/recommendation_service.dart';
+import 'package:emulator_orchestrator/services/hooks/artifact_library_service.dart';
+import 'package:emulator_orchestrator/services/analysis/fidelity_calculator.dart';
+import 'package:emulator_orchestrator/services/hooks/hook_catalog.dart';
+import 'package:emulator_orchestrator/services/llm/last_run_insight_service.dart';
+import 'package:emulator_orchestrator/services/llm/llm_client.dart';
+import 'package:emulator_orchestrator/services/llm/llm_hook_generator.dart';
+import 'package:emulator_orchestrator/services/rag/rag_index.dart';
+import 'package:emulator_orchestrator/services/llm/recommendation_service.dart';
+import 'package:emulator_orchestrator/services/hooks/symbol_group_classifier.dart';
 import 'package:emulator_orchestrator/orchestrator/auto_tune_engine.dart';
 import 'package:emulator_orchestrator/orchestrator/auto_tune_report_writer.dart';
 import 'package:emulator_orchestrator/orchestrator/comms/comms_bus_service.dart';
@@ -299,6 +300,14 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
       }
     });
 
+    final symbolGroups = SymbolGroupClassifier(catalog: HookCatalog.system())
+        .classify(callGraph.symbols.keys);
+    if (symbolGroups.isNotEmpty) {
+      stderr.writeln('Object groups: ${symbolGroups.length} '
+          '(${symbolGroups.map((g) => g.scope).take(5).join(', ')}'
+          '${symbolGroups.length > 5 ? ', …' : ''})');
+    }
+
     stderr.writeln('Starting synthesizer (max $maxIterations iterations)...');
     final result = await orchestrator.runSynthesizer(
       elfPath: elfPath,
@@ -307,6 +316,7 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
       startFrom: startFrom,
       endAt: endAt,
       maxIterations: maxIterations,
+      symbolGroups: symbolGroups,
     );
 
     await traceSubscription.cancel();
@@ -538,6 +548,17 @@ Future<void> _runAutotune(Map<String, String> flags) async {
           '${commsClasses.map((c) => c.name).join('/')}');
     }
 
+    // Object groups (peripheral member-function families), computed once
+    // from the call graph. Comms symbols are excluded so grouping never
+    // touches the bus mechanism.
+    final symbolGroups = SymbolGroupClassifier(catalog: HookCatalog.system())
+        .classify(callGraph.symbols.keys, exclude: commsHooks.keys.toSet());
+    if (symbolGroups.isNotEmpty) {
+      stderr.writeln('Object groups: ${symbolGroups.length} '
+          '(${symbolGroups.map((g) => g.scope).take(5).join(', ')}'
+          '${symbolGroups.length > 5 ? ', …' : ''})');
+    }
+
     // Start the comms-bus UDP server the forwarding hooks talk to. The
     // i2c/uart read hooks send each read to localhost:<port> and BLOCK
     // on the reply — without a server listening, the first real read in
@@ -590,6 +611,8 @@ Future<void> _runAutotune(Map<String, String> flags) async {
           hookOverrideScopes: overlays.hookOverrideScopes,
           hookBindings: overlays.hookBindings,
           commsHooks: commsHooks,
+          symbolGroups: symbolGroups,
+          groupOverrides: overlays.groupOverrides,
           llmGenerator: hookGenerator,
         );
         var subgraph = const <String>{};
@@ -631,6 +654,7 @@ Future<void> _runAutotune(Map<String, String> flags) async {
       hookGenerator: hookGenerator,
       reviewPolicy: const AcceptAllReviewPolicy(),
       sink: sink,
+      symbolGroups: symbolGroups,
     );
 
     stderr.writeln('Starting auto-tune: max $maxRounds rounds, '

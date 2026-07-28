@@ -1,6 +1,6 @@
 import 'package:emulator_orchestrator/data/models/call_graph.dart';
 import 'package:emulator_orchestrator/data/models/comms_assignment.dart';
-import 'package:emulator_orchestrator/data/services/comms_classifier.dart';
+import 'package:emulator_orchestrator/services/comms/comms_classifier.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app_providers.dart';

@@ -24,8 +24,8 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
-import 'llm_client.dart';
-import 'llm_profiles.dart';
+import '../llm/llm_client.dart';
+import '../llm/llm_profiles.dart';
 
 /// Outcome of one judge evaluation. The score is the candidate's
 /// quality on a 0-1 scale; lower means the baseline was preferred,

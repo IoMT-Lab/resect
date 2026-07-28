@@ -5,8 +5,8 @@ import 'package:crypto/crypto.dart' show sha256;
 
 import '../../../data/models/call_graph.dart';
 import '../../../data/models/symbol.dart';
-import '../../../data/services/call_graph_service.dart';
-import '../../../data/services/signatures_service.dart';
+import '../../../services/analysis/call_graph_service.dart';
+import '../../../services/external/signatures_service.dart';
 import '../call_graph_source.dart';
 
 /// [CallGraphSource] backed by Ghidra headless analysis (via

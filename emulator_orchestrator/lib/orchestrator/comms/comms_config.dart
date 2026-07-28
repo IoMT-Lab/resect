@@ -1,6 +1,6 @@
 import '../../data/models/comms_assignment.dart';
 import '../../data/models/emulator.dart';
-import '../../data/services/hook_catalog.dart';
+import '../../services/hooks/hook_catalog.dart';
 import '../hook_spec.dart';
 
 /// Built-in device handler kinds available for a virtualized comms bus.

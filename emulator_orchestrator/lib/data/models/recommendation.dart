@@ -74,6 +74,16 @@ sealed class Recommendation {
           rationale: rationale,
           newValue: json['new_value'] as int,
         );
+      case SetGroupOverride.kindName:
+        return SetGroupOverride(
+          rationale: rationale,
+          scope: json['scope'] as String,
+        );
+      case ClearGroupOverride.kindName:
+        return ClearGroupOverride(
+          rationale: rationale,
+          scope: json['scope'] as String,
+        );
       default:
         return null;
     }
@@ -212,5 +222,57 @@ class AdjustIterationCap extends Recommendation {
         'kind': kind,
         'rationale': rationale,
         'new_value': newValue,
+      };
+}
+
+/// Force the whole object group identified by [scope] — install the
+/// coherent, shared-scope hook for every member at once (enable→write 1,
+/// is-ready→read, …). Maps to `groupOverrides[scope] = forced` in the apply
+/// step; the synthesizer pre-installs the group's member hooks. Lets the LLM
+/// act on a recognized peripheral as a unit instead of one symbol at a time.
+/// See `SymbolGroupClassifier` and the `symbol_groups` docs page.
+class SetGroupOverride extends Recommendation {
+  const SetGroupOverride({
+    required super.rationale,
+    required this.scope,
+  });
+
+  static const kindName = 'set_group_override';
+  @override
+  String get kind => kindName;
+
+  /// The group key (e.g. `LL_RCC_LSI`), from the object-groups prompt section.
+  final String scope;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'kind': kind,
+        'rationale': rationale,
+        'scope': scope,
+      };
+}
+
+/// Stop the object group identified by [scope] from being applied — its
+/// members fall back to normal per-symbol handling, and the synthesizer will
+/// not auto-apply the group even if a member faults. Maps to
+/// `groupOverrides[scope] = suppressed`. Use when the coherent stub is wrong
+/// for the object.
+class ClearGroupOverride extends Recommendation {
+  const ClearGroupOverride({
+    required super.rationale,
+    required this.scope,
+  });
+
+  static const kindName = 'clear_group_override';
+  @override
+  String get kind => kindName;
+
+  final String scope;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'kind': kind,
+        'rationale': rationale,
+        'scope': scope,
       };
 }

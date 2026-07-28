@@ -1,7 +1,7 @@
-import '../models/call_graph.dart';
-import '../models/hook_decision_state.dart';
-import '../models/synthesis_manifest.dart';
-import 'coverage_frontier.dart';
+import '../../data/models/call_graph.dart';
+import '../../data/models/hook_decision_state.dart';
+import '../../data/models/synthesis_manifest.dart';
+import '../analysis/coverage_frontier.dart';
 import 'llm_client.dart';
 import 'llm_profiles.dart';
 

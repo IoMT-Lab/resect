@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:emulator_orchestrator/api/api_server.dart';
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
 import 'package:emulator_orchestrator/data/repositories/emulator_repository.dart';
-import 'package:emulator_orchestrator/data/services/artifact_library_service.dart';
+import 'package:emulator_orchestrator/services/hooks/artifact_library_service.dart';
 import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
 import 'package:emulator_orchestrator/orchestrator/engine/dart/dart_engine.dart';
 

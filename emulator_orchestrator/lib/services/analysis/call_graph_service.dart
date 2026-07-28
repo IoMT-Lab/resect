@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:signatures/signatures.dart';
 
-import '../database/artifact_database.dart';
+import '../../data/database/artifact_database.dart';
 
 /// Cache-aware reader for the Ghidra-extracted call graph.
 ///

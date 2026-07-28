@@ -16,7 +16,7 @@
 
 import 'dart:io';
 
-import 'package:emulator_orchestrator/data/services/hook_test_harness.dart';
+import 'package:emulator_orchestrator/services/quality/hook_test_harness.dart';
 
 // Hook that writes 12 zero bytes to 0x200005ec (the linker
 // address of DBInfo in aya_ppg.elf). On the old 4 KB rig this

@@ -143,6 +143,10 @@ class RecommendationReviewRow extends StatelessWidget {
         return 'Generate new hook for `$symbol`$intentStr';
       case AdjustIterationCap(:final newValue):
         return 'Set iteration cap → $newValue';
+      case SetGroupOverride(:final scope):
+        return 'Force object group `$scope`';
+      case ClearGroupOverride(:final scope):
+        return 'Clear object group `$scope`';
     }
   }
 
@@ -249,6 +253,8 @@ class _KindChip extends StatelessWidget {
       SetPreference() => ('PREFER', Colors.teal),
       GenerateCustomHook() => ('GENERATE', Colors.deepPurple),
       AdjustIterationCap() => ('ITER CAP', Colors.amber),
+      SetGroupOverride() => ('GROUP FORCE', Colors.cyan),
+      ClearGroupOverride() => ('GROUP CLEAR', Colors.blueGrey),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -322,6 +328,10 @@ class _RecommendationEditorDialogState
         _intentCtl = TextEditingController(text: intent ?? '');
       case AdjustIterationCap(:final newValue):
         _newValueCtl = TextEditingController(text: '$newValue');
+      case SetGroupOverride(:final scope):
+        _symbolCtl = TextEditingController(text: scope);
+      case ClearGroupOverride(:final scope):
+        _symbolCtl = TextEditingController(text: scope);
     }
   }
 
@@ -400,6 +410,20 @@ class _RecommendationEditorDialogState
           return;
         }
         next = AdjustIterationCap(rationale: rationale, newValue: value);
+      case SetGroupOverride():
+        final scope = _symbolCtl!.text.trim();
+        if (scope.isEmpty) {
+          setState(() => _errorText = 'Group scope must not be empty.');
+          return;
+        }
+        next = SetGroupOverride(rationale: rationale, scope: scope);
+      case ClearGroupOverride():
+        final scope = _symbolCtl!.text.trim();
+        if (scope.isEmpty) {
+          setState(() => _errorText = 'Group scope must not be empty.');
+          return;
+        }
+        next = ClearGroupOverride(rationale: rationale, scope: scope);
     }
     Navigator.of(context).pop(next);
   }

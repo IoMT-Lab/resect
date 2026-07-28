@@ -1,7 +1,7 @@
 import 'package:drift/native.dart';
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
-import 'package:emulator_orchestrator/data/services/artifact_library_service.dart';
-import 'package:emulator_orchestrator/data/services/hook_catalog.dart';
+import 'package:emulator_orchestrator/services/hooks/artifact_library_service.dart';
+import 'package:emulator_orchestrator/services/hooks/hook_catalog.dart';
 import 'package:test/test.dart';
 
 /// Verifies the 2026-06-17 dedup migration: when a DB seeded with

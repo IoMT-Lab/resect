@@ -1,4 +1,4 @@
-import '../models/call_graph.dart';
+import '../../data/models/call_graph.dart';
 
 /// One function on the coverage frontier: it executed, but at least
 /// one of the functions it calls never did. These are the boundary

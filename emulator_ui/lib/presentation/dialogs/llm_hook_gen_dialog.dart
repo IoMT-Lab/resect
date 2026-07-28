@@ -1,12 +1,12 @@
 import 'dart:async';
 
 import 'package:emulator_orchestrator/data/models/target_arch.dart';
-import 'package:emulator_orchestrator/data/services/hook_progress_runner.dart';
-import 'package:emulator_orchestrator/data/services/hook_scorer.dart';
-import 'package:emulator_orchestrator/data/services/hook_static_analyzer.dart';
-import 'package:emulator_orchestrator/data/services/hook_test_harness.dart';
-import 'package:emulator_orchestrator/data/services/llm_hook_generator.dart';
-import 'package:emulator_orchestrator/data/services/llm_judge.dart';
+import 'package:emulator_orchestrator/services/quality/hook_progress_runner.dart';
+import 'package:emulator_orchestrator/services/quality/hook_scorer.dart';
+import 'package:emulator_orchestrator/services/quality/hook_static_analyzer.dart';
+import 'package:emulator_orchestrator/services/quality/hook_test_harness.dart';
+import 'package:emulator_orchestrator/services/llm/llm_hook_generator.dart';
+import 'package:emulator_orchestrator/services/quality/llm_judge.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 

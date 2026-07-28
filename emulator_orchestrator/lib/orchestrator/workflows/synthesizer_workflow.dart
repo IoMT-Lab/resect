@@ -7,9 +7,10 @@ import 'package:signatures/signatures.dart' show FunctionSignature;
 
 import '../../data/database/artifact_database.dart';
 import '../../data/models/hook_binding.dart';
+import '../../data/models/symbol_group.dart';
 import '../../data/models/synthesis_manifest.dart';
 import '../../data/models/synthesizer_result.dart';
-import '../../data/services/llm_hook_generator.dart' show LlmHookGenerator, PlatformFacts;
+import '../../services/llm/llm_hook_generator.dart' show LlmHookGenerator, PlatformFacts;
 import '../engine/emulation_controller.dart';
 import '../engine/paused_event.dart';
 import '../events/synthesizer_events.dart';
@@ -99,6 +100,8 @@ class SynthesizerWorkflow {
     Map<String, String> resolvedHooks = const {},
     Map<String, HookSpec> commsHooks = const {},
     Map<String, HookBinding> hookBindings = const {},
+    List<SymbolGroup> symbolGroups = const [],
+    Map<String, GroupOverrideState> groupOverrides = const {},
     String? memoryMapPath,
     LlmHookGenerator? llmGenerator,
     PlatformFacts? platform,
@@ -124,6 +127,22 @@ class SynthesizerWorkflow {
     // Prevents an infinite retry loop on a generated hook that itself
     // causes an unhandled access at the same symbol.
     final triedLlm = <String>{};
+    // Object-group index: symbol → its recognized group. The first time
+    // any member faults, the whole group is force-installed with its
+    // shared scope (see `SymbolGroupClassifier`). `appliedGroupScopes`
+    // ensures that happens at most once per group per run.
+    final groupOf = <String, SymbolGroup>{};
+    for (final g in symbolGroups) {
+      for (final member in g.members.keys) {
+        groupOf[member] = g;
+      }
+    }
+    final appliedGroupScopes = <String>{};
+    // Groups the LLM cleared: never auto-applied on fault (see groupOverrides).
+    final suppressedGroupScopes = {
+      for (final e in groupOverrides.entries)
+        if (e.value == GroupOverrideState.suppressed) e.key,
+    };
     // Manifest accumulator — per-symbol ordered list of hook
     // applications. Pre-seeded layers contribute exactly one entry;
     // iteration adds another entry per attempt. At result time the
@@ -132,6 +151,31 @@ class SynthesizerWorkflow {
     final attempts = <String, List<ManifestAttempt>>{};
     void recordAttempt(String symbol, ManifestAttempt a) =>
         (attempts[symbol] ??= []).add(a);
+
+    // Install every member of a group override plan: define + map each hook
+    // with the shared scope, drop stale per-symbol iteration state, record a
+    // groupOverride manifest attempt, and mark the scope applied. Shared by
+    // the forced pre-seed and the on-fault escalation.
+    void installGroupPlan(GroupOverridePlan plan) {
+      appliedGroupScopes.add(plan.scope);
+      for (final m in plan.members) {
+        final hookName = '${m.symbol}_group';
+        definedHooks[hookName] = m.code;
+        hookScopes[hookName] = m.scope;
+        hookMap[m.symbol] = hookName;
+        hookCache.remove(m.symbol);
+        hookIndex.remove(m.symbol);
+        recordAttempt(
+          m.symbol,
+          ManifestAttempt(
+            code: m.code,
+            kind: ManifestDecisionKind.groupOverride,
+            source: 'group_override:${plan.scope}',
+            scope: m.scope,
+          ),
+        );
+      }
+    }
     final runStart = DateTime.now();
     final runId = runStart.toIso8601String();
     final elfFileName = p.basename(elfPath);
@@ -246,6 +290,20 @@ class SynthesizerWorkflow {
       }
     }
 
+    // Pre-seed object groups the LLM (or user) marked `forced` — install the
+    // whole object proactively, before any member faults. On-fault escalation
+    // still handles the rest; suppressed groups are skipped there.
+    for (final plan in forcedGroupPlans(
+      symbolGroups: symbolGroups,
+      groupOverrides: groupOverrides,
+      appliedScopes: appliedGroupScopes,
+      overriddenSymbols: overriddenSymbols,
+    )) {
+      installGroupPlan(plan);
+      print('[Synthesizer] Pre-seeded forced object group "${plan.scope}" '
+          '(${plan.members.length} member hook(s))');
+    }
+
     try {
       while (iteration < maxIterations && _isRunning) {
         iteration++;
@@ -328,6 +386,29 @@ class SynthesizerWorkflow {
             result: result,
           ));
           return result;
+        }
+
+        // Object-group escalation (deterministic, at most once per group):
+        // the first time any member of a recognized group faults,
+        // force-install the coherent hook for every member of that group
+        // with the shared scope, then re-run. The decision is a pure
+        // function (`planGroupOverride`) so it can be unit-tested without
+        // the engine; here we apply its plan. Members with a user override
+        // or comms hook are excluded, and a member with no recognized role
+        // has no hook and is left to normal per-symbol handling.
+        final groupPlan = planGroupOverride(
+          faultSymbol: symbol,
+          groupOf: groupOf,
+          appliedScopes: appliedGroupScopes,
+          overriddenSymbols: overriddenSymbols,
+          suppressedScopes: suppressedGroupScopes,
+        );
+        if (groupPlan != null) {
+          installGroupPlan(groupPlan);
+          print('[Synthesizer] Object group "${groupPlan.scope}" — '
+              'force-applied ${groupPlan.members.length} member hook(s) '
+              'after "$symbol" faulted');
+          continue;
         }
 
         // Effective score for a candidate under THIS symbol: the
@@ -818,4 +899,80 @@ class SynthesizerException implements Exception {
 
   @override
   String toString() => 'SynthesizerException: $message';
+}
+
+/// One member's slot in a [GroupOverridePlan].
+typedef GroupOverrideMember = ({String symbol, String code, String? scope});
+
+/// The set of member hooks to force-install when an object group escalates.
+class GroupOverridePlan {
+  const GroupOverridePlan({required this.scope, required this.members});
+
+  /// The group's shared scope (its key, e.g. `LL_RCC_LSI`).
+  final String scope;
+
+  /// The members to hook, each with its coherent code and the shared scope.
+  final List<GroupOverrideMember> members;
+}
+
+/// The hookable members of [group] to install, excluding any that already have
+/// a user override or comms hook ([overriddenSymbols]). Pure; shared by the
+/// forced pre-seed and the on-fault escalation.
+List<GroupOverrideMember> groupMemberInstalls(
+  SymbolGroup group,
+  Set<String> overriddenSymbols,
+) {
+  final members = <GroupOverrideMember>[];
+  for (final entry in group.hookableMembers) {
+    if (overriddenSymbols.contains(entry.key)) continue;
+    members.add((
+      symbol: entry.key,
+      code: entry.value.code,
+      scope: entry.value.scope,
+    ));
+  }
+  return members;
+}
+
+/// Groups the LLM (or user) marked `forced`, to pre-install at run start.
+/// Skips groups already applied and those with no installable members. Pure.
+List<GroupOverridePlan> forcedGroupPlans({
+  required List<SymbolGroup> symbolGroups,
+  required Map<String, GroupOverrideState> groupOverrides,
+  required Set<String> appliedScopes,
+  required Set<String> overriddenSymbols,
+}) {
+  final plans = <GroupOverridePlan>[];
+  for (final group in symbolGroups) {
+    if (groupOverrides[group.scope] != GroupOverrideState.forced) continue;
+    if (appliedScopes.contains(group.scope)) continue;
+    final members = groupMemberInstalls(group, overriddenSymbols);
+    if (members.isEmpty) continue;
+    plans.add(GroupOverridePlan(scope: group.scope, members: members));
+  }
+  return plans;
+}
+
+/// Decide whether a fault at [faultSymbol] should escalate to a whole-object
+/// group override, and if so which member hooks to install.
+///
+/// Pure and engine-free so it can be unit-tested. Returns null when the
+/// symbol isn't in a group, the group was already applied this run
+/// ([appliedScopes]), the group is [suppressedScopes] (the LLM cleared it),
+/// or every hookable member is excluded (a user override or comms hook —
+/// [overriddenSymbols]). The caller records the scope in [appliedScopes] and
+/// applies the returned hooks.
+GroupOverridePlan? planGroupOverride({
+  required String faultSymbol,
+  required Map<String, SymbolGroup> groupOf,
+  required Set<String> appliedScopes,
+  required Set<String> overriddenSymbols,
+  Set<String> suppressedScopes = const {},
+}) {
+  final group = groupOf[faultSymbol];
+  if (group == null || appliedScopes.contains(group.scope)) return null;
+  if (suppressedScopes.contains(group.scope)) return null;
+  final members = groupMemberInstalls(group, overriddenSymbols);
+  if (members.isEmpty) return null;
+  return GroupOverridePlan(scope: group.scope, members: members);
 }

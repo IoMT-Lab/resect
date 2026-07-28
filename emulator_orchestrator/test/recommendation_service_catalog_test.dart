@@ -5,11 +5,14 @@ import 'package:emulator_orchestrator/data/models/hook_decision_state.dart';
 import 'package:emulator_orchestrator/data/models/recommendation.dart';
 import 'package:emulator_orchestrator/data/models/round_snapshot.dart';
 import 'package:emulator_orchestrator/data/models/symbol.dart' as cg_sym;
+import 'package:emulator_orchestrator/data/models/symbol_group.dart';
 import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart';
-import 'package:emulator_orchestrator/data/services/coverage_frontier.dart';
-import 'package:emulator_orchestrator/data/services/last_run_insight_service.dart';
-import 'package:emulator_orchestrator/data/services/llm_client.dart';
-import 'package:emulator_orchestrator/data/services/recommendation_service.dart';
+import 'package:emulator_orchestrator/services/hooks/hook_catalog.dart';
+import 'package:emulator_orchestrator/services/hooks/symbol_group_classifier.dart';
+import 'package:emulator_orchestrator/services/analysis/coverage_frontier.dart';
+import 'package:emulator_orchestrator/services/llm/last_run_insight_service.dart';
+import 'package:emulator_orchestrator/services/llm/llm_client.dart';
+import 'package:emulator_orchestrator/services/llm/recommendation_service.dart';
 import 'package:test/test.dart';
 
 typedef _SeedRow = ({
@@ -447,6 +450,61 @@ void main() {
         'generate_custom_hook',
         'adjust_iteration_cap',
       ]);
+      await db.close();
+    });
+
+    test('group branches appear with a scope enum when a group is relevant',
+        () async {
+      final db = await _seedDb(const []);
+      final svc = _makeService(db);
+      final groups = SymbolGroupClassifier(catalog: HookCatalog.system())
+          .classify([
+        'LL_RCC_LSI_Enable',
+        'LL_RCC_LSI_Disable',
+        'LL_RCC_LSI_IsReady',
+      ]);
+      final schema = await svc.buildRecommendationSchema(
+        currentManifest:
+            _manifest(decisions: [_decision('LL_RCC_LSI_IsReady', 0)]),
+        currentState: _emptyState,
+        callGraph: _callGraph(['LL_RCC_LSI_IsReady']),
+        mode: RecommendationMode.job2Coverage,
+        frontier: const [],
+        symbolGroups: groups,
+      );
+      final kinds = [
+        for (final b in branches(schema))
+          (propsOf(b)['kind'] as Map<String, Object?>)['const'],
+      ];
+      expect(kinds, containsAll(['set_group_override', 'clear_group_override']));
+      final scope = propsOf(branchFor(schema, 'set_group_override'))['scope']
+          as Map<String, Object?>;
+      expect((scope['enum'] as List).cast<String>(), ['LL_RCC_LSI']);
+      await db.close();
+    });
+
+    test('no group branches when no group is relevant this round', () async {
+      final db = await _seedDb(const []);
+      final svc = _makeService(db);
+      final groups = SymbolGroupClassifier(catalog: HookCatalog.system())
+          .classify([
+        'LL_RCC_LSI_Enable',
+        'LL_RCC_LSI_Disable',
+        'LL_RCC_LSI_IsReady',
+      ]);
+      final schema = await svc.buildRecommendationSchema(
+        currentManifest: _manifest(decisions: [_decision('SystemInit', 0)]),
+        currentState: _emptyState,
+        callGraph: _callGraph(['SystemInit']),
+        mode: RecommendationMode.job2Coverage,
+        frontier: const [],
+        symbolGroups: groups, // present, but no member is a candidate
+      );
+      final kinds = [
+        for (final b in branches(schema))
+          (propsOf(b)['kind'] as Map<String, Object?>)['const'],
+      ];
+      expect(kinds, isNot(contains('set_group_override')));
       await db.close();
     });
 

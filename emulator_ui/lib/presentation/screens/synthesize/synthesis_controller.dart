@@ -5,9 +5,10 @@ import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart';
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
 import 'package:emulator_orchestrator/data/models/trace_activity_event.dart';
-import 'package:emulator_orchestrator/data/services/fidelity_calculator.dart';
-import 'package:emulator_orchestrator/data/services/llm_hook_generator.dart'
+import 'package:emulator_orchestrator/services/analysis/fidelity_calculator.dart';
+import 'package:emulator_orchestrator/services/llm/llm_hook_generator.dart'
     show PlatformFacts;
+import 'package:emulator_orchestrator/services/hooks/symbol_group_classifier.dart';
 import 'package:emulator_orchestrator/orchestrator/events/orchestrator_events.dart';
 import 'package:emulator_orchestrator/orchestrator/events/synthesizer_events.dart';
 import 'package:flutter/foundation.dart';
@@ -109,6 +110,14 @@ class SynthesisController {
       archString: firmwareRecord.machine?.name,
       firmwareSymbols: emulator.cachedCallGraph?.symbols.keys ?? const <String>[],
     );
+    // Object groups (peripheral member-function families), computed from the
+    // call graph. Comms symbols are excluded so grouping never touches the
+    // bus mechanism.
+    final symbolGroups =
+        SymbolGroupClassifier(catalog: ref.read(hookCatalogProvider)).classify(
+      emulator.cachedCallGraph?.symbols.keys ?? const <String>[],
+      exclude: commsHooks.keys.toSet(),
+    );
     await orchestrator.runSynthesizer(
       elfPath: elfPath,
       baseImagePath: baseImagePath,
@@ -121,6 +130,8 @@ class SynthesisController {
       resolvedHooks: resolvedHooks,
       commsHooks: commsHooks,
       hookBindings: hookBindings,
+      symbolGroups: symbolGroups,
+      groupOverrides: emulator.groupOverrides,
       memoryMapPath: config.memoryMapPath,
       llmGenerator: llmGenerator,
       platform: platform,

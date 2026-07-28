@@ -90,6 +90,32 @@ outside the protocol's current definition — the request's read-size field
 is 16-bit and can *ask* for more than the response can carry. Known
 protocol edge, tracked in `TODO.txt`; don't build on reads > 32 bytes.
 
+## Per-bus status
+
+Classification recognizes all three buses equally, but only I2C is wired all
+the way through today.
+
+| Bus | Classified | Forwarding hook | Wire path |
+|---|---|---|---|
+| I2C | yes | yes | works end to end |
+| UART | yes | yes | broken (see below) |
+| SPI | yes | no | not built |
+
+@note **Deviation from the current code.**
+**Today:** UART has a catalog forwarder and a Python remote module, but its
+request packets don't parse: `comms.py` sends the protocol flag one-hot
+(`uart = 0b100`), while the Dart side reads bits 3–5 as a sequential value
+where `uart = 3`, so a UART request hits `Format.fromValue(4)` and throws
+before any handler runs. SPI is dropped entirely — `buildCommsHooks` skips it
+at `comms_config.dart:87` because there is no `spi_read`/`spi_write` catalog
+descriptor, no `spi_hooks.dart`, no `spi_remote.py`, and no `extractSpiParams`.
+**Planned:** reconcile the one-hot encoder with the sequential `Format` enum
+so UART parses, and build the SPI forwarder + remote module + glue extractor
+end to end. The wire pieces live in `hooks-dart`.
+**Why:** the classifier already assigns UART and SPI roles, so firmware that
+talks over those buses is silently unserved — the requests either throw
+(UART) or are never forwarded at all (SPI).
+
 ## Precedence reminder
 
 Comms hooks are pre-seeded after [overrides](@ref gloss_override) but

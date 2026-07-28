@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:emulator_orchestrator/data/database/artifact_database.dart' show Artifact;
 import 'package:emulator_orchestrator/data/models/comms_assignment.dart';
 import 'package:emulator_orchestrator/data/models/symbol.dart';
-import 'package:emulator_orchestrator/data/services/scope_suggester.dart';
+import 'package:emulator_orchestrator/services/hooks/scope_suggester.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 

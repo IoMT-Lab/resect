@@ -9,13 +9,14 @@ import '../data/models/hook_binding.dart';
 import '../data/models/hook_decision_state.dart';
 import '../data/models/recommendation.dart';
 import '../data/models/round_snapshot.dart';
+import '../data/models/symbol_group.dart';
 import '../data/models/synthesis_manifest.dart';
 import '../data/models/synthesizer_result.dart';
-import '../data/services/coverage_frontier.dart';
-import '../data/services/fidelity_calculator.dart';
-import '../data/services/llm_client.dart';
-import '../data/services/llm_hook_generator.dart';
-import '../data/services/recommendation_service.dart';
+import '../services/analysis/coverage_frontier.dart';
+import '../services/analysis/fidelity_calculator.dart';
+import '../services/llm/llm_client.dart';
+import '../services/llm/llm_hook_generator.dart';
+import '../services/llm/recommendation_service.dart';
 import 'auto_tune_progress.dart';
 import 'recommendation_overlay_applier.dart';
 
@@ -46,6 +47,7 @@ class AutoTuneEngine {
     required this.reviewPolicy,
     required this.sink,
     this.hookGenerator,
+    this.symbolGroups = const [],
     this.now = DateTime.now,
   });
 
@@ -78,6 +80,11 @@ class AutoTuneEngine {
   /// Required only if a session might accept one; when null and such a
   /// recommendation is accepted, the round finishes with `llmError`.
   final LlmHookGenerator? hookGenerator;
+
+  /// Recognized object groups for this firmware (from `SymbolGroupClassifier`).
+  /// Surfaced to the recommendation LLM so it can act on a whole peripheral,
+  /// and passed to synthesis via the `runSynthesis` closure by the caller.
+  final List<SymbolGroup> symbolGroups;
 
   /// Clock seam. Real `DateTime.now` in production; a fixed stamp in
   /// tests so snapshots are deterministic.
@@ -454,6 +461,8 @@ class AutoTuneEngine {
         frontier: frontier,
         feedback: feedback,
         maxRecommendations: config.maxRecommendationsPerRound,
+        symbolGroups: symbolGroups,
+        groupOverrides: overlays.groupOverrides,
         onPromptComposed: (p) => composedPrompt = p,
         onToken: (tok) {
           responseBuf.write(tok);
@@ -576,6 +585,8 @@ class AutoTuneEngine {
       hookOverrideScopes: Map<String, String>.from(overlays.hookOverrideScopes),
       hookPreferences: Map<String, int>.from(overlays.hookPreferences),
       hookBindings: Map<String, HookBinding>.from(overlays.hookBindings),
+      groupOverrides:
+          Map<String, GroupOverrideState>.from(overlays.groupOverrides),
       iterationCap: overlays.iterationCap,
       metrics: metrics,
       executedSymbols: executed,
@@ -635,6 +646,7 @@ class AutoTuneOverlays {
     required this.hookOverrideScopes,
     required this.hookPreferences,
     required this.hookBindings,
+    required this.groupOverrides,
     required this.iterationCap,
   });
 
@@ -644,6 +656,8 @@ class AutoTuneOverlays {
         hookOverrideScopes: Map<String, String>.from(e.hookOverrideScopes),
         hookPreferences: Map<String, int>.from(e.hookPreferences),
         hookBindings: Map<String, HookBinding>.from(e.hookBindings),
+        groupOverrides:
+            Map<String, GroupOverrideState>.from(e.groupOverrides),
         iterationCap: iterationCap,
       );
 
@@ -651,6 +665,7 @@ class AutoTuneOverlays {
   final Map<String, String> hookOverrideScopes;
   final Map<String, int> hookPreferences;
   final Map<String, HookBinding> hookBindings;
+  final Map<String, GroupOverrideState> groupOverrides;
   int iterationCap;
 
   /// Apply a reviewed batch of recommendations to these maps in place,
@@ -664,6 +679,7 @@ class AutoTuneOverlays {
       hookOverrides: hookOverrides,
       hookOverrideScopes: hookOverrideScopes,
       hookPreferences: hookPreferences,
+      groupOverrides: groupOverrides,
       iterationCap: iterationCap,
     );
     iterationCap = result.iterationCap;
@@ -676,6 +692,7 @@ class AutoTuneOverlays {
         hookOverrideScopes: hookOverrideScopes,
         hookPreferences: hookPreferences,
         hookBindings: hookBindings,
+        groupOverrides: groupOverrides,
       );
 }
 

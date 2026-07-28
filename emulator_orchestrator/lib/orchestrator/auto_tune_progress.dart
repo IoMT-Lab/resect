@@ -111,6 +111,10 @@ bool isNoProgress({
         !hookOverrides.containsKey(symbol),
       GenerateCustomHook() => false,
       AdjustIterationCap() => false,
+      // Group actions target a scope, not the per-symbol maps in scope here;
+      // never treat them as no-ops (the applier dedupes by scope).
+      SetGroupOverride() => false,
+      ClearGroupOverride() => false,
     };
     (isNoOp ? skipped : kept).add(rec);
   }

@@ -45,6 +45,8 @@ each one stands alone.
 
 - @subpage getting_started — install Resect and run your first synthesis in
   about five minutes.
+- @subpage where_things_live — a "pick a process, get the files" index for
+  navigating the layered codebase.
 - @subpage workspace_layout — the packages in this repository and the sibling
   repositories they depend on.
 - @subpage storage_map — every file and database Resect writes on disk, and
@@ -74,6 +76,8 @@ each one stands alone.
   inside Renode.
 - @subpage hook_overlays — overrides, preferences, and bindings: the three
   maps that decide which hook a symbol gets.
+- @subpage symbol_groups — recognizing peripheral "objects" from symbol
+  names and hooking their member functions together.
 - @subpage synthesis — a single synthesizer run, iteration by iteration.
 - @subpage autotune — the closed loop that runs synthesis repeatedly and
   lets an LLM tune the setup between rounds.

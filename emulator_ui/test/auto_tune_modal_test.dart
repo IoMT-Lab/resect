@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:emulator_orchestrator/data/models/recommendation.dart';
-import 'package:emulator_orchestrator/data/services/recommendation_service.dart';
+import 'package:emulator_orchestrator/services/llm/recommendation_service.dart';
 import 'package:emulator_ui/presentation/screens/synthesize/llm_synthesis_orchestrator.dart';
 import 'package:emulator_ui/presentation/screens/synthesize/widgets/auto_tune_modal.dart';
 import 'package:flutter/material.dart';

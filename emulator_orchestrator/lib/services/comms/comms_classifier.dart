@@ -1,5 +1,5 @@
-import '../models/call_graph.dart';
-import '../models/comms_assignment.dart';
+import '../../data/models/call_graph.dart';
+import '../../data/models/comms_assignment.dart';
 
 /// Classifies the symbols in a [CallGraph] into Comms-tab buckets.
 ///

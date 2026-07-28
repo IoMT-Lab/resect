@@ -1,6 +1,6 @@
 import 'package:emulator_orchestrator/data/models/recommendation.dart';
 import 'package:emulator_orchestrator/data/models/round_snapshot.dart';
-import 'package:emulator_orchestrator/data/services/recommendation_service.dart';
+import 'package:emulator_orchestrator/services/llm/recommendation_service.dart';
 import 'package:flutter/material.dart';
 
 import '../llm_synthesis_orchestrator.dart';

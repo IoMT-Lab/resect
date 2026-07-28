@@ -12,8 +12,8 @@
 import 'dart:io';
 
 import 'package:emulator_orchestrator/config/env_config.dart';
-import 'package:emulator_orchestrator/data/services/llm_client.dart';
-import 'package:emulator_orchestrator/data/services/llm_judge.dart';
+import 'package:emulator_orchestrator/services/llm/llm_client.dart';
+import 'package:emulator_orchestrator/services/quality/llm_judge.dart';
 
 // The original function's decompilation. A clock-enable function
 // that pokes a peripheral register — exactly the case where the

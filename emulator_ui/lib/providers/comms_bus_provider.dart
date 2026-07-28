@@ -1,5 +1,5 @@
 import 'package:emulator_orchestrator/data/models/comms_assignment.dart';
-import 'package:emulator_orchestrator/data/services/hook_catalog.dart';
+import 'package:emulator_orchestrator/services/hooks/hook_catalog.dart';
 import 'package:emulator_orchestrator/orchestrator/comms/comms_bus_service.dart';
 import 'package:emulator_orchestrator/orchestrator/comms/device_handler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';

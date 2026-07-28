@@ -19,7 +19,7 @@ import 'dart:io';
 // is in scope at the where-clause call sites below.
 import 'package:drift/drift.dart';
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
-import 'package:emulator_orchestrator/data/services/hook_classifier.dart';
+import 'package:emulator_orchestrator/services/hooks/hook_classifier.dart';
 import 'package:signatures/signatures.dart';
 
 class _Expectation {

@@ -7,7 +7,7 @@ import 'package:drift/drift.dart';
 import 'package:signatures/signatures.dart';
 
 import '../../config/env_config.dart';
-import '../database/artifact_database.dart';
+import '../../data/database/artifact_database.dart';
 import 'ghidra_installer.dart';
 
 // Re-export the signature types so UI code can reference them

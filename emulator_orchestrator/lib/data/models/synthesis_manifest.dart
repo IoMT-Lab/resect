@@ -519,7 +519,13 @@ enum ManifestDecisionKind {
   /// All DB candidates exhausted; the LLM generated a fresh hook
   /// at synthesis time. See [LlmInvocation] on the same decision
   /// for token telemetry.
-  llmOnDemand('llm_on_demand');
+  llmOnDemand('llm_on_demand'),
+
+  /// Coherent object-group hook: a member of a recognized symbol group
+  /// faulted, so the whole group was force-installed together with a
+  /// shared scope. The `decision_source` is `group_override:<scope>`.
+  /// See `SymbolGroupClassifier` and the `symbol_groups` docs page.
+  groupOverride('group_override');
 
   const ManifestDecisionKind(this.jsonName);
 

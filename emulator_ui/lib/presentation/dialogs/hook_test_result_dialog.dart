@@ -1,4 +1,4 @@
-import 'package:emulator_orchestrator/data/services/hook_test_harness.dart';
+import 'package:emulator_orchestrator/services/quality/hook_test_harness.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/theme.dart';

@@ -2,8 +2,8 @@ import 'dart:io';
 import 'package:callgraph/callgraph.dart' show Machine, getMachineForElf;
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
-import '../database/artifact_database.dart';
-import '../models/firmware_record.dart';
+import '../../data/database/artifact_database.dart';
+import '../../data/models/firmware_record.dart';
 import 'hook_catalog.dart';
 
 /// Service for managing the local artifact library.

@@ -4,8 +4,8 @@ import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:signatures/signatures.dart' show DataSymbol, FunctionSignature;
 
-import '../database/artifact_database.dart';
-import '../models/hook_binding.dart';
+import '../../data/database/artifact_database.dart';
+import '../../data/models/hook_binding.dart';
 import 'hook_classifier.dart';
 
 /// Bulk-classifier pass that produces per-symbol [HookBinding]s for

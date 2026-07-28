@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:emulator_orchestrator/config/component.dart';
 import 'package:emulator_orchestrator/config/config_schema.dart';
 import 'package:emulator_orchestrator/config/env_config.dart';
-import 'package:emulator_orchestrator/data/services/ghidra_installer.dart';
-import 'package:emulator_orchestrator/data/services/ollama_installer.dart';
+import 'package:emulator_orchestrator/services/external/ghidra_installer.dart';
+import 'package:emulator_orchestrator/services/external/ollama_installer.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 export 'package:emulator_orchestrator/config/component.dart';

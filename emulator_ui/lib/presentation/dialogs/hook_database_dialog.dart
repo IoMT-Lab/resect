@@ -2,8 +2,8 @@ import 'dart:async';
 
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
 import 'package:emulator_orchestrator/data/models/target_arch.dart';
-import 'package:emulator_orchestrator/data/services/hook_test_harness.dart';
-import 'package:emulator_orchestrator/data/services/starter_template.dart';
+import 'package:emulator_orchestrator/services/quality/hook_test_harness.dart';
+import 'package:emulator_orchestrator/services/hooks/starter_template.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -114,7 +114,7 @@ class _HookDatabaseDialogState extends ConsumerState<HookDatabaseDialog> {
   /// `returnHook(0)` (single-source ABI), wrapped with a
   /// plain-language header that explains what a hook is and marks
   /// the editable line. See
-  /// [emulator_orchestrator/lib/data/services/starter_template.dart].
+  /// [emulator_orchestrator/lib/services/hooks/starter_template.dart].
   ///
   /// One-way: no removal counterpart — users delete lines manually.
   /// No-op when the buffer already starts with the template header.

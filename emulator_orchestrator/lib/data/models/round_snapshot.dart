@@ -1,5 +1,6 @@
 import 'hook_binding.dart';
 import 'recommendation.dart';
+import 'symbol_group.dart';
 import 'synthesis_manifest.dart';
 
 /// Durable per-round record of one iteration of the closed-loop
@@ -48,6 +49,7 @@ class RoundSnapshot {
     this.memoryMapCheckpointPath,
     this.resumePointSymbol,
     this.deviceProfileSnapshot,
+    this.groupOverrides = const {},
   });
 
   /// Schema version this snapshot was written with. Bump on shape
@@ -80,6 +82,10 @@ class RoundSnapshot {
 
   /// Fidelity-scored hook bindings at the start of this round.
   final Map<String, HookBinding> hookBindings;
+
+  /// Object-group override states (group scope → forced/suppressed) at the
+  /// start of this round. Empty when the LLM has made no group decisions.
+  final Map<String, GroupOverrideState> groupOverrides;
 
   /// Synthesizer iteration cap configured for this round's run.
   final int iterationCap;
@@ -144,6 +150,9 @@ class RoundSnapshot {
         'hook_bindings': hookBindings.map(
           (symbol, binding) => MapEntry(symbol, binding.toJson()),
         ),
+        if (groupOverrides.isNotEmpty)
+          'group_overrides':
+              groupOverrides.map((k, v) => MapEntry(k, v.name)),
         'iteration_cap': iterationCap,
         'metrics': metrics.toJson(),
         'executed_symbols': executedSymbols,
@@ -199,6 +208,14 @@ class RoundSnapshot {
         (k, v) => MapEntry(
             k, HookBinding.fromJson(v as Map<String, dynamic>)),
       ),
+      groupOverrides: (json['group_overrides'] as Map<String, dynamic>?)
+              ?.map((k, v) => MapEntry(
+                  k,
+                  GroupOverrideState.values.firstWhere(
+                    (s) => s.name == v as String,
+                    orElse: () => GroupOverrideState.forced,
+                  ))) ??
+          const <String, GroupOverrideState>{},
       iterationCap: json['iteration_cap'] as int,
       metrics: ManifestMetrics.fromJson(
           json['metrics'] as Map<String, dynamic>),

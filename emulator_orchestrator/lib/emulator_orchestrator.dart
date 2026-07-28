@@ -25,8 +25,8 @@ export 'data/models/trace_activity_event.dart';
 // Data repositories
 export 'data/repositories/emulator_repository.dart';
 // Data services
-export 'data/services/artifact_library_service.dart';
-export 'data/services/fidelity_calculator.dart';
+export 'services/hooks/artifact_library_service.dart';
+export 'services/analysis/fidelity_calculator.dart';
 // Orchestrator
 export 'orchestrator/emulation_orchestrator.dart';
 export 'orchestrator/engine/dart/dart_engine.dart';

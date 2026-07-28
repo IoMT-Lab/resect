@@ -1,18 +1,19 @@
 import 'dart:async';
 import 'dart:convert';
 
-import '../database/artifact_database.dart';
-import '../models/call_graph.dart';
-import '../models/hook_decision_state.dart';
-import '../models/recommendation.dart';
-import '../models/round_snapshot.dart';
-import '../models/synthesis_manifest.dart';
-import 'coverage_frontier.dart';
-import 'fidelity_delta.dart';
+import '../../data/database/artifact_database.dart';
+import '../../data/models/call_graph.dart';
+import '../../data/models/hook_decision_state.dart';
+import '../../data/models/recommendation.dart';
+import '../../data/models/round_snapshot.dart';
+import '../../data/models/symbol_group.dart';
+import '../../data/models/synthesis_manifest.dart';
+import '../analysis/coverage_frontier.dart';
+import '../analysis/fidelity_delta.dart';
 import 'last_run_insight_service.dart';
 import 'llm_client.dart';
 import 'llm_profiles.dart';
-import 'rag_index.dart';
+import '../rag/rag_index.dart';
 
 /// Optimization signal the LLM should bias its recommendations
 /// toward when set. Surfaced from the auto-tune configuration
@@ -224,6 +225,8 @@ class RecommendationService {
     List<FrontierEntry> frontier = const [],
     RoundFeedback? feedback,
     int maxRecommendations = defaultMaxRecommendations,
+    List<SymbolGroup> symbolGroups = const [],
+    Map<String, GroupOverrideState> groupOverrides = const {},
     void Function(String token)? onToken,
     void Function(String chunk)? onThinking,
     void Function(String prompt)? onPromptComposed,
@@ -248,6 +251,8 @@ class RecommendationService {
       frontier: frontier,
       feedback: feedback,
       maxRecommendations: maxRecommendations,
+      symbolGroups: symbolGroups,
+      groupOverrides: groupOverrides,
     );
     // Surface the composed prompt to the caller. Used by the
     // orchestrator to write the per-round debug trace file
@@ -262,6 +267,7 @@ class RecommendationService {
       frontier: frontier,
       maxRecommendations: maxRecommendations,
       feedback: feedback,
+      symbolGroups: symbolGroups,
     );
 
     final modelName = llmClient.model;
@@ -324,6 +330,8 @@ class RecommendationService {
     List<FrontierEntry> frontier = const [],
     RoundFeedback? feedback,
     int maxRecommendations = defaultMaxRecommendations,
+    List<SymbolGroup> symbolGroups = const [],
+    Map<String, GroupOverrideState> groupOverrides = const {},
   }) async {
     final resolvedMode = _resolveMode(mode, currentManifest);
     final buf = StringBuffer();
@@ -347,6 +355,23 @@ class RecommendationService {
     // `ArtifactLibraryService.reseedDefaults` and now points
     // nowhere.
     buf.writeln(await _renderArtifactCatalog());
+
+    // Object groups relevant this round — so the model can act on a whole
+    // peripheral (set/clear_group_override) instead of scattered symbols.
+    if (symbolGroups.isNotEmpty) {
+      final candidates = _candidateSymbols(
+        currentManifest: currentManifest,
+        currentState: currentState,
+        callGraph: callGraph,
+        mode: resolvedMode,
+        frontier: frontier,
+      );
+      final relevant = _relevantGroups(symbolGroups, candidates);
+      if (relevant.isNotEmpty) {
+        buf.writeln();
+        buf.writeln(_renderObjectGroups(relevant, groupOverrides));
+      }
+    }
 
     // Retrieved context — top-K hook-catalog chunks + the halt
     // symbol's decompilation chunk when the RAG index is wired.
@@ -702,35 +727,17 @@ class RecommendationService {
   /// Public for unit testing — asserts the enums reflect the real
   /// catalog ids / candidate symbols and that invalid picks are
   /// unrepresentable.
-  Future<Map<String, Object?>> buildRecommendationSchema({
+  /// The adjacency-derived candidate symbol set for a round: the halt symbol,
+  /// (job2) the coverage frontier + its unexecuted callees, the halt symbol's
+  /// callers/callees, and every overlay/manifest symbol. Shared by the schema
+  /// (which then excludes comms) and the prompt's object-group relevance.
+  Set<String> _candidateSymbols({
     required SynthesisManifest currentManifest,
     required HookDecisionState currentState,
     required CallGraph callGraph,
     required RecommendationMode mode,
     required List<FrontierEntry> frontier,
-    int maxRecommendations = defaultMaxRecommendations,
-    RoundFeedback? feedback,
-  }) async {
-    final catalogIds =
-        (await artifactDb.getAllArtifacts()).map((a) => a.id).toList()..sort();
-
-    // Escalation round: the previous round's leaf-level fixes were all
-    // in effect and coverage stayed frozen, so the ONLY defensible
-    // targets are the stalled callers (wrapper-skip). Restricting the
-    // symbol enum makes repeating the previous answer UNREPRESENTABLE
-    // — observed failure: at temp 0 the model reproduced its prior
-    // round's recommendations token-for-token, straight past an
-    // imperative do-not-repeat instruction. Constrained decoding is
-    // the lever prose isn't.
-    if (feedback != null && feedback.stalledCallers.isNotEmpty) {
-      final stalled = feedback.stalledCallers.toList()..sort();
-      return _schemaShell(
-        symbolEnum: stalled,
-        catalogIds: catalogIds,
-        maxRecommendations: maxRecommendations,
-      );
-    }
-
+  }) {
     final candidates = <String>{};
     final halt = LastRunInsightService.computeHaltSymbol(currentManifest);
     if (halt != null) candidates.add(halt);
@@ -747,9 +754,92 @@ class RecommendationService {
         candidates.addAll(callGraph.getCallers(halt));
       }
     }
-    // Overlay + manifest symbols are always legitimate targets.
     candidates.addAll(currentState.decisions.map((d) => d.symbol));
     candidates.addAll(currentManifest.decisions.map((d) => d.symbol));
+    return candidates;
+  }
+
+  /// Object groups with at least one member in [candidates] — the groups
+  /// worth showing the model this round.
+  static List<SymbolGroup> _relevantGroups(
+    List<SymbolGroup> symbolGroups,
+    Set<String> candidates,
+  ) =>
+      symbolGroups
+          .where((g) => g.members.keys.any(candidates.contains))
+          .toList();
+
+  /// Render the `## Object groups` prompt section: each relevant object, its
+  /// current override state, and its members with roles.
+  static String _renderObjectGroups(
+    List<SymbolGroup> groups,
+    Map<String, GroupOverrideState> groupOverrides,
+  ) {
+    final buf = StringBuffer()
+      ..writeln('## Object groups (this round)')
+      ..writeln('Peripheral objects whose members are in play. Act on a whole '
+          'object with `set_group_override` (force its coherent enable/disable/'
+          'read hooks together) or `clear_group_override` (stop it being '
+          'applied, freeing its members for per-symbol handling). Prefer a '
+          'group action when a fault sits inside one of these objects.');
+    for (final g in groups) {
+      final state = groupOverrides[g.scope];
+      final tag = state == GroupOverrideState.forced
+          ? ' [forced]'
+          : state == GroupOverrideState.suppressed
+              ? ' [suppressed]'
+              : ' [auto]';
+      final members = g.members.entries
+          .map((e) => '${e.key}(${e.value.role.name})')
+          .join(', ');
+      buf.writeln('- `${g.scope}`$tag: $members');
+    }
+    return buf.toString();
+  }
+
+  Future<Map<String, Object?>> buildRecommendationSchema({
+    required SynthesisManifest currentManifest,
+    required HookDecisionState currentState,
+    required CallGraph callGraph,
+    required RecommendationMode mode,
+    required List<FrontierEntry> frontier,
+    int maxRecommendations = defaultMaxRecommendations,
+    RoundFeedback? feedback,
+    List<SymbolGroup> symbolGroups = const [],
+  }) async {
+    final catalogIds =
+        (await artifactDb.getAllArtifacts()).map((a) => a.id).toList()..sort();
+
+    // Escalation round: the previous round's leaf-level fixes were all
+    // in effect and coverage stayed frozen, so the ONLY defensible
+    // targets are the stalled callers (wrapper-skip). Restricting the
+    // symbol enum makes repeating the previous answer UNREPRESENTABLE
+    // — observed failure: at temp 0 the model reproduced its prior
+    // round's recommendations token-for-token, straight past an
+    // imperative do-not-repeat instruction. Constrained decoding is
+    // the lever prose isn't.
+    if (feedback != null && feedback.stalledCallers.isNotEmpty) {
+      final stalled = feedback.stalledCallers.toList()..sort();
+      final groupScopes = _relevantGroups(symbolGroups, stalled.toSet())
+          .map((g) => g.scope)
+          .toList()
+        ..sort();
+      return _schemaShell(
+        symbolEnum: stalled,
+        catalogIds: catalogIds,
+        maxRecommendations: maxRecommendations,
+        groupScopeEnum: groupScopes,
+      );
+    }
+
+    final halt = LastRunInsightService.computeHaltSymbol(currentManifest);
+    final candidates = _candidateSymbols(
+      currentManifest: currentManifest,
+      currentState: currentState,
+      callGraph: callGraph,
+      mode: mode,
+      frontier: frontier,
+    );
 
     // Comms-virtualized symbols are covered as a bus — an individual
     // force on one produces incoherent protocol state, so make them
@@ -772,10 +862,15 @@ class RecommendationService {
       }
     }
     final symbolEnum = candidates.where((s) => s.isNotEmpty).toList()..sort();
+    final groupScopes = _relevantGroups(symbolGroups, candidates)
+        .map((g) => g.scope)
+        .toList()
+      ..sort();
     return _schemaShell(
       symbolEnum: symbolEnum,
       catalogIds: catalogIds,
       maxRecommendations: maxRecommendations,
+      groupScopeEnum: groupScopes,
     );
   }
 
@@ -793,6 +888,7 @@ class RecommendationService {
     required List<String> symbolEnum,
     required List<int> catalogIds,
     required int maxRecommendations,
+    List<String> groupScopeEnum = const [],
   }) {
     final symbolSchema = symbolEnum.isEmpty
         ? {'type': 'string'}
@@ -856,6 +952,21 @@ class RecommendationService {
               }, [
                 'new_value',
               ]),
+              // Group actions only when there ARE relevant groups — never emit
+              // a branch with an empty scope enum (unconstrained scope would
+              // let the model invent a non-existent object).
+              if (groupScopeEnum.isNotEmpty)
+                branch(SetGroupOverride.kindName, {
+                  'scope': {'type': 'string', 'enum': groupScopeEnum},
+                }, [
+                  'scope',
+                ]),
+              if (groupScopeEnum.isNotEmpty)
+                branch(ClearGroupOverride.kindName, {
+                  'scope': {'type': 'string', 'enum': groupScopeEnum},
+                }, [
+                  'scope',
+                ]),
             ],
           },
         },
@@ -926,6 +1037,10 @@ class RecommendationService {
         return 'generate_custom_hook $symbol$intentPart';
       case AdjustIterationCap(:final newValue):
         return 'adjust_iteration_cap → $newValue';
+      case SetGroupOverride(:final scope):
+        return 'set_group_override $scope';
+      case ClearGroupOverride(:final scope):
+        return 'clear_group_override $scope';
     }
   }
 

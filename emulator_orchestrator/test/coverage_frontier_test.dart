@@ -1,6 +1,6 @@
 import 'package:emulator_orchestrator/data/models/call_graph.dart';
 import 'package:emulator_orchestrator/data/models/symbol.dart';
-import 'package:emulator_orchestrator/data/services/coverage_frontier.dart';
+import 'package:emulator_orchestrator/services/analysis/coverage_frontier.dart';
 import 'package:test/test.dart';
 
 /// Build a call graph from a simple {caller: [callees]} adjacency map.

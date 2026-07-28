@@ -1,7 +1,7 @@
 import 'package:emulator_orchestrator/data/models/call_graph.dart';
 import 'package:emulator_orchestrator/data/models/comms_assignment.dart';
 import 'package:emulator_orchestrator/data/models/symbol.dart' as m;
-import 'package:emulator_orchestrator/data/services/comms_classifier.dart';
+import 'package:emulator_orchestrator/services/comms/comms_classifier.dart';
 import 'package:test/test.dart';
 
 CallGraph _graphOf(Iterable<String> names) => CallGraph(

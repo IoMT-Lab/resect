@@ -12,8 +12,8 @@ import 'dart:math' as math;
 
 import 'package:drift/drift.dart';
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
-import 'package:emulator_orchestrator/data/services/hook_classifier.dart';
-import 'package:emulator_orchestrator/data/services/hook_static_analyzer.dart';
+import 'package:emulator_orchestrator/services/hooks/hook_classifier.dart';
+import 'package:emulator_orchestrator/services/quality/hook_static_analyzer.dart';
 import 'package:signatures/signatures.dart';
 
 const String _replPath = '/home/evan/Development/resect/emulation_engine/'

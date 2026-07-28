@@ -1,5 +1,5 @@
 import 'package:emulator_orchestrator/data/models/auto_tune_config.dart';
-import 'package:emulator_orchestrator/data/services/recommendation_service.dart';
+import 'package:emulator_orchestrator/services/llm/recommendation_service.dart';
 import 'package:flutter/material.dart';
 
 /// Modal dialog the user fills in before starting an auto-tune

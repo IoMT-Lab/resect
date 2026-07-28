@@ -12,7 +12,7 @@
 
 import 'dart:io';
 
-import 'package:emulator_orchestrator/data/services/hook_progress_runner.dart';
+import 'package:emulator_orchestrator/services/quality/hook_progress_runner.dart';
 
 // User's real STM32WB05 project assets — same paths the dialog
 // uses via Emulator.elfFilePath / baseImagePath.

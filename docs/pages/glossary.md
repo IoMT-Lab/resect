@@ -143,6 +143,14 @@ symbols, and the memory map in the [artifact database](@ref gloss_artifact_db). 
 `resect.config`. Powers the [classifier](@ref gloss_classifier),
 [RAG](@ref gloss_rag) retrieval, and LLM prompts.
 
+## Group scope {#gloss_group_scope}
+
+The shared [scope](@ref gloss_scope) string given to every member of an
+[object group](@ref gloss_object_group) — the group key, e.g. `LL_RCC_LSI`.
+Because the members share one scope, their scoped read/write hooks read and
+write the same Renode Python-globals namespace, so enabling the object sets
+state that its is-ready member reads back. See @ref symbol_groups.
+
 ## Hook {#gloss_hook}
 
 A small Python function installed into [Renode](@ref gloss_renode) at a
@@ -173,12 +181,27 @@ per-symbol decision and attempt, the metrics, the executed symbols, and
 timing. Written to `manifests/<run_id>.json` in the project directory. See
 @ref storage_map.
 
+## Member role {#gloss_member_role}
+
+What one function does within its [object group](@ref gloss_object_group),
+inferred from its trailing action token: enable, disable, is-ready, get, set,
+reset, init/deinit, or unknown. The role picks the member's coherent hook
+(enable → write 1, is-ready → read, …). See @ref symbol_groups.
+
 ## Model {#gloss_model}
 
 In Resect's MVC framing: a data store plus the types that describe it, with
 no behavior beyond (de)serialization. Resect has exactly two — the
 [artifact database](@ref gloss_artifact_db) and the
 [project](@ref gloss_project). See @ref architecture.
+
+## Object group {#gloss_object_group}
+
+A family of firmware [symbols](@ref gloss_symbol) that are member functions of
+the same peripheral "object," recognized by a shared name prefix — e.g.
+`LL_RCC_LSI_Enable` / `_Disable` / `_IsReady`. Members get coherent hooks that
+share a [group scope](@ref gloss_group_scope), and are hooked together when any
+one of them faults. Non-comms symbols only. See @ref symbol_groups.
 
 ## Orchestrator {#gloss_orchestrator}
 

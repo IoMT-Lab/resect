@@ -2,9 +2,9 @@ import 'package:emulator_orchestrator/data/models/call_graph.dart';
 import 'package:emulator_orchestrator/data/models/hook_decision_state.dart';
 import 'package:emulator_orchestrator/data/models/symbol.dart';
 import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart';
-import 'package:emulator_orchestrator/data/services/coverage_frontier.dart';
-import 'package:emulator_orchestrator/data/services/last_run_insight_service.dart';
-import 'package:emulator_orchestrator/data/services/llm_client.dart';
+import 'package:emulator_orchestrator/services/analysis/coverage_frontier.dart';
+import 'package:emulator_orchestrator/services/llm/last_run_insight_service.dart';
+import 'package:emulator_orchestrator/services/llm/llm_client.dart';
 import 'package:test/test.dart';
 
 ManifestRunResult _result(bool success) => ManifestRunResult(

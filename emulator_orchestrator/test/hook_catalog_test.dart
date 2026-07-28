@@ -1,4 +1,4 @@
-import 'package:emulator_orchestrator/data/services/hook_catalog.dart';
+import 'package:emulator_orchestrator/services/hooks/hook_catalog.dart';
 import 'package:test/test.dart';
 
 /// Catalog tests: structural checks on the generated hook code. We can't assert

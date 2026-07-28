@@ -1,4 +1,4 @@
-// Regenerates lib/data/services/test_harness_assets.dart from the
+// Regenerates lib/services/quality/test_harness_assets.dart from the
 // contents of test_harness/.
 //
 // Reads:
@@ -7,7 +7,7 @@
 //   - Symbol addresses from the ELF via arm-none-eabi-objdump -t
 //
 // Writes:
-//   - lib/data/services/test_harness_assets.dart
+//   - lib/services/quality/test_harness_assets.dart
 //
 // Invoked from test_harness/Makefile via `make regen-dart`.
 //
@@ -29,7 +29,7 @@ Future<void> main(List<String> args) async {
   final pkgRoot = File.fromUri(scriptUri).parent.parent;
   final harnessDir = Directory('${pkgRoot.path}/test_harness');
   final outPath =
-      '${pkgRoot.path}/lib/data/services/test_harness_assets.dart';
+      '${pkgRoot.path}/lib/services/quality/test_harness_assets.dart';
 
   final elfFile = File('${harnessDir.path}/minimal_firmware.elf');
   final replFile = File('${harnessDir.path}/minimal_cortex_m.repl');

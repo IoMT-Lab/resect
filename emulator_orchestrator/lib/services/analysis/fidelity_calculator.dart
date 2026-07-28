@@ -1,7 +1,7 @@
 import 'dart:collection';
 
-import '../models/call_graph.dart';
-import '../models/fidelity_result.dart';
+import '../../data/models/call_graph.dart';
+import '../../data/models/fidelity_result.dart';
 
 /// Computes emulation fidelity by propagating degradation from hooked
 /// functions upward through the call graph.

@@ -12,7 +12,7 @@
 
 import 'dart:io';
 
-import 'package:emulator_orchestrator/data/services/ghidra_installer.dart';
+import 'package:emulator_orchestrator/services/external/ghidra_installer.dart';
 
 Future<void> main() async {
   final installer = GhidraInstaller();

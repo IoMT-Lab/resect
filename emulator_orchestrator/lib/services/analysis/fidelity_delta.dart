@@ -1,4 +1,4 @@
-import '../models/synthesis_manifest.dart';
+import '../../data/models/synthesis_manifest.dart';
 
 /// Pure-function delta between two [ManifestMetrics] snapshots.
 ///
