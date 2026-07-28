@@ -17,9 +17,9 @@
 /// it's the definition the plan demands.
 library;
 
-import 'package:hooks/hooks.dart' show incrementHook, returnHook;
 import 'package:renode/renode.dart' show Hook;
-import 'package:signatures/signatures.dart'
+import 'package:resect_hooks/resect_hooks.dart' show incrementHook, returnHook;
+import 'package:resect_signatures/resect_signatures.dart'
     show DataSymbol, FunctionSignature;
 
 /// Result of [HookClassifier.classify]: which template matched, the

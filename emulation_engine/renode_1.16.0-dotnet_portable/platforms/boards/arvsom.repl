@@ -1,5 +1,0 @@
-using "platforms/cpus/starfive-jh7100.repl"
-
-ddr: Memory.MappedMemory @sysbus 0x80000000
-    size: 0x200000000
-

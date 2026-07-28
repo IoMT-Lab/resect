@@ -1,4 +1,4 @@
-import 'package:callgraph/callgraph.dart' show Machine;
+import 'package:resect_callgraph/resect_callgraph.dart' show Machine;
 
 /// Single source of truth for everything arch-conditional in resect.
 ///

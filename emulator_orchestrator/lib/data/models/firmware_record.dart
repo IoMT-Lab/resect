@@ -1,4 +1,4 @@
-import 'package:callgraph/callgraph.dart' show Machine;
+import 'package:resect_callgraph/resect_callgraph.dart' show Machine;
 
 /// Domain model representing a firmware image and its symbols in the artifact library.
 ///

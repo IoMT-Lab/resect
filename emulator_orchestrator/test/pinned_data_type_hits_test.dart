@@ -4,7 +4,7 @@ import 'package:emulator_orchestrator/services/hooks/hook_classifier.dart';
 import 'package:emulator_orchestrator/services/llm/llm_client.dart';
 import 'package:emulator_orchestrator/services/llm/llm_hook_generator.dart';
 import 'package:emulator_orchestrator/services/rag/rag_index.dart';
-import 'package:signatures/signatures.dart';
+import 'package:resect_signatures/resect_signatures.dart';
 import 'package:test/test.dart';
 
 // Integration test for `LlmHookGenerator.pinnedDataTypeHits` — the

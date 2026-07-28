@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:hooks/hooks.dart' as hooks;
+import 'package:resect_hooks/resect_hooks.dart' as hooks;
 
 import '../../data/models/comms_assignment.dart';
 import 'device_handler.dart';

@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:signatures/signatures.dart';
+import 'package:resect_signatures/resect_signatures.dart';
 
 import '../../data/database/artifact_database.dart';
 import '../../data/models/target_arch.dart';

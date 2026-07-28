@@ -1,5 +1,5 @@
-import 'package:hooks/hooks.dart';
 import 'package:renode/renode.dart';
+import 'package:resect_hooks/resect_hooks.dart';
 
 /// Type tag for a [HookParamSpec] — keeps the UI rendering generic over kind
 /// (a future parameter form widget can switch on this).
@@ -97,187 +97,185 @@ class HookCatalog {
   /// `artifact_library_service.dart` remaps `Create(N, 64)`-shaped
   /// obsolete bodies to the catalog return body.
   Set<String> defaultCodes() => {
-        build('return', const {'value': 0}).code,
-        build('return', const {'value': 1}).code,
-        build('read', const {'scope': '', 'defaultValue': 0}).code,
-        build('read', const {'scope': '', 'defaultValue': 1}).code,
-        build('write', const {'scope': '', 'value': 0, 'returnValue': 0}).code,
-        build('write', const {'scope': '', 'value': 1, 'returnValue': 0}).code,
-        build('increment', const {'scope': '', 'defaultValue': 0}).code,
-        build('increment', const {'scope': '', 'defaultValue': 1}).code,
-      };
+    build('return', const {'value': 0}).code,
+    build('return', const {'value': 1}).code,
+    build('read', const {'scope': '', 'defaultValue': 0}).code,
+    build('read', const {'scope': '', 'defaultValue': 1}).code,
+    build('write', const {'scope': '', 'value': 0, 'returnValue': 0}).code,
+    build('write', const {'scope': '', 'value': 1, 'returnValue': 0}).code,
+    build('increment', const {'scope': '', 'defaultValue': 0}).code,
+    build('increment', const {'scope': '', 'defaultValue': 1}).code,
+  };
 }
 
 List<HookBuilderDescriptor> _systemDescriptors() => [
-      HookBuilderDescriptor(
-        kindId: 'return',
-        label: 'Return constant',
-        description:
-            'Force the function to return a fixed integer (sets R0, jumps to '
-            'LR). ARM-specific ABI — see arch-template TODO in the migration '
-            'plan.',
-        parameters: const [
-          HookParamSpec(
-            name: 'value',
-            label: 'Return value',
-            type: HookParamType.intValue,
-            defaultValue: 0,
-          ),
-        ],
-        build: (params) => returnHook(params['value'] as int? ?? 0),
+  HookBuilderDescriptor(
+    kindId: 'return',
+    label: 'Return constant',
+    description:
+        'Force the function to return a fixed integer (sets R0, jumps to '
+        'LR). ARM-specific ABI — see arch-template TODO in the migration '
+        'plan.',
+    parameters: const [
+      HookParamSpec(
+        name: 'value',
+        label: 'Return value',
+        type: HookParamType.intValue,
+        defaultValue: 0,
       ),
-      HookBuilderDescriptor(
-        kindId: 'read',
-        label: 'Stateful read',
-        description:
-            'Return a variable previously stored under the given scope. Pair '
-            'with a "Stateful write" sharing the same scope. Requires the '
-            'patched Renode portable for `scope` support.',
-        parameters: const [
-          HookParamSpec(
-            name: 'scope',
-            label: 'Scope',
-            type: HookParamType.stringValue,
-          ),
-          HookParamSpec(
-            name: 'defaultValue',
-            label: 'Default',
-            type: HookParamType.intValue,
-            defaultValue: 0,
-          ),
-        ],
-        build: (params) => readHook(
-          params['scope'] as String,
-          defaultValue: params['defaultValue'] as int? ?? 0,
-        ),
+    ],
+    build: (params) => returnHook(params['value'] as int? ?? 0),
+  ),
+  HookBuilderDescriptor(
+    kindId: 'read',
+    label: 'Stateful read',
+    description:
+        'Return a variable previously stored under the given scope. Pair '
+        'with a "Stateful write" sharing the same scope. Requires the '
+        'patched Renode portable for `scope` support.',
+    parameters: const [
+      HookParamSpec(
+        name: 'scope',
+        label: 'Scope',
+        type: HookParamType.stringValue,
       ),
-      HookBuilderDescriptor(
-        kindId: 'write',
-        label: 'Stateful write',
-        description:
-            'Store a value under the given scope and return a status. Pair '
-            'with a "Stateful read" sharing the same scope. Requires the '
-            'patched Renode portable for `scope` support.',
-        parameters: const [
-          HookParamSpec(
-            name: 'scope',
-            label: 'Scope',
-            type: HookParamType.stringValue,
-          ),
-          HookParamSpec(
-            name: 'value',
-            label: 'Value to write',
-            type: HookParamType.intValue,
-            defaultValue: 0,
-          ),
-          HookParamSpec(
-            name: 'returnValue',
-            label: 'Return value',
-            type: HookParamType.intValue,
-            defaultValue: 0,
-          ),
-        ],
-        build: (params) => writeHook(
-          params['scope'] as String,
-          params['value'] as int? ?? 0,
-          returnValue: params['returnValue'] as int? ?? 0,
-        ),
+      HookParamSpec(
+        name: 'defaultValue',
+        label: 'Default',
+        type: HookParamType.intValue,
+        defaultValue: 0,
       ),
-      HookBuilderDescriptor(
-        kindId: 'increment',
-        label: 'Stateful increment',
-        description:
-            'Increment a variable under the given scope and return the new '
-            'value. Requires the patched Renode portable for `scope` support.',
-        parameters: const [
-          HookParamSpec(
-            name: 'scope',
-            label: 'Scope',
-            type: HookParamType.stringValue,
-          ),
-          HookParamSpec(
-            name: 'defaultValue',
-            label: 'Initial value',
-            type: HookParamType.intValue,
-            defaultValue: 0,
-          ),
-        ],
-        build: (params) => incrementHook(
-          params['scope'] as String,
-          defaultValue: params['defaultValue'] as int? ?? 0,
-        ),
+    ],
+    build: (params) => readHook(
+      params['scope'] as String,
+      defaultValue: params['defaultValue'] as int? ?? 0,
+    ),
+  ),
+  HookBuilderDescriptor(
+    kindId: 'write',
+    label: 'Stateful write',
+    description:
+        'Store a value under the given scope and return a status. Pair '
+        'with a "Stateful read" sharing the same scope. Requires the '
+        'patched Renode portable for `scope` support.',
+    parameters: const [
+      HookParamSpec(
+        name: 'scope',
+        label: 'Scope',
+        type: HookParamType.stringValue,
       ),
-      HookBuilderDescriptor(
-        kindId: 'i2c_read',
-        label: 'I2C read (bus-virtualized)',
-        description:
-            'Forward an I2C read transaction to the comms-bus UDP server on '
-            'the given port. Used by Workstream B (comms-bus virtualization).',
-        parameters: const [
-          HookParamSpec(
-            name: 'port',
-            label: 'UDP port',
-            type: HookParamType.intValue,
-            defaultValue: 1234,
-          ),
-        ],
-        // v1: hardcode the arch glue to 'stm32_glue'. Per the arch-aware
-        // TODO in the plan, this becomes a parameter once non-STM glues
-        // (nordic_glue.py, esp_idf_glue.py, …) exist.
-        build: (params) =>
-            i2cReadHook(
-                'localhost', params['port'] as int? ?? 1234, 'stm32_glue'),
+      HookParamSpec(
+        name: 'value',
+        label: 'Value to write',
+        type: HookParamType.intValue,
+        defaultValue: 0,
       ),
-      HookBuilderDescriptor(
-        kindId: 'i2c_write',
-        label: 'I2C write (bus-virtualized)',
-        description:
-            'Forward an I2C write transaction to the comms-bus UDP server on '
-            'the given port. Used by Workstream B (comms-bus virtualization).',
-        parameters: const [
-          HookParamSpec(
-            name: 'port',
-            label: 'UDP port',
-            type: HookParamType.intValue,
-            defaultValue: 1234,
-          ),
-        ],
-        build: (params) =>
-            i2cWriteHook(params['port'] as int? ?? 1234, 'stm32_glue'),
+      HookParamSpec(
+        name: 'returnValue',
+        label: 'Return value',
+        type: HookParamType.intValue,
+        defaultValue: 0,
       ),
-      HookBuilderDescriptor(
-        kindId: 'uart_read',
-        label: 'UART read (bus-virtualized)',
-        description:
-            'Forward a UART read transaction to the comms-bus UDP server on '
-            'the given port. Used by Workstream B (comms-bus virtualization).',
-        parameters: const [
-          HookParamSpec(
-            name: 'port',
-            label: 'UDP port',
-            type: HookParamType.intValue,
-            defaultValue: 1236,
-          ),
-        ],
-        build: (params) =>
-            uartReadHook(
-                'localhost', params['port'] as int? ?? 1236, 'stm32_glue'),
+    ],
+    build: (params) => writeHook(
+      params['scope'] as String,
+      params['value'] as int? ?? 0,
+      returnValue: params['returnValue'] as int? ?? 0,
+    ),
+  ),
+  HookBuilderDescriptor(
+    kindId: 'increment',
+    label: 'Stateful increment',
+    description:
+        'Increment a variable under the given scope and return the new '
+        'value. Requires the patched Renode portable for `scope` support.',
+    parameters: const [
+      HookParamSpec(
+        name: 'scope',
+        label: 'Scope',
+        type: HookParamType.stringValue,
       ),
-      HookBuilderDescriptor(
-        kindId: 'uart_write',
-        label: 'UART write (bus-virtualized)',
-        description:
-            'Forward a UART write transaction to the comms-bus UDP server on '
-            'the given port. Used by Workstream B (comms-bus virtualization).',
-        parameters: const [
-          HookParamSpec(
-            name: 'port',
-            label: 'UDP port',
-            type: HookParamType.intValue,
-            defaultValue: 1236,
-          ),
-        ],
-        build: (params) =>
-            uartWriteHook(params['port'] as int? ?? 1236, 'stm32_glue'),
+      HookParamSpec(
+        name: 'defaultValue',
+        label: 'Initial value',
+        type: HookParamType.intValue,
+        defaultValue: 0,
       ),
-    ];
+    ],
+    build: (params) => incrementHook(
+      params['scope'] as String,
+      defaultValue: params['defaultValue'] as int? ?? 0,
+    ),
+  ),
+  HookBuilderDescriptor(
+    kindId: 'i2c_read',
+    label: 'I2C read (bus-virtualized)',
+    description:
+        'Forward an I2C read transaction to the comms-bus UDP server on '
+        'the given port. Used by Workstream B (comms-bus virtualization).',
+    parameters: const [
+      HookParamSpec(
+        name: 'port',
+        label: 'UDP port',
+        type: HookParamType.intValue,
+        defaultValue: 1234,
+      ),
+    ],
+    // v1: hardcode the arch glue to 'stm32_glue'. Per the arch-aware
+    // TODO in the plan, this becomes a parameter once non-STM glues
+    // (nordic_glue.py, esp_idf_glue.py, …) exist.
+    build: (params) =>
+        i2cReadHook(params['port'] as int? ?? 1234, 'stm32_glue'),
+  ),
+  HookBuilderDescriptor(
+    kindId: 'i2c_write',
+    label: 'I2C write (bus-virtualized)',
+    description:
+        'Forward an I2C write transaction to the comms-bus UDP server on '
+        'the given port. Used by Workstream B (comms-bus virtualization).',
+    parameters: const [
+      HookParamSpec(
+        name: 'port',
+        label: 'UDP port',
+        type: HookParamType.intValue,
+        defaultValue: 1234,
+      ),
+    ],
+    build: (params) =>
+        i2cWriteHook(params['port'] as int? ?? 1234, 'stm32_glue'),
+  ),
+  HookBuilderDescriptor(
+    kindId: 'uart_read',
+    label: 'UART read (bus-virtualized)',
+    description:
+        'Forward a UART read transaction to the comms-bus UDP server on '
+        'the given port. Used by Workstream B (comms-bus virtualization).',
+    parameters: const [
+      HookParamSpec(
+        name: 'port',
+        label: 'UDP port',
+        type: HookParamType.intValue,
+        defaultValue: 1236,
+      ),
+    ],
+    build: (params) =>
+        uartReadHook('localhost', params['port'] as int? ?? 1236, 'stm32_glue'),
+  ),
+  HookBuilderDescriptor(
+    kindId: 'uart_write',
+    label: 'UART write (bus-virtualized)',
+    description:
+        'Forward a UART write transaction to the comms-bus UDP server on '
+        'the given port. Used by Workstream B (comms-bus virtualization).',
+    parameters: const [
+      HookParamSpec(
+        name: 'port',
+        label: 'UDP port',
+        type: HookParamType.intValue,
+        defaultValue: 1236,
+      ),
+    ],
+    build: (params) =>
+        uartWriteHook(params['port'] as int? ?? 1236, 'stm32_glue'),
+  ),
+];

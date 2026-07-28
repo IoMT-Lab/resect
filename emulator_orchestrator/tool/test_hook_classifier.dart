@@ -20,7 +20,7 @@ import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
 import 'package:emulator_orchestrator/services/hooks/hook_classifier.dart';
-import 'package:signatures/signatures.dart';
+import 'package:resect_signatures/resect_signatures.dart';
 
 class _Expectation {
   const _Expectation({

@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:signatures/signatures.dart';
+import 'package:resect_signatures/resect_signatures.dart';
 
 import '../../data/database/artifact_database.dart';
 
