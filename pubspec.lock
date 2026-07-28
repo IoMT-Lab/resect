@@ -97,13 +97,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "8.12.6"
-  callgraph:
-    dependency: "direct overridden"
-    description:
-      path: "../callgraph-dart"
-      relative: true
-    source: path
-    version: "1.0.0"
   characters:
     dependency: transitive
     description:
@@ -375,13 +368,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.5.1"
-  hooks:
-    dependency: "direct overridden"
-    description:
-      path: "../hooks-dart"
-      relative: true
-    source: path
-    version: "1.0.0"
   http:
     dependency: transitive
     description:
@@ -423,11 +409,12 @@ packages:
     source: hosted
     version: "1.0.5"
   iomt_lab_lints:
-    dependency: "direct overridden"
+    dependency: transitive
     description:
-      path: "../lints-dart"
-      relative: true
-    source: path
+      name: iomt_lab_lints
+      sha256: "4476be2a4c81faa15e82dd9944b1e518bf5ae90b9340d0c06b6e3ece77dd3da2"
+      url: "https://nexus.medmakers.io/repository/pub/"
+    source: hosted
     version: "1.0.0"
   json_annotation:
     dependency: transitive
@@ -574,12 +561,13 @@ packages:
     source: hosted
     version: "4.1.0"
   renode:
-    dependency: "direct overridden"
+    dependency: transitive
     description:
-      path: "../renode-dart"
-      relative: true
-    source: path
-    version: "1.0.0"
+      name: renode
+      sha256: "3be609566d8e29ed916838c6dea0767dbed1550ffaea7fede29d9b48be95e563"
+      url: "https://nexus.medmakers.io/repository/pub/"
+    source: hosted
+    version: "1.1.0"
   resect_callgraph:
     dependency: transitive
     description:
@@ -660,13 +648,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.0.0"
-  signatures:
-    dependency: "direct overridden"
-    description:
-      path: "../signatures-dart"
-      relative: true
-    source: path
-    version: "1.0.0"
   sky_engine:
     dependency: transitive
     description: flutter
