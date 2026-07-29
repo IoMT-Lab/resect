@@ -7,5 +7,4 @@ if [ ! -f "docker-compose.yml" ]; then
   trap 'popd > /dev/null 2>&1' EXIT
 fi
 
-docker compose --profile cli rm -s -f
-docker compose --profile gui rm -s -f 
+docker compose --profile cli --profile gui down -v

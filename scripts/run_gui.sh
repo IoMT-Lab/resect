@@ -7,8 +7,8 @@ if [ ! -f "docker-compose.yml" ]; then
   trap 'popd > /dev/null 2>&1' EXIT
 fi
 
-if [ ! -f "workdir" ]; then
+if [ ! -d "workdir" ]; then
   mkdir workdir
 fi
 
-docker compose --profile gui run --rm resect-gui
+docker compose --profile gui run --rm -e HOST_UID=`id -u` -e HOST_GID=`id -g` resect-gui

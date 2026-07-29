@@ -32,16 +32,7 @@ ln -snf /static_home "$HOME/.config"
 chown -R "$USER_ID":"$GROUP_ID" "$HOME"
 chown -R "$USER_ID":"$GROUP_ID" /static_home
 
-echo "Creating virtual display and starting VNC server..."
-rm -f /tmp/.X99-lock
-Xvfb :99 -screen 0 1600x1000x24 -ac >/tmp/xvfb.log 2>&1 &
-sleep 1
-x11vnc -display :99 -forever -nopw -shared -rfbport 5900 >/tmp/x11vnc.log 2>&1 &
-sleep 1
-export DISPLAY=:99
-
 # 4. Hand off execution to your app as the non-root user
 echo "Starting container as user: $CONTAINER_USER (UID: $USER_ID, GID: $GROUP_ID)"
-
-echo "Resect GUI available as 'resect' and VNC server available on port 5900"
+echo "Resect CLI available as 'resect-cli'"
 exec gosu "$CONTAINER_USER" "$@"

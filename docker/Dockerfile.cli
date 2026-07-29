@@ -1,7 +1,11 @@
 FROM nexus.medmakers.io/docker/flutter:latest AS builder
 
 WORKDIR /src
-COPY . .
+COPY emulator_orchestrator emulator_orchestrator
+COPY emulator_ui emulator_ui
+COPY pubspec.yaml pubspec.yaml
+COPY pubspec.lock pubspec.lock
+
 RUN flutter pub get && \
     cd emulator_orchestrator && \
     dart run build_runner build --delete-conflicting-outputs && \
@@ -13,9 +17,14 @@ FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y --no-install-recommends \
     binutils-arm-none-eabi \
     libsqlite3-dev \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/build/cli/linux_x64/bundle/bin/cli /bin/resect-cli
-COPY docker/resect.config /resect.config
+COPY docker/resect-cli.config /resect.config
 ENV RESECT_CONFIG=/resect.config
-ENTRYPOINT ["/bin/bash"]
+
+COPY docker/cli-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/bin/bash"]

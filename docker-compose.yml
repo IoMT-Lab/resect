@@ -79,9 +79,12 @@ services:
       context: .
       dockerfile: docker/Dockerfile.cli
     volumes:
-      - resect-state:/root/.config/call_graph_viewer
+      - resect-state:/static_home
       - ./workdir:/workdir
     working_dir: /workdir
+    environment:
+      - HOST_UID=1000
+      - HOST_GID=1000
     depends_on:
       renode-cli:
         condition: service_started
@@ -101,7 +104,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.gui
     volumes:
-      - resect-state:/root/.config/call_graph_viewer
+      - resect-state:/static_home
       - ./workdir:/workdir
     working_dir: /workdir
     depends_on:

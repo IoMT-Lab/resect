@@ -1,0 +1,25 @@
+{
+  "version": "1.0",
+  "emulator": {
+    "id": "c0abdb68-48d9-4a53-af1c-9f0cbbcdbaa6",
+    "name": "Example",
+    "created_at": "2026-07-29T13:45:52.072726",
+    "modified_at": "2026-07-29T13:45:52.072726"
+  },
+  "firmware": {
+    "elf_file": "/workdir/example/aya_ppg.elf",
+    "base_image": "/workdir/example/stm32wb05_empty.repl"
+  },
+  "emulation": {
+    "start_from": null,
+    "end_at": [],
+    "pause_on_unhandled": true,
+    "memory_map": null
+  },
+  "ui_state": {
+    "left_sidebar_expanded": true,
+    "right_sidebar_expanded": true,
+    "selected_symbol": null
+  },
+  "metadata": {}
+}
