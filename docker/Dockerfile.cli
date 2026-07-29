@@ -1,4 +1,4 @@
-FROM nexus.medmakers.io/docker/flutter:latest AS builder
+FROM nexus.medmakers.io/docker/flutter:3.44.6 AS builder
 
 WORKDIR /src
 COPY emulator_orchestrator emulator_orchestrator

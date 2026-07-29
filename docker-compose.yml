@@ -7,7 +7,7 @@
 
 services:
   renode-cli:
-    image: nexus.medmakers.io/docker/renode:latest
+    image: nexus.medmakers.io/docker/renode:1.16.1-fdedbc33
     networks: [resect-net]
     restart: unless-stopped
     profiles:
@@ -16,7 +16,7 @@ services:
       RENODE_COMMS_HOST: 'resect-cli'
 
   renode-gui:
-    image: nexus.medmakers.io/docker/renode:latest
+    image: nexus.medmakers.io/docker/renode:1.16.1-fdedbc33
     networks: [resect-net]
     restart: unless-stopped
     profiles:
@@ -25,7 +25,7 @@ services:
       RENODE_COMMS_HOST: 'resect-gui'
 
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.32.5
     environment:
       # Bind all interfaces so the resect + ollama-init containers can reach it
       # by service name over the Compose network.
@@ -49,7 +49,7 @@ services:
     # Pulls the shipped inference + embedding models into the ollama-models
     # volume, then exits. Idempotent: already-present models report "up to date"
     # and this returns immediately on warm boots.
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.32.5
     depends_on:
       ollama:
         condition: service_healthy
@@ -72,7 +72,7 @@ services:
     stdin_open: true # docker run -i
     tty: true
     init: true
-    image: nexus.medmakers.io/docker/resect_cli:latest
+    image: nexus.medmakers.io/docker/resect_cli:0.1.0
     profiles:
       - cli
     build:
@@ -97,7 +97,7 @@ services:
 
   resect-gui:
     init: true
-    image: nexus.medmakers.io/docker/resect_gui:latest
+    image: nexus.medmakers.io/docker/resect_gui:0.1.0
     profiles:
       - gui
     build:
