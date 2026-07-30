@@ -2,6 +2,7 @@ import '../../data/models/call_graph.dart';
 import '../../data/models/hook_decision_state.dart';
 import '../../data/models/synthesis_manifest.dart';
 import '../analysis/coverage_frontier.dart';
+import '../analysis/fidelity_calculator.dart';
 import 'llm_client.dart';
 import 'llm_profiles.dart';
 
@@ -83,7 +84,50 @@ class LastRunInsightService {
     final fallback = manifest.decisions.isEmpty
         ? null
         : _decisionsChronological(manifest).last.symbol;
-    return manifest.failedSymbol ?? manifest.lastPauseSymbol ?? fallback;
+    // Prefer, in order: a genuine unhooked fault (run failed); then
+    // where execution ACTUALLY got to (finalExecutionSymbol) — this
+    // beats lastPauseSymbol, which is a fault the firmware was already
+    // hooked PAST and ran on from (stale); then that stale pause; and
+    // only then the last-decision fallback (a synthesizer action, not
+    // an execution location). Centering the region/neighborhood on the
+    // real end point — e.g. `Error_Handler` — instead of a hooked-past
+    // pause is the whole point of finalExecutionSymbol.
+    return manifest.failedSymbol ??
+        manifest.finalExecutionSymbol ??
+        manifest.lastPauseSymbol ??
+        fallback;
+  }
+
+  /// Render a recent-call-sequence trace, collapsing consecutive
+  /// repeats to `` `sym` (×N) `` so a busy-wait spin is visible and the
+  /// path stays readable. Symbols are backtick-quoted, joined with ` → `.
+  static String _collapseTrace(List<String> trace) {
+    final parts = <String>[];
+    var i = 0;
+    while (i < trace.length) {
+      final sym = trace[i];
+      var count = 1;
+      while (i + count < trace.length && trace[i + count] == sym) {
+        count++;
+      }
+      parts.add(count > 1 ? '`$sym` (×$count)' : '`$sym`');
+      i += count;
+    }
+    return parts.join(' → ');
+  }
+
+  /// Name heuristic for an error/fault sink — a symbol where landing
+  /// means an upstream check failed, so the fix is upstream, not a hook
+  /// on the sink itself. Public so [RecommendationService] shares one
+  /// definition (task framing + schema restriction).
+  static bool looksLikeErrorSink(String symbol) {
+    final s = symbol.toLowerCase();
+    return s.contains('error_handler') ||
+        s.contains('fault') || // HardFault_Handler, MemManage_Fault, …
+        s.contains('assert') ||
+        s == 'abort' ||
+        s.contains('panic') ||
+        s.contains('_exit');
   }
 
   /// Context sections only — no task framing. Shared by this
@@ -99,6 +143,7 @@ class LastRunInsightService {
     required HookDecisionState currentState,
     required CallGraph callGraph,
     List<FrontierEntry> frontier = const [],
+    Map<int, String> artifactLabels = const {},
   }) {
     final haltSymbol = computeHaltSymbol(manifest);
     final buf = StringBuffer();
@@ -120,10 +165,39 @@ class LastRunInsightService {
     if (haltSymbol != null) {
       final source = manifest.failedSymbol != null
           ? 'unhandled-access pause (run failed)'
-          : manifest.lastPauseSymbol != null
-              ? 'last unhandled-access pause (run completed)'
-              : 'last decision (no pause recorded)';
+          : manifest.finalExecutionSymbol != null
+              ? 'last function entered before the run ended'
+              : manifest.lastPauseSymbol != null
+                  ? 'last unhandled-access pause (run completed)'
+                  : 'last decision (no pause recorded)';
       buf.writeln('- Halt point: `$haltSymbol` ($source)');
+    }
+    // Where execution actually got to, surfaced explicitly when it
+    // differs from the fault/pause site above — e.g. the firmware was
+    // hooked past its last fault and ran on before going quiescent.
+    // This is the symbol to reason about for "why did forward progress
+    // stop here", not the stale fault site.
+    final finalExec = manifest.finalExecutionSymbol;
+    if (finalExec != null && finalExec != haltSymbol) {
+      buf.writeln('- Execution last reached: `$finalExec` '
+          '(most recent function entered before the run ended)');
+    }
+    // The PATH into where execution stopped — so the model can reason
+    // about WHY it got there (e.g. which call led into an error
+    // handler), not just where. Consecutive repeats are collapsed with
+    // a count, which also exposes a busy-wait spin.
+    final trace = manifest.recentExecutionTrace;
+    if (trace != null && trace.isNotEmpty) {
+      buf.writeln('- Recent call sequence (last ${trace.length} entered, '
+          'oldest→newest): ${_collapseTrace(trace)}');
+      final endSym = trace.last;
+      if (looksLikeErrorSink(endSym)) {
+        buf.writeln('  ↳ `$endSym` looks like an error/fault handler. The '
+            'real failure is the call JUST BEFORE it in the sequence — fix '
+            'THAT (e.g. make the failing init/check return success). Do NOT '
+            'hook the handler itself; that hides the failure without '
+            'advancing coverage.');
+      }
     }
     buf.writeln();
 
@@ -154,6 +228,33 @@ class LastRunInsightService {
         buf.writeln(
             '- Symbols executed: ${executed.length} of '
             '${callGraph.totalFunctions} (${pct.toStringAsFixed(1)}%)');
+        // Reachable-denominator coverage + headroom. The raw
+        // executed/total (above) counts unreachable library & dead code
+        // in the denominator, so coverage looks catastrophic even when
+        // most reachable code ran. Compute the universe reachable from
+        // what actually executed so the model can tell "genuinely done"
+        // (little headroom) from "blocked but reachable" (large
+        // headroom) — the improvability signal. NOTE: the call graph is
+        // built from objdump DIRECT calls only (indirect calls through
+        // function pointers / vtables are not represented), so this set
+        // UNDER-approximates — it is a supplementary signal; the raw
+        // executed/total above stays the honest, cross-version baseline.
+        final executedSet = executed.toSet();
+        final reachable =
+            FidelityCalculator.reachableFromEntries(callGraph, executed);
+        if (reachable.isNotEmpty) {
+          final headroom = reachable.difference(executedSet).length;
+          final coveredReachable = reachable.length - headroom;
+          final reachPct = (coveredReachable / reachable.length) * 100.0;
+          buf.writeln(
+              '- Reachable-code coverage: $coveredReachable of '
+              '${reachable.length} reachable (${reachPct.toStringAsFixed(1)}%)'
+              ' — $headroom reachable-but-unexecuted symbol(s) remain (the '
+              'realistic room to improve; near 0 means coverage of the '
+              'reachable code is essentially complete). Reachable set is '
+              'from direct calls only (objdump), so it under-counts — treat '
+              'the raw executed/total above as the baseline.');
+        }
       }
       if (metrics != null) {
         buf.writeln(
@@ -213,8 +314,12 @@ class LastRunInsightService {
     }
     buf.writeln();
 
-    final focus = manifest.failedSymbol ??
-        (manifest.decisions.isEmpty ? null : manifest.decisions.last.symbol);
+    // Center the neighborhood on the SAME symbol as the halt point /
+    // region — the fault site, else where execution got to. (Previously
+    // this used `decisions.last`, the alphabetically-last decision,
+    // which diverged from the halt point — e.g. neighborhood of
+    // `SystemInit` while the halt point was `HAL_I2C_Init`.)
+    final focus = haltSymbol;
     if (focus != null) {
       buf.writeln('## Call-graph neighborhood of `$focus`');
       final node = callGraph.symbols[focus];
@@ -273,9 +378,17 @@ class LastRunInsightService {
         ..add(e.symbol)
         ..addAll(e.unexecutedCallees);
     }
-    final regionDecisions = [
+    final inRegion = [
       for (final d in currentState.decisions)
         if (region.contains(d.symbol)) d,
+    ];
+    // Render the halt / final-execution symbol's overlay FIRST so its
+    // hook line is never dropped by the line cap below — that symbol is
+    // where execution stopped, so the model must always see what hook
+    // (if any) is in effect there in order to reconsider it.
+    final regionDecisions = [
+      ...inRegion.where((d) => d.symbol == haltSymbol),
+      ...inRegion.where((d) => d.symbol != haltSymbol),
     ];
     // Symbols the run's manifest shows a hook was actually applied to,
     // with the applied artifact id. This is what separates "bound but
@@ -295,7 +408,16 @@ class LastRunInsightService {
           'applied during this run — re-forcing the same artifact '
           'changes nothing.');
       for (final d in regionDecisions.take(_kOverlayLineCap)) {
-        buf.writeln(_overlayLine(d, appliedThisRun));
+        var line = _overlayLine(d, appliedThisRun, artifactLabels);
+        // The symbol where execution stopped is the one most likely to
+        // have the WRONG hook. Counter the "ALREADY IN EFFECT = done"
+        // bias right on its line so the model reconsiders it.
+        if (haltSymbol != null && d.symbol == haltSymbol) {
+          line += '  ← EXECUTION STOPPED HERE: if this hook is wrong '
+              '(e.g. a ready/busy flag forced to the wrong value, or a '
+              'Return-0 that masks forward progress), replace it.';
+        }
+        buf.writeln(line);
       }
       if (regionDecisions.length > _kOverlayLineCap) {
         buf.writeln(
@@ -351,7 +473,17 @@ class LastRunInsightService {
         for (final callee in e.unexecutedCallees.take(6)) {
           final note = _frontierAnnotation(
               currentState.forSymbol(callee), appliedThisRun);
-          buf.writeln('  - $callee${note != null ? ' — $note' : ''}');
+          // A callee that isn't itself a call-graph node is an
+          // unresolved import / PLT stub — not a hookable function, so
+          // forcing it can't advance coverage. Flag it so the model
+          // doesn't chase it.
+          final suffix = note != null
+              ? ' — $note'
+              : !callGraph.symbols.containsKey(callee)
+                  ? ' — (unresolved: not a call-graph function — cannot '
+                      'be hooked to advance coverage)'
+                  : '';
+          buf.writeln('  - $callee$suffix');
         }
         if (e.unexecutedCallees.length > 6) {
           buf.writeln('  (+${e.unexecutedCallees.length - 6} more)');
@@ -374,14 +506,23 @@ class LastRunInsightService {
   /// manifest; a binding whose artifact matches was actually applied
   /// (the symbol faulted) and is flagged ALREADY IN EFFECT so the
   /// model doesn't re-force it.
-  static String _overlayLine(
-      HookDecision d, Map<String, int?> appliedThisRun) {
+  static String _overlayLine(HookDecision d, Map<String, int?> appliedThisRun,
+      Map<int, String> artifactLabels) {
     final pref = d.preferredArtifactId != null
         ? ', pref #${d.preferredArtifactId}'
         : '';
+    // The hook's EFFECT ("Return 0" / "Return 1" / "increment" …), so
+    // the model can judge whether the applied hook is correct without
+    // cross-joining the id to the catalog by hand. Empty when unknown.
+    String effect(int? id) {
+      final label = id == null ? null : artifactLabels[id];
+      return (label == null || label.isEmpty) ? '' : ', "$label"';
+    }
+
     switch (d.kind) {
       case HookDecisionKind.override:
-        return '- `${d.symbol}` ← #${d.artifactId} (forced override$pref)';
+        return '- `${d.symbol}` ← #${d.artifactId} (forced override'
+            '${effect(d.artifactId)}$pref)';
       case HookDecisionKind.comms:
         final role = d.role != null ? ' ${d.role}' : '';
         return '- `${d.symbol}` (comms:${d.protocol}$role — virtualized '
@@ -391,7 +532,8 @@ class LastRunInsightService {
       case HookDecisionKind.binding:
         final status = _bindingStatus(d, appliedThisRun);
         return '- `${d.symbol}` ← #${d.artifactId} (binding, '
-            '${d.provenance ?? 'unknown'} — $status$pref)';
+            '${d.provenance ?? 'unknown'}${effect(d.artifactId)} — '
+            '$status$pref)';
       case HookDecisionKind.none:
         return '- `${d.symbol}` (preference only: '
             '#${d.preferredArtifactId})';
@@ -508,8 +650,7 @@ class LastRunInsightService {
   /// last iteration, not on whichever symbol happens to sort last
   /// by name in the manifest's storage order.
   static List<ManifestDecision> _decisionsChronological(
-      SynthesisManifest manifest) {
-    return manifest.decisions.toList()
+      SynthesisManifest manifest) => manifest.decisions.toList()
       ..sort((a, b) {
         final ai = a.iterationIndex;
         final bi = b.iterationIndex;
@@ -518,7 +659,6 @@ class LastRunInsightService {
         if (bi == null) return 1;
         return ai.compareTo(bi);
       });
-  }
 
   static const _systemPrompt = '''
 You are a firmware-emulation assistant inside Resect, a desktop tool

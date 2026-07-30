@@ -221,7 +221,7 @@ class EmulationOrchestrator {
     required String elfHash,
     String? startFrom,
     List<String>? endAt,
-    int maxIterations = 10,
+    int maxIterations = 500,
     Map<String, int> hookPreferences = const {},
     Map<String, int> hookOverrides = const {},
     Map<String, String> hookOverrideScopes = const {},

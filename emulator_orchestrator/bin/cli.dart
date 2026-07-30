@@ -11,15 +11,6 @@ import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/models/hook_decision_state.dart';
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
 import 'package:emulator_orchestrator/data/repositories/emulator_repository.dart';
-import 'package:emulator_orchestrator/services/hooks/artifact_library_service.dart';
-import 'package:emulator_orchestrator/services/analysis/fidelity_calculator.dart';
-import 'package:emulator_orchestrator/services/hooks/hook_catalog.dart';
-import 'package:emulator_orchestrator/services/llm/last_run_insight_service.dart';
-import 'package:emulator_orchestrator/services/llm/llm_client.dart';
-import 'package:emulator_orchestrator/services/llm/llm_hook_generator.dart';
-import 'package:emulator_orchestrator/services/rag/rag_index.dart';
-import 'package:emulator_orchestrator/services/llm/recommendation_service.dart';
-import 'package:emulator_orchestrator/services/hooks/symbol_group_classifier.dart';
 import 'package:emulator_orchestrator/orchestrator/auto_tune_engine.dart';
 import 'package:emulator_orchestrator/orchestrator/auto_tune_report_writer.dart';
 import 'package:emulator_orchestrator/orchestrator/comms/comms_bus_service.dart';
@@ -27,6 +18,15 @@ import 'package:emulator_orchestrator/orchestrator/comms/comms_config.dart';
 import 'package:emulator_orchestrator/orchestrator/comms/device_handler.dart';
 import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
 import 'package:emulator_orchestrator/orchestrator/engine/dart/dart_engine.dart';
+import 'package:emulator_orchestrator/services/analysis/fidelity_calculator.dart';
+import 'package:emulator_orchestrator/services/hooks/artifact_library_service.dart';
+import 'package:emulator_orchestrator/services/hooks/hook_catalog.dart';
+import 'package:emulator_orchestrator/services/hooks/symbol_group_classifier.dart';
+import 'package:emulator_orchestrator/services/llm/last_run_insight_service.dart';
+import 'package:emulator_orchestrator/services/llm/llm_client.dart';
+import 'package:emulator_orchestrator/services/llm/llm_hook_generator.dart';
+import 'package:emulator_orchestrator/services/llm/recommendation_service.dart';
+import 'package:emulator_orchestrator/services/rag/rag_index.dart';
 
 /// CLI tool for emulator creation, call graph generation, and synthesizer.
 ///
@@ -230,7 +230,7 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
   final startFrom = flags['start-from'];
   final endAtRaw = flags['end-at'];
   final endAt = endAtRaw?.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
-  final maxIterations = int.tryParse(flags['max-iterations'] ?? '') ?? 100;
+  final maxIterations = int.tryParse(flags['max-iterations'] ?? '') ?? 500;
   final outputPath = flags['output'] ?? flags['o'];
   final saveEmulatorPath = flags['save-emulator'];
   final emulatorName = flags['name'];
@@ -407,7 +407,7 @@ Future<void> _runAutotune(Map<String, String> flags) async {
 
   final maxRounds = int.tryParse(flags['max-rounds'] ?? '') ??
       AutoTuneConfig.defaultMaxRounds;
-  final maxIterations = int.tryParse(flags['max-iterations'] ?? '') ?? 10;
+  final maxIterations = int.tryParse(flags['max-iterations'] ?? '') ?? 500;
   final maxRecs = int.tryParse(flags['max-recs'] ?? '') ??
       AutoTuneConfig.defaultMaxRecommendationsPerRound;
   final stagnantLimit = int.tryParse(flags['stagnant-limit'] ?? '') ??

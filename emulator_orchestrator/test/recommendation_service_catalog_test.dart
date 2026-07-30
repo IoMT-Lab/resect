@@ -5,7 +5,6 @@ import 'package:emulator_orchestrator/data/models/hook_decision_state.dart';
 import 'package:emulator_orchestrator/data/models/recommendation.dart';
 import 'package:emulator_orchestrator/data/models/round_snapshot.dart';
 import 'package:emulator_orchestrator/data/models/symbol.dart' as cg_sym;
-import 'package:emulator_orchestrator/data/models/symbol_group.dart';
 import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart';
 import 'package:emulator_orchestrator/services/hooks/hook_catalog.dart';
 import 'package:emulator_orchestrator/services/hooks/symbol_group_classifier.dart';
@@ -248,7 +247,7 @@ void main() {
     }
 
     test(
-        'renders each prior round\'s recommendations in compact form so '
+        "renders each prior round's recommendations in compact form so "
         'the model can see what was already tried',
         () async {
       final db = await _seedDb([
@@ -384,20 +383,20 @@ void main() {
   group('buildRecommendationSchema — constrained decoding', () {
     /// Pull the per-kind `anyOf` branches out of the items schema.
     List<Map<String, Object?>> branches(Map<String, Object?> schema) {
-      final props = schema['properties'] as Map<String, Object?>;
-      final recs = props['recommendations'] as Map<String, Object?>;
-      final items = recs['items'] as Map<String, Object?>;
-      return (items['anyOf'] as List).cast<Map<String, Object?>>();
+      final props = schema['properties']! as Map<String, Object?>;
+      final recs = props['recommendations']! as Map<String, Object?>;
+      final items = recs['items']! as Map<String, Object?>;
+      return (items['anyOf']! as List).cast<Map<String, Object?>>();
     }
 
     Map<String, Object?> propsOf(Map<String, Object?> branch) =>
-        branch['properties'] as Map<String, Object?>;
+        branch['properties']! as Map<String, Object?>;
 
     /// The branch whose `kind` const matches [kind].
     Map<String, Object?> branchFor(
             Map<String, Object?> schema, String kind) =>
         branches(schema).firstWhere((b) =>
-            (propsOf(b)['kind'] as Map<String, Object?>)['const'] == kind);
+            (propsOf(b)['kind']! as Map<String, Object?>)['const'] == kind);
 
     test('artifact_id enum = real catalog ids; deleted ids excluded',
         () async {
@@ -418,12 +417,12 @@ void main() {
         frontier: const [],
       );
       final artifactId = propsOf(branchFor(schema, 'set_forced_override'))[
-          'artifact_id'] as Map<String, Object?>;
+          'artifact_id']! as Map<String, Object?>;
       expect(artifactId['enum'], [1, 3]); // NOT 2 — deleted
       // And it is REQUIRED — an id-less override must be
       // unrepresentable (the false-llmEmpty bug).
       expect(
-          (branchFor(schema, 'set_forced_override')['required'] as List)
+          (branchFor(schema, 'set_forced_override')['required']! as List)
               .cast<String>(),
           containsAll(['kind', 'rationale', 'symbol', 'artifact_id']));
       await db.close();
@@ -441,7 +440,7 @@ void main() {
       );
       final kinds = [
         for (final b in branches(schema))
-          (propsOf(b)['kind'] as Map<String, Object?>)['const'],
+          (propsOf(b)['kind']! as Map<String, Object?>)['const'],
       ];
       expect(kinds, [
         'set_forced_override',
@@ -474,12 +473,12 @@ void main() {
       );
       final kinds = [
         for (final b in branches(schema))
-          (propsOf(b)['kind'] as Map<String, Object?>)['const'],
+          (propsOf(b)['kind']! as Map<String, Object?>)['const'],
       ];
       expect(kinds, containsAll(['set_group_override', 'clear_group_override']));
-      final scope = propsOf(branchFor(schema, 'set_group_override'))['scope']
+      final scope = propsOf(branchFor(schema, 'set_group_override'))['scope']!
           as Map<String, Object?>;
-      expect((scope['enum'] as List).cast<String>(), ['LL_RCC_LSI']);
+      expect((scope['enum']! as List).cast<String>(), ['LL_RCC_LSI']);
       await db.close();
     });
 
@@ -502,7 +501,7 @@ void main() {
       );
       final kinds = [
         for (final b in branches(schema))
-          (propsOf(b)['kind'] as Map<String, Object?>)['const'],
+          (propsOf(b)['kind']! as Map<String, Object?>)['const'],
       ];
       expect(kinds, isNot(contains('set_group_override')));
       await db.close();
@@ -523,8 +522,8 @@ void main() {
         ],
       );
       final symbol = propsOf(branchFor(schema, 'set_forced_override'))[
-          'symbol'] as Map<String, Object?>;
-      final symEnum = (symbol['enum'] as List).cast<String>();
+          'symbol']! as Map<String, Object?>;
+      final symEnum = (symbol['enum']! as List).cast<String>();
       expect(symEnum, containsAll(['blocker', 'unreached']));
       await db.close();
     });
@@ -543,15 +542,15 @@ void main() {
         frontier: const [],
       );
       final symbol = propsOf(branchFor(schema, 'set_forced_override'))[
-          'symbol'] as Map<String, Object?>;
+          'symbol']! as Map<String, Object?>;
       expect(symbol.containsKey('enum'), isFalse);
       expect(symbol['type'], 'string');
       await db.close();
     });
 
     Map<String, Object?> recsSchema(Map<String, Object?> schema) {
-      final props = schema['properties'] as Map<String, Object?>;
-      return props['recommendations'] as Map<String, Object?>;
+      final props = schema['properties']! as Map<String, Object?>;
+      return props['recommendations']! as Map<String, Object?>;
     }
 
     test('maxItems defaults to 10 and honors the parameter', () async {
@@ -604,12 +603,96 @@ void main() {
         ],
       );
       final symbol = propsOf(branchFor(schema, 'set_forced_override'))[
-          'symbol'] as Map<String, Object?>;
-      final symEnum = (symbol['enum'] as List).cast<String>();
+          'symbol']! as Map<String, Object?>;
+      final symEnum = (symbol['enum']! as List).cast<String>();
       expect(symEnum, isNot(contains('HAL_I2C_Mem_Read')),
           reason: 'an individual force on a virtualized bus symbol '
               'produces incoherent protocol state — unrepresentable');
       expect(symEnum, contains('blocker'));
+      await db.close();
+    });
+
+    test(
+        'symbol enum excludes candidates absent from the call graph '
+        '(sentinel-proofing)', () async {
+      final db = await _seedDb(const []);
+      final svc = _makeService(db);
+      // A decision names a symbol that is NOT a call-graph function —
+      // stands in for a leaked control-flow sentinel like
+      // MAX_ITERATIONS_REACHED. It must be unrepresentable as a
+      // pickable `symbol`, so the LLM can never target it.
+      final schema = await svc.buildRecommendationSchema(
+        currentManifest: _manifest(decisions: [
+          _decision('main', 0),
+          _decision('MAX_ITERATIONS_REACHED', 1),
+        ]),
+        currentState: _emptyState,
+        callGraph: _callGraph(['main']), // sentinel absent from the graph
+        mode: RecommendationMode.job2Coverage,
+        frontier: const [],
+      );
+      final symbol = propsOf(branchFor(schema, 'set_forced_override'))[
+          'symbol']! as Map<String, Object?>;
+      final symEnum = (symbol['enum']! as List).cast<String>();
+      expect(symEnum, contains('main'));
+      expect(symEnum, isNot(contains('MAX_ITERATIONS_REACHED')),
+          reason: 'a symbol not in the call graph must be unrepresentable');
+      await db.close();
+    });
+
+    test(
+        'error-sink round: opener + schema pivot to the failing upstream '
+        'call, not the sink or frontier flags', () async {
+      final db = await _seedDb(const []);
+      final svc = _makeService(db);
+      final manifest = SynthesisManifest(
+        manifestVersion: 2,
+        elfHash: 'a' * 64,
+        elfFileName: 'test.elf',
+        synthesizerRunId: 'run1',
+        result: const ManifestRunResult(
+            success: true, totalIterations: 14, durationSeconds: 42.0),
+        decisions: [_decision('MX_I2C1_Init', 0)],
+        finalExecutionSymbol: 'Error_Handler',
+        recentExecutionTrace: const [
+          'MX_I2C1_Init',
+          'HAL_I2C_Init',
+          'HAL_I2CEx_ConfigAnalogFilter',
+          'Error_Handler',
+        ],
+      );
+      final cg = _callGraph(const [
+        'MX_I2C1_Init',
+        'HAL_I2C_Init',
+        'HAL_I2CEx_ConfigAnalogFilter',
+        'Error_Handler',
+      ]);
+      // (a) Task opener reframes for an error sink, not a busy-wait.
+      final prompt = await svc.composePrompt(
+        currentManifest: manifest,
+        currentState: _emptyState,
+        callGraph: cg,
+        mode: RecommendationMode.job2Coverage,
+      );
+      expect(prompt, contains('looks like an error/fault handler'));
+      expect(prompt, contains('Do NOT hook the handler'));
+      expect(prompt, isNot(contains('silently stuck in a busy-wait')));
+      // (b) Schema restricts the symbol enum to the recent path, sink
+      // excluded — an off-path override is unrepresentable.
+      final schema = await svc.buildRecommendationSchema(
+        currentManifest: manifest,
+        currentState: _emptyState,
+        callGraph: cg,
+        mode: RecommendationMode.job2Coverage,
+        frontier: const [],
+      );
+      final symEnum =
+          (propsOf(branchFor(schema, 'set_forced_override'))['symbol']!
+                  as Map<String, Object?>)['enum']! as List;
+      // Sorted by code unit ('E' 0x45 < '_' 0x5F).
+      expect(symEnum.cast<String>(),
+          ['HAL_I2CEx_ConfigAnalogFilter', 'HAL_I2C_Init', 'MX_I2C1_Init']);
+      expect(symEnum, isNot(contains('Error_Handler')));
       await db.close();
     });
 
@@ -636,8 +719,8 @@ void main() {
         frontier: const [],
       );
       final symbol = propsOf(branchFor(schema, 'set_forced_override'))[
-          'symbol'] as Map<String, Object?>;
-      final symEnum = (symbol['enum'] as List).cast<String>();
+          'symbol']! as Map<String, Object?>;
+      final symEnum = (symbol['enum']! as List).cast<String>();
       expect(symEnum, contains('HAL_I2C_Mem_Read'),
           reason: 'job 1 must be able to target the error site');
       await db.close();
@@ -669,10 +752,10 @@ void main() {
         frontier: const [],
       );
       final symbol = propsOf(branchFor(schema, 'set_forced_override'))[
-          'symbol'] as Map<String, Object?>;
+          'symbol']! as Map<String, Object?>;
       expect(symbol.containsKey('enum'), isTrue,
           reason: 'must not fall back to unconstrained string');
-      expect((symbol['enum'] as List).cast<String>(), ['uart_tx']);
+      expect((symbol['enum']! as List).cast<String>(), ['uart_tx']);
       await db.close();
     });
   });
@@ -711,6 +794,29 @@ void main() {
       // Batch allowance replaces the throttle phrasing.
       expect(prompt, contains('up to 10 recommendations'));
       expect(prompt, isNot(contains('one or a small number')));
+      await db.close();
+    });
+
+    test('job2 playbook leads with the STALL POINT reconsider-the-hook step',
+        () async {
+      final db = await _seedDb(const []);
+      final svc = _makeService(db);
+      final prompt = await svc.composePrompt(
+        currentManifest: lowCoverage(),
+        currentState: _emptyState,
+        callGraph: _callGraph(['main', 'blocker']),
+        mode: RecommendationMode.job2Coverage,
+        frontier: const [
+          FrontierEntry(symbol: 'main', unexecutedCallees: <String>['blocker']),
+        ],
+      );
+      expect(prompt, contains('STALL POINT'));
+      expect(prompt, contains('may be WRONG'),
+          reason: 'the model must be told the stall-point hook could be '
+              'set to the wrong value and should be reconsidered');
+      // Error-sink guidance: if the stall symbol is an error/fault
+      // handler, fix the failing upstream call, don't hook the sink.
+      expect(prompt, contains('error/fault handler'));
       await db.close();
     });
 
@@ -767,18 +873,18 @@ void main() {
       );
       // Inline branch extraction (helpers are local to the schema
       // group): find the set_forced_override anyOf branch.
-      final props = schema['properties'] as Map<String, Object?>;
-      final recs = props['recommendations'] as Map<String, Object?>;
-      final items = recs['items'] as Map<String, Object?>;
-      final branch = (items['anyOf'] as List)
+      final props = schema['properties']! as Map<String, Object?>;
+      final recs = props['recommendations']! as Map<String, Object?>;
+      final items = recs['items']! as Map<String, Object?>;
+      final branch = (items['anyOf']! as List)
           .cast<Map<String, Object?>>()
           .firstWhere((b) =>
-              ((b['properties'] as Map<String, Object?>)['kind']
+              ((b['properties']! as Map<String, Object?>)['kind']!
                   as Map<String, Object?>)['const'] ==
               'set_forced_override');
-      final symbol = (branch['properties']
-          as Map<String, Object?>)['symbol'] as Map<String, Object?>;
-      expect((symbol['enum'] as List).cast<String>(),
+      final symbol = (branch['properties']!
+          as Map<String, Object?>)['symbol']! as Map<String, Object?>;
+      expect((symbol['enum']! as List).cast<String>(),
           ['HAL_RCC_OscConfig', 'SystemClock_Config'],
           reason: 'repeating leaf-poll recommendations must be '
               'unrepresentable during escalation');

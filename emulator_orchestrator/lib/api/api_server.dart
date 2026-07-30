@@ -6,10 +6,10 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 
-import '../services/hooks/artifact_library_service.dart';
-import '../services/analysis/fidelity_calculator.dart';
 import '../orchestrator/emulation_orchestrator.dart';
 import '../orchestrator/engine/call_graph_source.dart';
+import '../services/analysis/fidelity_calculator.dart';
+import '../services/hooks/artifact_library_service.dart';
 
 /// HTTP API server wrapping the EmulationOrchestrator.
 ///
@@ -163,7 +163,7 @@ class ApiServer {
     final replPath = body['replPath'] as String?;
     final startFrom = body['startFrom'] as String?;
     final endAt = (body['endAt'] as List?)?.cast<String>();
-    final maxIterations = body['maxIterations'] as int? ?? 10;
+    final maxIterations = body['maxIterations'] as int? ?? 500;
     final hookPreferencesRaw = body['hookPreferences'] as Map<String, dynamic>?;
     final hookPreferences = hookPreferencesRaw?.map(
       (k, v) => MapEntry(k, v as int),

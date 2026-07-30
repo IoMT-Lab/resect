@@ -2,6 +2,37 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 
+/// Why a synthesizer run stopped. Kept DISTINCT from
+/// [SynthesisManifest.failedSymbol] so a control-flow outcome
+/// (max-iterations reached, user cancel) is never stored in a
+/// symbol-name field and then mistaken for a hookable symbol.
+enum SynthesisTerminationReason {
+  /// Firmware ran the clean-execution window with no unhandled access.
+  cleanRun,
+
+  /// A real symbol exhausted all its candidate hooks.
+  symbolExhausted,
+
+  /// A forced override for a real symbol failed; the run bailed.
+  forcedOverrideFailed,
+
+  /// The iteration cap was reached (no clean run, no exhaustion yet).
+  maxIterations,
+
+  /// The user cancelled the run.
+  cancelled,
+}
+
+/// Parse a [SynthesisTerminationReason] from its `.name`; tolerant of
+/// null / unknown values (legacy manifests) → null.
+SynthesisTerminationReason? terminationReasonFromName(String? name) {
+  if (name == null) return null;
+  for (final r in SynthesisTerminationReason.values) {
+    if (r.name == name) return r;
+  }
+  return null;
+}
+
 /// Per-run record of the synthesizer's per-symbol decisions, written
 /// to disk alongside the project as `manifests/<run_id>.json` and
 /// rendered visually in the post-synthesis report tab.
@@ -31,6 +62,9 @@ class SynthesisManifest {
     required this.decisions,
     this.failedSymbol,
     this.lastPauseSymbol,
+    this.terminationReason,
+    this.finalExecutionSymbol,
+    this.recentExecutionTrace,
     this.metrics,
     this.executedSymbols,
     this.timing,
@@ -79,6 +113,27 @@ class SynthesisManifest {
   /// (no schema-version bump).
   final String? lastPauseSymbol;
 
+  /// Why the run stopped (`cleanRun` / `symbolExhausted` /
+  /// `forcedOverrideFailed` / `maxIterations` / `cancelled`). Carries
+  /// control-flow outcomes so they never have to be smuggled through
+  /// [failedSymbol]. Null on legacy manifests. Additive (no schema
+  /// bump).
+  final SynthesisTerminationReason? terminationReason;
+
+  /// The most recent function the firmware ENTERED before the run ended
+  /// — "where execution actually got to," populated even on a clean
+  /// (never-paused) run. Distinct from [failedSymbol] (last fault) and
+  /// [lastPauseSymbol] (last unhandled-access pause), both of which are
+  /// null/stale on a clean quiescent end. Null on legacy manifests.
+  /// Additive (no schema bump).
+  final String? finalExecutionSymbol;
+
+  /// The last N functions entered before the run ended, oldest→newest
+  /// (ends at [finalExecutionSymbol]) — the PATH into where execution
+  /// stopped, so the call that led to a sink (e.g. an error handler) is
+  /// visible. Null on legacy manifests. Additive.
+  final List<String>? recentExecutionTrace;
+
   /// Run-level aggregate fidelity metrics (v2+). Populated by the
   /// caller after the synthesizer returns, by running
   /// [FidelityCalculator] against the manifest's decisions + the
@@ -118,6 +173,12 @@ class SynthesisManifest {
         'decisions': decisions.map((d) => d.toJson()).toList(),
         if (failedSymbol != null) 'failed_symbol': failedSymbol,
         if (lastPauseSymbol != null) 'last_pause_symbol': lastPauseSymbol,
+        if (terminationReason != null)
+          'termination_reason': terminationReason!.name,
+        if (finalExecutionSymbol != null)
+          'final_execution_symbol': finalExecutionSymbol,
+        if (recentExecutionTrace != null)
+          'recent_execution_trace': recentExecutionTrace,
         if (metrics != null) 'metrics': metrics!.toJson(),
         if (executedSymbols != null) 'executed_symbols': executedSymbols,
         if (timing != null)
@@ -145,6 +206,12 @@ class SynthesisManifest {
           .toList(),
       failedSymbol: json['failed_symbol'] as String?,
       lastPauseSymbol: json['last_pause_symbol'] as String?,
+      terminationReason:
+          terminationReasonFromName(json['termination_reason'] as String?),
+      finalExecutionSymbol: json['final_execution_symbol'] as String?,
+      recentExecutionTrace: (json['recent_execution_trace'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList(),
       metrics: json['metrics'] == null
           ? null
           : ManifestMetrics.fromJson(json['metrics'] as Map<String, dynamic>),
@@ -176,6 +243,9 @@ class SynthesisManifest {
         decisions: decisions,
         failedSymbol: failedSymbol,
         lastPauseSymbol: lastPauseSymbol,
+        terminationReason: terminationReason,
+        finalExecutionSymbol: finalExecutionSymbol,
+        recentExecutionTrace: recentExecutionTrace,
         metrics: metrics,
         executedSymbols: executedSymbols,
         timing: timing ?? this.timing,

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import '../data/database/artifact_database.dart';
 import '../data/models/auto_tune_config.dart';
@@ -313,8 +314,18 @@ class AutoTuneEngine {
 
       // Author + seed any accepted generate_custom_hook recs BEFORE the
       // overlay applier runs (the applier drops that kind by design).
-      final generateRecs =
-          effective.whereType<GenerateCustomHook>().toList();
+      // Defense-in-depth: only author for a real call-graph symbol — a
+      // rec naming a non-symbol (e.g. a leaked sentinel) is dropped here
+      // rather than seeding a bogus artifact + binding.
+      final generateRecs = <GenerateCustomHook>[];
+      for (final r in effective.whereType<GenerateCustomHook>()) {
+        if (callGraph.symbols.containsKey(r.symbol)) {
+          generateRecs.add(r);
+        } else {
+          stderr.writeln('[auto-tune] dropping generate_custom_hook for '
+              'non-call-graph symbol "${r.symbol}"');
+        }
+      }
       if (generateRecs.isNotEmpty) {
         final err = await _generateAndSeedCustomHooks(
           generateRecs,
@@ -894,6 +905,9 @@ SynthesizerResult enrichSynthesizerResult({
     resolvedHookCode: result.resolvedHookCode,
     failedSymbol: result.failedSymbol,
     lastPauseSymbol: result.lastPauseSymbol,
+    terminationReason: result.terminationReason,
+    finalExecutionSymbol: result.finalExecutionSymbol,
+    recentExecutionTrace: result.recentExecutionTrace,
     totalDuration: result.totalDuration,
     manifest: enrichManifestWithMetrics(
       manifest: m,

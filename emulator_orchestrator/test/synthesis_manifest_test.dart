@@ -128,6 +128,47 @@ void main() {
       expect((j['applied_hook'] as Map).containsKey('scope'), isFalse);
     });
 
+    test('terminationReason round-trips; null omits the key', () {
+      final withReason = SynthesisManifest(
+        manifestVersion: 2,
+        elfHash: hashOf('a'),
+        elfFileName: 'x.elf',
+        synthesizerRunId: 'run1',
+        result: const ManifestRunResult(
+            success: false, totalIterations: 500, durationSeconds: 1.0),
+        decisions: const [],
+        terminationReason: SynthesisTerminationReason.maxIterations,
+        finalExecutionSymbol: 'idle_loop',
+        recentExecutionTrace: const ['main', 'SystemClock_Config', 'idle_loop'],
+      );
+      final j = withReason.toJson();
+      expect(j['termination_reason'], 'maxIterations');
+      expect(j['final_execution_symbol'], 'idle_loop');
+      expect(j['recent_execution_trace'],
+          ['main', 'SystemClock_Config', 'idle_loop']);
+      final reparsed = SynthesisManifest.fromJson(
+          jsonDecode(jsonEncode(j)) as Map<String, dynamic>);
+      expect(reparsed.terminationReason,
+          SynthesisTerminationReason.maxIterations);
+      expect(reparsed.finalExecutionSymbol, 'idle_loop');
+      expect(reparsed.recentExecutionTrace,
+          ['main', 'SystemClock_Config', 'idle_loop']);
+
+      // Absent reason (legacy manifest) → key omitted, parses to null.
+      final noReason = SynthesisManifest(
+        manifestVersion: 2,
+        elfHash: hashOf('a'),
+        elfFileName: 'x.elf',
+        synthesizerRunId: 'run1',
+        result: const ManifestRunResult(
+            success: true, totalIterations: 1, durationSeconds: 1.0),
+        decisions: const [],
+      );
+      expect(noReason.toJson().containsKey('termination_reason'), isFalse);
+      expect(terminationReasonFromName(null), isNull);
+      expect(terminationReasonFromName('bogus'), isNull);
+    });
+
     test('ManifestDecisionKind.fromJson is symmetric with jsonName', () {
       for (final kind in ManifestDecisionKind.values) {
         expect(ManifestDecisionKind.fromJson(kind.jsonName), kind);

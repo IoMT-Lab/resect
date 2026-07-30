@@ -49,6 +49,9 @@ SynthesisManifest buildManifest({
   required String? failedSymbol,
   required Map<String, List<ManifestAttempt>> attempts,
   String? lastPauseSymbol,
+  SynthesisTerminationReason? terminationReason,
+  String? finalExecutionSymbol,
+  List<String>? recentExecutionTrace,
 }) {
   final decisions = <ManifestDecision>[];
   final symbols = attempts.keys.toList()..sort();
@@ -93,5 +96,8 @@ SynthesisManifest buildManifest({
     decisions: decisions,
     failedSymbol: failedSymbol,
     lastPauseSymbol: lastPauseSymbol,
+    terminationReason: terminationReason,
+    finalExecutionSymbol: finalExecutionSymbol,
+    recentExecutionTrace: recentExecutionTrace,
   );
 }

@@ -32,6 +32,28 @@ class SynthesizerResult {
   /// advisor should focus on.
   final String? lastPauseSymbol;
 
+  /// Why the run stopped. Carries control-flow outcomes
+  /// (`maxIterations`, `cancelled`) so they are never written into
+  /// [failedSymbol] — which is reserved for a real call-graph symbol.
+  /// Null on legacy results that pre-date the field.
+  final SynthesisTerminationReason? terminationReason;
+
+  /// The most recent function the firmware ENTERED before the run
+  /// ended — "where execution actually got to." Unlike [failedSymbol]
+  /// (last fault) and [lastPauseSymbol] (last unhandled-access pause),
+  /// this is populated even on a clean-timeout success, where it is the
+  /// symbol the firmware was in when it went quiescent. Null when
+  /// function tracing produced no entry. See
+  /// [EmulationController.lastExecutedSymbol].
+  final String? finalExecutionSymbol;
+
+  /// The last N functions entered before the run ended, oldest→newest
+  /// (ends at [finalExecutionSymbol]). Shows the PATH into where
+  /// execution stopped — e.g. the call that led to an error handler —
+  /// so a consumer can reason about WHY, not just where. Null on legacy
+  /// results. See [EmulationController.recentExecutionTrace].
+  final List<String>? recentExecutionTrace;
+
   /// Total time the synthesis process took.
   final Duration totalDuration;
 
@@ -51,6 +73,9 @@ class SynthesizerResult {
     required this.totalDuration, this.resolvedHookCode = const {},
     this.failedSymbol,
     this.lastPauseSymbol,
+    this.terminationReason,
+    this.finalExecutionSymbol,
+    this.recentExecutionTrace,
     this.manifest,
   });
 
@@ -65,6 +90,12 @@ class SynthesizerResult {
           {},
       failedSymbol: json['failedSymbol'] as String?,
       lastPauseSymbol: json['lastPauseSymbol'] as String?,
+      terminationReason:
+          terminationReasonFromName(json['terminationReason'] as String?),
+      finalExecutionSymbol: json['finalExecutionSymbol'] as String?,
+      recentExecutionTrace: (json['recentExecutionTrace'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList(),
       totalDuration: Duration(milliseconds: json['totalDurationMs'] as int? ?? 0),
       manifest: json['manifest'] == null
           ? null
@@ -78,6 +109,12 @@ class SynthesizerResult {
       'resolvedHookCode': resolvedHookCode,
       if (failedSymbol != null) 'failedSymbol': failedSymbol,
       if (lastPauseSymbol != null) 'lastPauseSymbol': lastPauseSymbol,
+      if (terminationReason != null)
+        'terminationReason': terminationReason!.name,
+      if (finalExecutionSymbol != null)
+        'finalExecutionSymbol': finalExecutionSymbol,
+      if (recentExecutionTrace != null)
+        'recentExecutionTrace': recentExecutionTrace,
       'totalDurationMs': totalDuration.inMilliseconds,
       if (manifest != null) 'manifest': manifest!.toJson(),
     };

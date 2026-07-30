@@ -51,4 +51,20 @@ abstract class EmulationController {
   Stream<PausedEvent> get onPaused;
   Stream<void> get onResumed;
   Stream<void> get onReset;
+
+  /// The most recent function the firmware *entered* (via function-call
+  /// tracing), regardless of whether a pause occurred. Unlike the
+  /// paused-event symbol, this survives a clean run that ends on the
+  /// observation-window timeout — it is "where execution actually got
+  /// to." Null before any entry or after a reset. Requires function
+  /// tracing to be on (it is, via [load]'s `enableTracing`).
+  String? get lastExecutedSymbol;
+
+  /// The last N functions the firmware entered, oldest→newest (a
+  /// bounded ring buffer), ending at [lastExecutedSymbol]. Lets a
+  /// consumer see the PATH into where execution stopped — e.g.
+  /// `[SystemClock_Config, HAL_RCC_OscConfig, Error_Handler]` — so the
+  /// call that led to a sink is visible, not just the sink. Entries
+  /// only (no exits); cleared on reset. Empty before any entry.
+  List<String> get recentExecutionTrace;
 }

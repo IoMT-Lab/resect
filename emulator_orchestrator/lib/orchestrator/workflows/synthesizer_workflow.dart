@@ -93,7 +93,7 @@ class SynthesizerWorkflow {
     required String baseImagePath,
     String? startFrom,
     List<String>? endAt,
-    int maxIterations = 10,
+    int maxIterations = 500,
     Map<String, int> hookPreferences = const {},
     Map<String, int> hookOverrides = const {},
     Map<String, String> hookOverrideScopes = const {},
@@ -198,8 +198,15 @@ class SynthesizerWorkflow {
 
     SynthesizerResult buildResult({
       required bool success,
+      required SynthesisTerminationReason reason,
       String? failedSymbol,
     }) {
+      // Where execution actually got to — the most recent function the
+      // firmware entered. Read here (before the finally-block reset) so
+      // it is valid on EVERY exit path, including the clean-timeout
+      // success where no pause fires and `lastPauseSymbol` is stale.
+      final finalExecutionSymbol = emulationController.lastExecutedSymbol;
+      final recentExecutionTrace = emulationController.recentExecutionTrace;
       final manifest = buildManifest(
         elfHash: elfHash,
         elfFileName: elfFileName,
@@ -210,6 +217,9 @@ class SynthesizerWorkflow {
         failedSymbol: failedSymbol,
         attempts: attempts,
         lastPauseSymbol: lastObservedPauseSymbol,
+        terminationReason: reason,
+        finalExecutionSymbol: finalExecutionSymbol,
+        recentExecutionTrace: recentExecutionTrace,
       );
       return SynthesizerResult(
         success: success,
@@ -218,6 +228,9 @@ class SynthesizerWorkflow {
         resolvedHookCode: Map.unmodifiable(buildHookCodeMap()),
         failedSymbol: failedSymbol,
         lastPauseSymbol: lastObservedPauseSymbol,
+        terminationReason: reason,
+        finalExecutionSymbol: finalExecutionSymbol,
+        recentExecutionTrace: recentExecutionTrace,
         totalDuration: stopwatch.elapsed,
         manifest: manifest,
       );
@@ -318,7 +331,7 @@ class SynthesizerWorkflow {
         // Reset state and reload firmware for a clean CPU state on every
         // iteration (including the first) — emulationWorkflow.start() may
         // have already paused execution mid-firmware.
-        await _renodeOp('reset', () => emulationController.reset());
+        await _renodeOp('reset', emulationController.reset);
         await Future.delayed(const Duration(milliseconds: 500));
         await _loadFirmwareWithRetry(baseImagePath, elfPath);
 
@@ -353,7 +366,10 @@ class SynthesizerWorkflow {
         if (pauseEvent == null) {
           // Firmware ran cleanly — success.
           stopwatch.stop();
-          final result = buildResult(success: true);
+          final result = buildResult(
+            success: true,
+            reason: SynthesisTerminationReason.cleanRun,
+          );
           _eventController.add(SynthesizerCompleted(
             iteration: iteration,
             result: result,
@@ -380,7 +396,11 @@ class SynthesizerWorkflow {
             iteration: iteration,
             symbol: symbol,
           ));
-          final result = buildResult(success: false, failedSymbol: symbol);
+          final result = buildResult(
+            success: false,
+            failedSymbol: symbol,
+            reason: SynthesisTerminationReason.forcedOverrideFailed,
+          );
           _eventController.add(SynthesizerCompleted(
             iteration: iteration,
             result: result,
@@ -473,7 +493,11 @@ class SynthesizerWorkflow {
             iteration: iteration,
             symbol: symbol,
           ));
-          final result = buildResult(success: false, failedSymbol: symbol);
+          final result = buildResult(
+            success: false,
+            failedSymbol: symbol,
+            reason: SynthesisTerminationReason.symbolExhausted,
+          );
           _eventController.add(SynthesizerCompleted(
             iteration: iteration,
             result: result,
@@ -532,7 +556,11 @@ class SynthesizerWorkflow {
             iteration: iteration,
             symbol: symbol,
           ));
-          final result = buildResult(success: false, failedSymbol: symbol);
+          final result = buildResult(
+            success: false,
+            failedSymbol: symbol,
+            reason: SynthesisTerminationReason.symbolExhausted,
+          );
           _eventController.add(SynthesizerCompleted(
             iteration: iteration,
             result: result,
@@ -617,9 +645,15 @@ class SynthesizerWorkflow {
       }
 
       stopwatch.stop();
+      // Reached the iteration cap (or was cancelled). This is a
+      // control-flow outcome, NOT a fault at a symbol — record it as a
+      // termination reason and leave failedSymbol null so nothing
+      // downstream mistakes the sentinel for a hookable symbol.
       final result = buildResult(
         success: false,
-        failedSymbol: _isRunning ? 'MAX_ITERATIONS_REACHED' : 'CANCELLED',
+        reason: _isRunning
+            ? SynthesisTerminationReason.maxIterations
+            : SynthesisTerminationReason.cancelled,
       );
       _eventController.add(SynthesizerCompleted(
         iteration: iteration,

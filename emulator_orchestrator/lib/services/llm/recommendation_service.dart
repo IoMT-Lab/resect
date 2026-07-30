@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import '../../data/database/artifact_database.dart';
 import '../../data/models/call_graph.dart';
@@ -10,10 +11,10 @@ import '../../data/models/symbol_group.dart';
 import '../../data/models/synthesis_manifest.dart';
 import '../analysis/coverage_frontier.dart';
 import '../analysis/fidelity_delta.dart';
+import '../rag/rag_index.dart';
 import 'last_run_insight_service.dart';
 import 'llm_client.dart';
 import 'llm_profiles.dart';
-import '../rag/rag_index.dart';
 
 /// Optimization signal the LLM should bias its recommendations
 /// toward when set. Surfaced from the auto-tune configuration
@@ -301,7 +302,8 @@ class RecommendationService {
       }
     }
     final raw = buf.toString();
-    return _parseOutput(raw, modelName, doneEvent);
+    return _parseOutput(raw, modelName, doneEvent,
+        validSymbols: callGraph.symbols.keys.toSet());
   }
 
   /// Resolve [RecommendationMode.auto] against the manifest: a
@@ -336,6 +338,12 @@ class RecommendationService {
     final resolvedMode = _resolveMode(mode, currentManifest);
     final buf = StringBuffer();
 
+    // Artifact id → human-readable effect ("Return 0" / "Return 1" /
+    // "increment" …). Lets the overlay show what each applied hook DOES
+    // at its symbol, so the model can judge whether a hook is wrong
+    // without hand-joining ids to the catalog.
+    final artifactLabels = await _artifactLabels();
+
     // Base context — the advisor's context sections ONLY (no task
     // footer; this service appends its own job-specific task below).
     // Job 2 also gets the coverage frontier appended to the context.
@@ -345,6 +353,7 @@ class RecommendationService {
       callGraph: callGraph,
       frontier:
           resolvedMode == RecommendationMode.job2Coverage ? frontier : const [],
+      artifactLabels: artifactLabels,
     ));
 
     // Available hook artifacts — ground the model's
@@ -538,11 +547,40 @@ class RecommendationService {
       // executed symbols: value-typed leaf forces, wrapper-skips for
       // inlined spins, comms left to the bus virtualization, and
       // boundary-only targeting.
+      if (haltSymbol != null &&
+          LastRunInsightService.looksLikeErrorSink(haltSymbol)) {
+        // Error-sink framing — an init/check failed and the firmware
+        // diverted to a handler; that is NOT a busy-wait. Point the
+        // model at the failing upstream call, not the sink.
+        buf.writeln(
+            'The synthesizer did NOT crash, but execution ended in '
+            '`$haltSymbol`, which looks like an error/fault handler — an '
+            'init or check FAILED and the firmware bailed to it. Do NOT '
+            'hook the handler. In the "Recent call sequence", the call '
+            'just before `$haltSymbol` is the one that failed — force '
+            'THAT call to return success so execution continues instead '
+            'of diverting to the handler. Then apply this playbook:');
+      } else {
+        buf.writeln(
+            'The synthesizer did NOT crash, but coverage is low — the '
+            'firmware is silently stuck in a busy-wait that never '
+            'faults, so the reactive hook mechanism cannot see it. Your '
+            'job is to force your way past it. Apply this playbook:');
+      }
       buf.writeln(
-          'The synthesizer did NOT crash, but coverage is low — the '
-          'firmware is silently stuck in a busy-wait that never '
-          'faults, so the reactive hook mechanism cannot see it. Your '
-          'job is to force your way past it. Apply this playbook:');
+          '0. STALL POINT FIRST: the "Halt point" / "Execution last '
+          'reached" symbol is where forward progress stopped. If it is '
+          'ALREADY hooked (its overlay line is marked EXECUTION STOPPED '
+          'HERE), the applied hook itself may be WRONG — a ready/busy '
+          'flag forced to the wrong value, or a Return-0 that masks '
+          'progress. Re-evaluate and replace it (`set_forced_override` '
+          'with a different artifact_id, or `generate_custom_hook`). '
+          'This is the one case where re-touching an ALREADY IN EFFECT '
+          'hook is NOT a wasted round. And if the stall symbol is an '
+          'error/fault handler (e.g. `Error_Handler`, `*Fault*`), do NOT '
+          'hook it — read the "Recent call sequence" line, find the call '
+          'that ran just before it (that call failed), and force THAT '
+          'call to return success instead.');
       buf.writeln(
           '1. LEAF POLLS: the frontier annotations tell you what each '
           'callee IS — status poll, clock getter, counter, void '
@@ -559,8 +597,9 @@ class RecommendationService {
           'incrementing artifact so time advances. Annotations also '
           'carry status: promote the ones marked "NOT applied this '
           'run" to forced overrides — that is usually the single '
-          'best move. Ones marked "ALREADY IN EFFECT" are done; '
-          'recommending them again is a wasted round.');
+          'best move. Ones marked "ALREADY IN EFFECT" are done '
+          '(EXCEPT the stall point in step 0, whose hook may be '
+          'wrong); recommending them again is a wasted round.');
       buf.writeln(
           '2. WRAPPER-SKIP: if the leaf polls are already forced and '
           'coverage still does not move, the spin is INLINED inside '
@@ -619,8 +658,9 @@ class RecommendationService {
   RecommendationResult _parseOutput(
     String raw,
     String model,
-    LlmStreamDone? done,
-  ) {
+    LlmStreamDone? done, {
+    Set<String> validSymbols = const {},
+  }) {
     if (raw.trim().isEmpty) {
       return RecommendationResult(
         prose: '',
@@ -679,7 +719,22 @@ class RecommendationService {
       if (entry is! Map<String, dynamic>) continue;
       try {
         final r = Recommendation.fromJson(entry);
-        if (r != null) recs.add(r);
+        if (r == null) continue;
+        // Defense-in-depth: a symbol-targeting recommendation must name
+        // a REAL call-graph symbol. Drop anything else (a hallucinated
+        // name, or a control-flow sentinel like MAX_ITERATIONS_REACHED
+        // that leaked past the schema enum) so it can never be authored
+        // or overlaid. Recommendations with no symbol target (group /
+        // iteration-cap kinds) are unaffected.
+        final target = _recommendationTargetSymbol(r);
+        if (target != null &&
+            validSymbols.isNotEmpty &&
+            !validSymbols.contains(target)) {
+          stderr.writeln('[recommendation] dropping ${r.kind} for '
+              'non-call-graph symbol "$target"');
+          continue;
+        }
+        recs.add(r);
       } catch (_) {
         // Per-recommendation parse failures don't poison the whole
         // batch — drop the bad entry, keep going. The modal logs the
@@ -709,6 +764,17 @@ class RecommendationService {
       model: model,
     );
   }
+
+  /// The call-graph symbol a recommendation targets, or null for kinds
+  /// that don't name a symbol (group overrides, iteration-cap). Used to
+  /// validate targets against the call graph at parse time.
+  static String? _recommendationTargetSymbol(Recommendation r) => switch (r) {
+        SetForcedOverride(:final symbol) => symbol,
+        ClearForcedOverride(:final symbol) => symbol,
+        SetPreference(:final symbol) => symbol,
+        GenerateCustomHook(:final symbol) => symbol,
+        _ => null,
+      };
 
   /// Build the Ollama constrained-decoding schema for the response.
   /// Dynamic so invalid choices are unrepresentable at the decoder,
@@ -832,6 +898,38 @@ class RecommendationService {
       );
     }
 
+    // Error-sink round: execution ended in an error/fault handler, so
+    // the actionable targets are the calls on the recent path INTO the
+    // sink (one of them failed and diverted execution) — NOT the sink
+    // itself, and NOT unrelated frontier ready-flags. Restricting the
+    // enum to that path makes an off-path override UNREPRESENTABLE.
+    // Prose guidance alone was ignored last round; constrained decoding
+    // is the lever. Placed after escalation (which never fires on an
+    // error-sink manifest) and before the generic candidate path.
+    final haltSink = LastRunInsightService.computeHaltSymbol(currentManifest);
+    final recentTrace = currentManifest.recentExecutionTrace ?? const [];
+    if (haltSink != null &&
+        LastRunInsightService.looksLikeErrorSink(haltSink) &&
+        recentTrace.isNotEmpty) {
+      final pathSymbols = recentTrace
+          .where((s) => s != haltSink && callGraph.symbols.containsKey(s))
+          .toSet()
+          .toList()
+        ..sort();
+      if (pathSymbols.isNotEmpty) {
+        final groupScopes = _relevantGroups(symbolGroups, pathSymbols.toSet())
+            .map((g) => g.scope)
+            .toList()
+          ..sort();
+        return _schemaShell(
+          symbolEnum: pathSymbols,
+          catalogIds: catalogIds,
+          maxRecommendations: maxRecommendations,
+          groupScopeEnum: groupScopes,
+        );
+      }
+    }
+
     final halt = LastRunInsightService.computeHaltSymbol(currentManifest);
     final candidates = _candidateSymbols(
       currentManifest: currentManifest,
@@ -861,7 +959,14 @@ class RecommendationService {
           ..addAll(excluded);
       }
     }
-    final symbolEnum = candidates.where((s) => s.isNotEmpty).toList()..sort();
+    // The enum offered to constrained decoding must contain ONLY real
+    // call-graph symbols — never a control-flow sentinel or a candidate
+    // that isn't a function. This is what makes a pick like
+    // `MAX_ITERATIONS_REACHED` unrepresentable at the decoder.
+    final symbolEnum = candidates
+        .where((s) => s.isNotEmpty && callGraph.symbols.containsKey(s))
+        .toList()
+      ..sort();
     final groupScopes = _relevantGroups(symbolGroups, candidates)
         .map((g) => g.scope)
         .toList()
@@ -981,6 +1086,20 @@ class RecommendationService {
   /// set, otherwise from the first non-empty line of the body —
   /// matches what the Hook Database dialog shows. Empty rows are
   /// rare but skipped to keep the section terse.
+  /// Artifact id → human-readable effect label for every row in the DB.
+  /// Same derivation as the catalog block: the `name` column if set,
+  /// else derived from the hook body via [_hookLabel]. Used to annotate
+  /// the overlay so applied hooks show what they DO at their symbol.
+  Future<Map<int, String>> _artifactLabels() async {
+    final all = await artifactDb.getAllArtifacts();
+    return {
+      for (final a in all)
+        a.id: (a.name != null && a.name!.trim().isNotEmpty)
+            ? a.name!.trim()
+            : _hookLabel(a.artifactData),
+    };
+  }
+
   Future<String> _renderArtifactCatalog() async {
     final all = await artifactDb.getAllArtifacts();
     final buf = StringBuffer();
@@ -1226,13 +1345,26 @@ Rules:
   separate LLM to author the hook body and seed it as a binding
   for the next synthesis run.
 - The goal is to improve the run's coverage and fidelity metrics.
-  The halt symbol named in "## Your task" is a SIGNAL of where
-  the firmware is currently stuck — use it as a starting point
-  for reasoning, but don't fixate on it. A classifier tag like
-  `iteration_fallback` on a symbol in the "## Decisions applied"
-  block does NOT make that symbol the right focus by itself;
-  recommend the change you'd defend as most likely to move the
-  metrics on the next run.
+- SIGNALS & PRIORITY. Reason in this order:
+  1. WHERE execution actually stopped — the "Halt point" /
+     "Execution last reached" symbol and the "Recent call
+     sequence" line (the path into it). These are real runtime
+     positions, not guesses. If execution ended in an error/fault
+     handler (e.g. `Error_Handler`, `*Fault*`), the real failure
+     is the call JUST BEFORE it in the recent sequence — force
+     THAT call to return success. Do NOT hook the handler; that
+     hides the failure without advancing coverage.
+  2. WHETHER improvement is even possible — the "Reachable-code
+     coverage" headroom. Near-zero headroom means little is left
+     to win; a large headroom means real room.
+  3. Only THEN the coverage frontier (executed functions with
+     unreached callees). The frontier is a fallback, not the
+     first move — do not default to forcing frontier ready-flags
+     when the recent sequence points at a concrete failing call.
+  A classifier tag like `iteration_fallback` on a symbol in the
+  "## Decisions applied" block does NOT make that symbol the
+  right focus by itself; recommend the change you'd defend as
+  most likely to move the metrics on the next run.
 - If after one pass through the context you cannot identify a
   defensible recommendation (e.g. metrics have plateau'd, prior
   rounds tried similar approaches without effect AND a custom

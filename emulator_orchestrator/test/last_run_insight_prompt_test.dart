@@ -763,4 +763,187 @@ void main() {
       expect(ctx, contains('(+10 more overlays in this region)'));
     });
   });
+
+  group('composeContext — execution position, reachability, stall hook', () {
+    test(
+        'surfaces "Execution last reached" distinct from the fault site',
+        () {
+      final manifest = SynthesisManifest(
+        manifestVersion: 2,
+        elfHash: 'abc',
+        elfFileName: 'test.elf',
+        synthesizerRunId: 'run1',
+        result: _result(false),
+        decisions: const [],
+        failedSymbol: 'HAL_I2C_Init',
+        finalExecutionSymbol: 'idle_loop',
+      );
+      final prompt = service.composePrompt(
+        manifest: manifest,
+        currentState: _emptyDecisionState,
+        callGraph: _callGraph(50),
+      );
+      expect(prompt, contains('Halt point: `HAL_I2C_Init`'));
+      expect(prompt, contains('Execution last reached: `idle_loop`'));
+    });
+
+    test('on a clean run the halt point IS the final-execution symbol', () {
+      final manifest = SynthesisManifest(
+        manifestVersion: 2,
+        elfHash: 'abc',
+        elfFileName: 'test.elf',
+        synthesizerRunId: 'run1',
+        result: _result(true),
+        decisions: const [],
+        finalExecutionSymbol: 'idle_loop',
+      );
+      final prompt = service.composePrompt(
+        manifest: manifest,
+        currentState: _emptyDecisionState,
+        callGraph: _callGraph(50),
+      );
+      expect(
+          prompt,
+          contains('Halt point: `idle_loop` '
+              '(last function entered before the run ended)'));
+      // No separate line when the halt point already IS the final exec.
+      expect(prompt, isNot(contains('Execution last reached:')));
+    });
+
+    test('final-execution symbol wins over a hooked-past pause for the focus',
+        () {
+      // The real Error_Handler scenario: the firmware faulted at
+      // HAL_I2C_Init (hooked past) then ran on and ended in
+      // Error_Handler. The focus — halt point + neighborhood — must
+      // center on where execution GOT TO, not the stale pause.
+      final manifest = SynthesisManifest(
+        manifestVersion: 2,
+        elfHash: 'abc',
+        elfFileName: 'test.elf',
+        synthesizerRunId: 'run1',
+        result: _result(true),
+        decisions: const [],
+        lastPauseSymbol: 'HAL_I2C_Init',
+        finalExecutionSymbol: 'Error_Handler',
+      );
+      final prompt = service.composePrompt(
+        manifest: manifest,
+        currentState: _emptyDecisionState,
+        callGraph: _callGraph(50),
+      );
+      expect(
+          prompt,
+          contains('Halt point: `Error_Handler` '
+              '(last function entered before the run ended)'));
+      expect(
+          prompt, contains('## Call-graph neighborhood of `Error_Handler`'));
+      expect(prompt, isNot(contains('neighborhood of `HAL_I2C_Init`')));
+    });
+
+    test('renders the recent call sequence, collapses repeats, flags a sink',
+        () {
+      final manifest = SynthesisManifest(
+        manifestVersion: 2,
+        elfHash: 'abc',
+        elfFileName: 'test.elf',
+        synthesizerRunId: 'run1',
+        result: _result(true),
+        decisions: const [],
+        finalExecutionSymbol: 'Error_Handler',
+        recentExecutionTrace: const [
+          'SystemClock_Config',
+          'HAL_RCC_OscConfig',
+          'HAL_RCC_OscConfig',
+          'HAL_RCC_OscConfig',
+          'Error_Handler',
+        ],
+      );
+      final prompt = service.composePrompt(
+        manifest: manifest,
+        currentState: _emptyDecisionState,
+        callGraph: _callGraph(50),
+      );
+      expect(prompt, contains('Recent call sequence'));
+      // Consecutive repeats collapse to a count (also a spin signal).
+      expect(prompt, contains('`HAL_RCC_OscConfig` (×3)'));
+      expect(prompt, contains('→ `Error_Handler`'));
+      // Error-sink guidance: fix the upstream call, don't hook the sink.
+      expect(prompt, contains('looks like an error/fault handler'));
+      expect(prompt, contains('Do NOT hook the handler'));
+    });
+
+    test('reports coverage against the REACHABLE denominator + headroom',
+        () {
+      // entry→a→b→c is the reachable chain; 46 unrelated dead fns pad
+      // the graph to 50. Executed {entry,a}. Reachable-from-executed =
+      // {entry,a,b,c} (4), headroom {b,c} = 2 — NOT 48/50.
+      final symbols = <String, Symbol>{
+        'entry': Symbol(
+            name: 'entry', numInstructions: 1, calledSymbols: const {'a': 1}),
+        'a': Symbol(
+            name: 'a', numInstructions: 1, calledSymbols: const {'b': 1}),
+        'b': Symbol(
+            name: 'b', numInstructions: 1, calledSymbols: const {'c': 1}),
+        'c': Symbol(name: 'c', numInstructions: 1, calledSymbols: const {}),
+      };
+      for (var i = 0; i < 46; i++) {
+        symbols['dead_$i'] =
+            Symbol(name: 'dead_$i', numInstructions: 1, calledSymbols: const {});
+      }
+      final manifest = SynthesisManifest(
+        manifestVersion: 2,
+        elfHash: 'abc',
+        elfFileName: 'test.elf',
+        synthesizerRunId: 'run1',
+        result: _result(true),
+        decisions: const [],
+        executedSymbols: const ['entry', 'a'],
+      );
+      final prompt = service.composePrompt(
+        manifest: manifest,
+        currentState: _emptyDecisionState,
+        callGraph: CallGraph(elfPath: '/dev/null', symbols: symbols),
+      );
+      expect(prompt, contains('Symbols executed: 2 of 50'));
+      expect(prompt, contains('Reachable-code coverage: 2 of 4 reachable'));
+      expect(
+          prompt, contains('2 reachable-but-unexecuted symbol(s) remain'));
+    });
+
+    test(
+        'overlay shows the applied hook EFFECT and flags the stall symbol',
+        () {
+      final manifest = SynthesisManifest(
+        manifestVersion: 2,
+        elfHash: 'abc',
+        elfFileName: 'test.elf',
+        synthesizerRunId: 'run1',
+        result: _result(false),
+        decisions: [_decision(symbol: 'LL_RCC_HSE_IsReady', iteration: 1)],
+        failedSymbol: 'LL_RCC_HSE_IsReady',
+      );
+      const state = HookDecisionState(elfHash: 'abc', decisions: [
+        HookDecision(
+          symbol: 'LL_RCC_HSE_IsReady',
+          kind: HookDecisionKind.override,
+          artifactId: 2,
+        ),
+      ]);
+      final ctx = service.composeContext(
+        manifest: manifest,
+        currentState: state,
+        callGraph: CallGraph(elfPath: '/dev/null', symbols: {
+          'LL_RCC_HSE_IsReady': Symbol(
+              name: 'LL_RCC_HSE_IsReady',
+              numInstructions: 1,
+              calledSymbols: const {}),
+        }),
+        artifactLabels: const {2: 'Return 0'},
+      );
+      // Effect surfaced inline, not just the id.
+      expect(ctx, contains('← #2 (forced override, "Return 0")'));
+      // Stall symbol flagged for reconsideration.
+      expect(ctx, contains('EXECUTION STOPPED HERE'));
+    });
+  });
 }

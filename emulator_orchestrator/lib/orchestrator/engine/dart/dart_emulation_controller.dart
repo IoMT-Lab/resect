@@ -39,6 +39,16 @@ class DartEmulationController implements EmulationController {
 
   var _connected = false;
   String? _lastSymbol;
+  // Like _lastSymbol, but NOT cleared when a pause event is built — so it
+  // survives a clean run that ends on the observation-window timeout (no
+  // pause). This is "where execution actually got to." Cleared only on
+  // reset (fresh run).
+  String? _lastExecutedSymbol;
+  // Bounded ring buffer of the last function ENTRIES (oldest→newest),
+  // so consumers see the PATH into where execution stopped, not just the
+  // last symbol. Cleared on reset.
+  static const _kRecentTraceCap = 16;
+  final List<String> _recentExecutionTrace = [];
   String? _lastUnhandledSymbol;
   var _pendingPause = false;
 
@@ -139,6 +149,8 @@ class DartEmulationController implements EmulationController {
   Future<void> reset() async {
     _pendingPause = false;
     _lastSymbol = null;
+    _lastExecutedSymbol = null;
+    _recentExecutionTrace.clear();
     _lastUnhandledSymbol = null;
     _hooks.clear();
     _hookMap.clear();
@@ -202,8 +214,22 @@ class DartEmulationController implements EmulationController {
   Stream<void> get onReset => _resetController.stream;
 
   void _onFunctionCall(FunctionCallEvent event) {
-    if (event.isEntry) _lastSymbol = event.name;
+    if (event.isEntry) {
+      _lastSymbol = event.name;
+      _lastExecutedSymbol = event.name;
+      _recentExecutionTrace.add(event.name);
+      if (_recentExecutionTrace.length > _kRecentTraceCap) {
+        _recentExecutionTrace.removeAt(0);
+      }
+    }
   }
+
+  @override
+  String? get lastExecutedSymbol => _lastExecutedSymbol;
+
+  @override
+  List<String> get recentExecutionTrace =>
+      List.unmodifiable(_recentExecutionTrace);
 
   void _onUnhandled(UnhandledAccessEvent event) {
     _lastUnhandledSymbol = event.name;
