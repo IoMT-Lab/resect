@@ -55,3 +55,8 @@ TODO.txt
 
 # Generated documentation site (regenerate with: doxygen docs/Doxyfile)
 docs/generated/
+
+workdir/
+!workdir/example/aya_ppg.elf
+!workdir/example/stm32wb05_empty.repl
+!workdir/example/Example.emu
