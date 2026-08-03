@@ -24,7 +24,7 @@ else
 fi
 
 # 3. Ensure your app directory or home path is owned by the resolved user
-export HOME=/home/"$CONTAINER_USER"
+export HOME=$(getent passwd "$USER_ID" | cut -d: -f6)
 
 # Create a symlink at $HOME/.config pointing to /static_home
 mkdir -p /static_home
