@@ -7,4 +7,8 @@ if [ ! -f "docker-compose.yml" ]; then
   trap 'popd > /dev/null 2>&1' EXIT
 fi
 
-docker compose --profile gui build
+if [ ! -d "workdir" ]; then
+  mkdir workdir
+fi
+
+docker compose --profile normal run --rm --service-ports -e HOST_UID=`id -u` -e HOST_GID=`id -g` resect vnc

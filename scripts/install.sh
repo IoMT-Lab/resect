@@ -11,4 +11,4 @@ if [ ! -d "workdir" ]; then
   mkdir workdir
 fi
 
-docker compose --profile normal run --rm -e HOST_UID=`id -u` -e HOST_GID=`id -g` resect cli
+docker compose --profile init --profile normal run --rm -e HOST_UID=`id -u` -e HOST_GID=`id -g` ollama-init

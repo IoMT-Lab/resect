@@ -60,3 +60,5 @@ workdir/
 !workdir/example/aya_ppg.elf
 !workdir/example/stm32wb05_empty.repl
 !workdir/example/Example.emu
+
+!docker/resect.config

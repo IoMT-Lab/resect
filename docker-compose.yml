@@ -6,35 +6,17 @@
 #
 
 services:
-  renode-cli:
-    image: nexus.medmakers.io/docker/renode:latest
-    networks: [resect-net]
-    restart: unless-stopped
-    profiles:
-      - cli
-    environment:
-      RENODE_COMMS_HOST: 'resect-cli'
-
-  renode-gui:
-    image: nexus.medmakers.io/docker/renode:latest
-    networks: [resect-net]
-    restart: unless-stopped
-    profiles:
-      - gui
-    environment:
-      RENODE_COMMS_HOST: 'resect-gui'
-
   ollama:
     image: ollama/ollama:latest
+    restart: unless-stopped
+    profiles: [ init, normal ]
+    volumes: [ ollama-models:/root/.ollama ]
     environment:
       # Bind all interfaces so the resect + ollama-init containers can reach it
       # by service name over the Compose network.
       OLLAMA_HOST: 0.0.0.0:11434
-    volumes:
-      - ollama-models:/root/.ollama
-    networks: [resect-net]
     healthcheck:
-      test: ["CMD", "ollama", "list"]
+      test: [ "CMD", "ollama", "list" ]
       # Probe fast only while starting (start_interval, Docker 25+), then back
       # off to every 30s so the logs aren't spammed with a heartbeat. The CLI
       # logs HEAD / + GET /api/tags on the server each probe.
@@ -43,18 +25,20 @@ services:
       retries: 5
       start_period: 90s
       start_interval: 3s
-    restart: unless-stopped
+
 
   ollama-init:
     # Pulls the shipped inference + embedding models into the ollama-models
     # volume, then exits. Idempotent: already-present models report "up to date"
     # and this returns immediately on warm boots.
     image: ollama/ollama:latest
+    restart: no
+    profiles: [ init ]
+    environment:
+      OLLAMA_HOST: ollama:11434
     depends_on:
       ollama:
         condition: service_healthy
-    environment:
-      OLLAMA_HOST: ollama:11434
     entrypoint:
       - /bin/sh
       - -c
@@ -65,64 +49,67 @@ services:
         echo "Pulling embedding model: nomic-embed-text"
         ollama pull nomic-embed-text
         echo "Model pull complete."
-    networks: [resect-net]
-    restart: "no"
 
-  resect-cli:
-    stdin_open: true # docker run -i
-    tty: true
+  renode:
+    image: nexus.medmakers.io/docker/renode:latest
+    restart: unless-stopped
+    profiles: [ normal ]
+    environment:
+      RENODE_COMMS_HOST: 'resect'
+
+  resect:
+    image: nexus.medmakers.io/docker/resect:latest
+    restart: no
+    profiles: [ normal ]
     init: true
-    image: nexus.medmakers.io/docker/resect_cli:latest
-    profiles:
-      - cli
     build:
       context: .
-      dockerfile: docker/Dockerfile.cli
+      dockerfile: docker/Dockerfile
+    working_dir: /workdir
     volumes:
       - resect-state:/static_home
       - ./workdir:/workdir
-    working_dir: /workdir
+      # Mount native Wayland socket directly to matching path inside container
+      - ${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}:${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}
+      
+      # Mount X11 socket for XWayland fallback
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
     environment:
       - HOST_UID=1000
       - HOST_GID=1000
+      # Native Wayland configuration using host variables
+      - WAYLAND_DISPLAY=${WAYLAND_DISPLAY}
+      - XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}
+      
+      # XWayland fallback configuration
+      - DISPLAY=${DISPLAY}
+      
+      # Toolkit preferences (try Wayland first, then X11)
+      - QT_QPA_PLATFORM=wayland;xcb
+      - GDK_BACKEND=wayland,x11
+      
+      # FIX: Forces dconf to use a writable home directory path instead of /run/user
+      - DCONF_USER_CONFIG_DIR=.config/dconf
+      # FIX: Force software rendering for Mesa/OpenGL/EGL
+      - LIBGL_ALWAYS_SOFTWARE=1
+      # FIX 1: The official internal flag to completely disable the ATK bridge framework
+      - NO_AT_BRIDGE=1
+       # FIX 2: Breaks the D-Bus communication path that at-spi relies on to request plug_ids
+      - DBUS_SESSION_BUS_ADDRESS=unix:path=/dev/null
     depends_on:
-      renode-cli:
+      renode:
         condition: service_started
       ollama:
         condition: service_healthy
-      ollama-init:
-        condition: service_completed_successfully
-    networks: [resect-net]
-    restart: "no"
+    ports: [ 5900:5900 ] # VNC server for GUI
 
-  resect-gui:
-    init: true
-    image: nexus.medmakers.io/docker/resect_gui:latest
-    profiles:
-      - gui
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.gui
-    volumes:
-      - resect-state:/static_home
-      - ./workdir:/workdir
-    working_dir: /workdir
-    depends_on:
-      renode-gui:
-        condition: service_started
-      ollama:
-        condition: service_healthy
-      ollama-init:
-        condition: service_completed_successfully
-    networks: [resect-net]
-    ports:
-      - "5900:5900" # VNC server for GUI
-    restart: "no"
-
-networks:
-  resect-net:
-    driver: bridge
-#
+  cache-cleaner:
+      image: busybox:latest
+      restart: no
+      profiles: [ _ ]
+      volumes: [ resect-state:/static_home ]
+      entrypoint: /bin/sh
+      command: -c "rm -rf /static_home/*"
 
 volumes:
   ollama-models: # LLM model store (large; re-pullable)
