@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Check if docker-compose.yml exists in current directory
-if [ ! -f "docker-compose.yml" ]; then
+# Check if compose.yml exists in current directory
+if [ ! -f "compose.yml" ]; then
   pushd .. > /dev/null
   # Return to the original directory if we changed it
   trap 'popd > /dev/null 2>&1' EXIT
@@ -11,4 +11,4 @@ if [ ! -d "workdir" ]; then
   mkdir workdir
 fi
 
-docker compose --profile normal run --rm -e HOST_UID=`id -u` -e HOST_GID=`id -g` resect gui
+INTERNAL_ENV_FILE=docker/gui.env docker compose --profile normal run --rm -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" resect gui
