@@ -45,7 +45,7 @@ case "$MODE" in
         ;;
     gui)
         echo "Starting container as user: $CONTAINER_USER (UID: $USER_ID, GID: $GROUP_ID)"
-        exec gosu "$CONTAINER_USER" "resect" 2>/dev/null
+        exec gosu "$CONTAINER_USER" "resect"
         ;;
     vnc)
         echo "Creating virtual display and starting VNC server..."
@@ -58,7 +58,7 @@ case "$MODE" in
         echo "Starting container as user: $CONTAINER_USER (UID: $USER_ID, GID: $GROUP_ID)"
 
         echo "VNC server available on port 5900"
-        exec gosu "$CONTAINER_USER" "resect" 2>/dev/null
+        exec gosu "$CONTAINER_USER" "resect"
         ;;
     *)
         echo "Invalid mode: $MODE. Options are: cli, gui, vnc"
