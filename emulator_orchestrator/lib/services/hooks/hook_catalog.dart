@@ -259,7 +259,7 @@ List<HookBuilderDescriptor> _systemDescriptors() => [
       ),
     ],
     build: (params) =>
-        uartReadHook('localhost', params['port'] as int? ?? 1236, 'stm32_glue'),
+        uartReadHook(params['port'] as int? ?? 1236, 'stm32_glue'),
   ),
   HookBuilderDescriptor(
     kindId: 'uart_write',
