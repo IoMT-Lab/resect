@@ -36,18 +36,21 @@ abstract class TrajectoryColors {
 }
 
 /// Map a series of 0–1 values onto pixel offsets inside [size], with
-/// round [minRound]..[maxRound] spread across the width. Null values
+/// rounds 0..[maxRound] spread across the width ([maxRound] defaults to
+/// the last data round — pass the session's configured round budget for
+/// a fixed axis that doesn't rescale as rounds land). Null values
 /// produce null offsets (series gap). Pure — unit-testable without a
 /// canvas.
 List<Offset?> trajectoryOffsets({
   required List<TrajectoryRound> rounds,
   required double? Function(TrajectoryRound) value,
   required Size size,
+  int? maxRound,
 }) {
   if (rounds.isEmpty) return const [];
   final minRound = rounds.first.round;
-  final maxRound = rounds.last.round;
-  final span = (maxRound - minRound).clamp(1, 1 << 30);
+  final span =
+      ((maxRound ?? rounds.last.round) - minRound).clamp(1, 1 << 30);
   return [
     for (final r in rounds)
       switch (value(r)) {
@@ -66,12 +69,19 @@ List<Offset?> trajectoryOffsets({
 class MetricTrajectoryChart extends StatefulWidget {
   const MetricTrajectoryChart({
     required this.rounds,
-    this.height = 180,
+    this.height = 240,
+    this.maxRound,
     super.key,
   });
 
   final List<TrajectoryRound> rounds;
   final double height;
+
+  /// When set, the x-axis spans rounds 0..[maxRound] regardless of how
+  /// many rounds have landed — a session with a known round budget gets
+  /// a stable axis instead of rescaling on every round. Null falls back
+  /// to fitting the data.
+  final int? maxRound;
 
   @override
   State<MetricTrajectoryChart> createState() => _MetricTrajectoryChartState();
@@ -111,6 +121,7 @@ class _MetricTrajectoryChartState extends State<MetricTrajectoryChart> {
                   painter: _TrajectoryPainter(
                     rounds: rounds,
                     hovered: _hovered,
+                    maxRound: widget.maxRound,
                   ),
                 ),
                 if (_hovered != null) _readout(rounds[_hovered!], size),
@@ -130,6 +141,7 @@ class _MetricTrajectoryChartState extends State<MetricTrajectoryChart> {
       rounds: rounds,
       value: (r) => r.fidelity,
       size: plot.size,
+      maxRound: widget.maxRound,
     );
     int? best;
     var bestDx = double.infinity;
@@ -165,7 +177,7 @@ class _MetricTrajectoryChartState extends State<MetricTrajectoryChart> {
           'cov fidelity ${pct(r.coverageFidelity)}\n'
           'coverage ${pct(r.coverage)}',
           style: const TextStyle(
-            fontSize: 11,
+            fontSize: 12,
             height: 1.4,
             fontFamily: 'monospace',
             color: AppTheme.textPrimary,
@@ -184,22 +196,28 @@ class _LegendEntry extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Row(children: [
-        Container(width: 10, height: 3, color: color),
+        Container(width: 14, height: 4, color: color),
         const SizedBox(width: 6),
         Text(label,
-            style: const TextStyle(fontSize: 11, color: AppTheme.textMuted)),
+            style: const TextStyle(fontSize: 12, color: AppTheme.textMuted)),
       ]);
 }
 
 class _TrajectoryPainter extends CustomPainter {
-  _TrajectoryPainter({required this.rounds, this.hovered});
+  _TrajectoryPainter({required this.rounds, this.hovered, this.maxRound});
 
   final List<TrajectoryRound> rounds;
   final int? hovered;
+  final int? maxRound;
+
+  /// End of the x domain: the fixed round budget when set, else the
+  /// last data round.
+  int get _domainEnd =>
+      maxRound ?? (rounds.isEmpty ? 0 : rounds.last.round);
 
   /// Inset for axis labels: y labels on the left, round labels below.
   static Rect plotArea(Size size) =>
-      Rect.fromLTRB(34, 4, size.width - 8, size.height - 18);
+      Rect.fromLTRB(44, 6, size.width - 10, size.height - 22);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -207,7 +225,7 @@ class _TrajectoryPainter extends CustomPainter {
     final grid = Paint()
       ..color = AppTheme.border
       ..strokeWidth = 1;
-    const labelStyle = TextStyle(fontSize: 9, color: AppTheme.textMuted);
+    const labelStyle = TextStyle(fontSize: 11, color: AppTheme.textMuted);
 
     // Horizontal gridlines + y labels at 0/25/50/75/100%.
     for (var i = 0; i <= 4; i++) {
@@ -215,18 +233,22 @@ class _TrajectoryPainter extends CustomPainter {
       final y = plot.bottom - frac * plot.height;
       canvas.drawLine(Offset(plot.left, y), Offset(plot.right, y), grid);
       _text(canvas, '${(frac * 100).round()}%', labelStyle,
-          Offset(0, y - 6), maxWidth: plot.left - 4);
+          Offset(0, y - 7), maxWidth: plot.left - 6);
     }
 
     if (rounds.isEmpty) return;
 
-    // Round ticks — thin out labels when crowded.
-    final every = (rounds.length / 12).ceil().clamp(1, 1 << 30);
-    for (var i = 0; i < rounds.length; i++) {
-      if (i % every != 0 && i != rounds.length - 1) continue;
-      final x = _x(i, plot);
-      _text(canvas, 'R${rounds[i].round}', labelStyle,
-          Offset(x - 8, plot.bottom + 4), maxWidth: 30);
+    // Round ticks across the whole domain (data or fixed budget) —
+    // thinned out when crowded.
+    final start = rounds.first.round;
+    final domainSpan = (_domainEnd - start).clamp(1, 1 << 30);
+    final tickCount = _domainEnd - start + 1;
+    final every = (tickCount / 12).ceil().clamp(1, 1 << 30);
+    for (var r = start; r <= _domainEnd; r++) {
+      if ((r - start) % every != 0 && r != _domainEnd) continue;
+      final x = plot.left + (r - start) / domainSpan * plot.width;
+      _text(canvas, 'R$r', labelStyle, Offset(x - 9, plot.bottom + 6),
+          maxWidth: 36);
     }
 
     // Hover crosshair behind the series.
@@ -248,8 +270,7 @@ class _TrajectoryPainter extends CustomPainter {
   }
 
   double _x(int index, Rect plot) {
-    final span =
-        (rounds.last.round - rounds.first.round).clamp(1, 1 << 30);
+    final span = (_domainEnd - rounds.first.round).clamp(1, 1 << 30);
     return plot.left +
         (rounds[index].round - rounds.first.round) / span * plot.width;
   }
@@ -260,10 +281,11 @@ class _TrajectoryPainter extends CustomPainter {
       rounds: rounds,
       value: value,
       size: plot.size,
+      maxRound: maxRound,
     );
     final line = Paint()
       ..color = color
-      ..strokeWidth = 1.5
+      ..strokeWidth = 2.2
       ..style = PaintingStyle.stroke;
     final path = Path();
     var penDown = false;
@@ -287,19 +309,19 @@ class _TrajectoryPainter extends CustomPainter {
         canvas
           ..drawCircle(
               p,
-              3,
+              4.5,
               Paint()
                 ..color = AppTheme.bgPanel
                 ..style = PaintingStyle.fill)
           ..drawCircle(
               p,
-              3,
+              4.5,
               Paint()
                 ..color = color
-                ..strokeWidth = 1.5
+                ..strokeWidth = 2
                 ..style = PaintingStyle.stroke);
       } else {
-        canvas.drawCircle(p, 2.5, Paint()..color = color);
+        canvas.drawCircle(p, 4, Paint()..color = color);
       }
     }
   }
@@ -316,5 +338,7 @@ class _TrajectoryPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_TrajectoryPainter old) =>
-      old.rounds != rounds || old.hovered != hovered;
+      old.rounds != rounds ||
+      old.hovered != hovered ||
+      old.maxRound != maxRound;
 }

@@ -60,7 +60,10 @@ class AutoTuneSessionView extends ConsumerWidget {
         children: [
           _header(session),
           const SizedBox(height: 12),
-          MetricTrajectoryChart(rounds: sessionTrajectory(session)),
+          MetricTrajectoryChart(
+            rounds: sessionTrajectory(session),
+            maxRound: session.maxRounds,
+          ),
           const SizedBox(height: 16),
           _metricsBand(session),
           const SizedBox(height: 16),

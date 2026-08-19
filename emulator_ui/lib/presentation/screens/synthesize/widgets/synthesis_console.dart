@@ -11,7 +11,7 @@ import '../../library/library_actions.dart';
 import '../llm_synthesis_orchestrator.dart';
 import '../synthesis_controller.dart';
 import 'auto_tune_config_dialog.dart';
-import 'auto_tune_modal.dart';
+import 'auto_tune_panel.dart';
 import 'auto_tune_session_view.dart';
 import 'last_run_card.dart';
 import 'pre_synthesis_report.dart';
@@ -43,13 +43,124 @@ class SynthesisConsole extends ConsumerWidget {
       );
     }
 
-    if (progress == null) {
-      return _IdleView(emulator: emulator);
-    }
-    if (progress.complete) {
-      return _CompleteView(emulator: emulator);
-    }
-    return const _RunningView(countdownWindow: _countdownWindow);
+    final base = progress == null
+        ? _IdleView(emulator: emulator) as Widget
+        : progress.complete
+            ? _CompleteView(emulator: emulator)
+            : const _RunningView(countdownWindow: _countdownWindow);
+
+    // An active auto-tune session replaces the pane with ONE scrollable
+    // column of same-chrome cards (no blocking overlay, no split pane):
+    // control panel → trajectory/metrics/compact report → the round's
+    // synthesis result in the familiar result styling.
+    final orchestrator = ref.watch(autoTuneOrchestratorProvider);
+    if (orchestrator == null) return base;
+    return Container(
+      color: AppTheme.bgCanvas,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AutoTunePanel(
+              orchestrator: orchestrator,
+              onDismiss: () {
+                ref.read(autoTuneOrchestratorProvider.notifier).state = null;
+                orchestrator.dispose();
+              },
+            ),
+            const SizedBox(height: 12),
+            const AutoTuneSessionView(),
+            const SizedBox(height: 12),
+            const AutoTuneResultCard(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The current round's synthesis result during auto-tune — the same
+/// content the standalone complete view shows (banner, big fidelity
+/// block, substituted functions via [SynthesisReport]) wrapped in the
+/// session's card chrome, titled by round instead of the misleading
+/// "SYNTHESIS COMPLETE".
+class AutoTuneResultCard extends ConsumerWidget {
+  const AutoTuneResultCard({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final progress = ref.watch(synthesisProgressProvider);
+    final session = ref.watch(autoTuneSessionProvider);
+    if (progress == null) return const SizedBox.shrink();
+
+    final lastRound =
+        (session?.rounds.isNotEmpty ?? false) ? session!.rounds.last.round : 0;
+    final max = session?.maxRounds;
+    final ofMax = max == null ? '' : ' OF $max';
+    final running = !progress.complete;
+    final round = running && (session?.rounds.isNotEmpty ?? false)
+        ? lastRound + 1
+        : lastRound;
+    final title = running
+        ? 'ROUND $round$ofMax — SYNTHESIZING…'
+        : 'ROUND $round$ofMax — ${progress.success ? 'COMPLETE' : 'FAILED'}';
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.bgPanel,
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 2.5,
+                color: AppTheme.textPrimary,
+              ),
+            ),
+            const Spacer(),
+            if (running)
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              Icon(
+                progress.success
+                    ? Icons.check_circle_outline
+                    : Icons.error_outline,
+                size: 18,
+                color: progress.success
+                    ? const Color(0xFF81C784)
+                    : const Color(0xFFE57373),
+              ),
+          ]),
+          const SizedBox(height: 6),
+          Text(
+            running
+                ? 'iteration ${progress.iteration} · '
+                    '${progress.hooksApplied} hooks · '
+                    '${progress.currentSymbol.isEmpty ? '—' : progress.currentSymbol}'
+                : progress.status,
+            style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
+          ),
+          const SizedBox(height: 14),
+          // The last completed round's full result (fidelity block,
+          // decision provenance, substituted functions). Kept visible
+          // while the next round synthesizes.
+          const SynthesisReport(),
+        ],
+      ),
+    );
   }
 }
 
@@ -121,7 +232,10 @@ class _IdleView extends ConsumerWidget {
                   if (_ready) const PreSynthesisReport(),
                   if (_ready) const SizedBox(height: 14),
                   if (_ready) const LastRunCard(),
+                  // Session view embeds only when no live panel is
+                  // showing it already in the region above.
                   if (_ready &&
+                      ref.watch(autoTuneOrchestratorProvider) == null &&
                       (ref.watch(autoTuneSessionProvider)?.rounds.isNotEmpty ??
                           false)) ...const [
                     SizedBox(height: 14),
@@ -172,23 +286,24 @@ class _IdleView extends ConsumerWidget {
     if (choice == null || !context.mounted) return;
     final container = ProviderScope.containerOf(context);
     final orchestrator = LlmSynthesisOrchestrator(container);
+    // Surface the running session inline: the console renders an
+    // AutoTunePanel above the normal synthesis view while this
+    // provider holds an orchestrator. It stays set after the session
+    // finishes (so the done state is readable) until the panel's
+    // Close button clears it.
+    ref.read(autoTuneOrchestratorProvider.notifier).state = orchestrator;
     final sessionFuture = orchestrator.runAutoTune(
       choice.config,
       interactiveReview: choice.interactiveReview,
     );
-    // Surface the running session in the modal. The modal sits on top
-    // of the Synthesize tab and blocks interaction until terminated.
-    await AutoTuneModal.show(
-      context: context,
-      orchestrator: orchestrator,
-    );
-    // Surface any uncaught error from the session.
+    // Surface any uncaught error from the session. The orchestrator is
+    // NOT disposed here — the panel keeps rendering the done state; its
+    // Close button clears the provider and disposes.
     try {
       await sessionFuture;
     } catch (e, st) {
       debugPrint('[AutoTune] session error: $e\n$st');
     }
-    orchestrator.dispose();
   }
 
   Future<void> _launch(BuildContext context, WidgetRef ref) async {
@@ -452,9 +567,11 @@ class _CompleteView extends ConsumerWidget {
               const SynthesisReport(),
               // Session trajectory + metrics + compact report, when the
               // last synthesis came from an auto-tune session (live this
-              // app run, or rehydrated from autotune_reports/).
-              if (ref.watch(autoTuneSessionProvider)?.rounds.isNotEmpty ??
-                  false) ...const [
+              // app run, or rehydrated from autotune_reports/) — unless
+              // the live panel region above is already showing it.
+              if (ref.watch(autoTuneOrchestratorProvider) == null &&
+                  (ref.watch(autoTuneSessionProvider)?.rounds.isNotEmpty ??
+                      false)) ...const [
                 SizedBox(height: 14),
                 AutoTuneSessionView(),
               ],

@@ -102,10 +102,22 @@ class AutoTuneEngine {
 
   var _cancelled = false;
 
-  /// Request cancellation. The loop drops out at its next checkpoint
-  /// with an `AutoTuneStopReason.cancelled` finish. The review policy
-  /// is responsible for unblocking any pending review it is awaiting.
-  void cancel() => _cancelled = true;
+  /// Completed when [cancel] is called; raced against in-flight LLM
+  /// calls so a cancel takes effect immediately instead of after the
+  /// model finishes composing (an advisor call can run for minutes).
+  var _cancelRequested = Completer<void>();
+
+  /// Request cancellation. An in-flight advisor call is abandoned
+  /// immediately (the HTTP stream keeps draining server-side — see
+  /// `LlmClient.generate` — but nothing more is emitted or applied);
+  /// otherwise the loop drops out at its next checkpoint. Either way
+  /// the session finishes with `AutoTuneStopReason.cancelled`. The
+  /// review policy is responsible for unblocking any pending review
+  /// it is awaiting.
+  void cancel() {
+    _cancelled = true;
+    if (!_cancelRequested.isCompleted) _cancelRequested.complete();
+  }
 
   /// Run a complete auto-tune session against [project].
   ///
@@ -130,6 +142,7 @@ class AutoTuneEngine {
     int iterationCap = 10,
   }) async {
     _cancelled = false;
+    _cancelRequested = Completer<void>();
     final overlays =
         AutoTuneOverlays.fromEmulator(project, iterationCap: iterationCap);
     final history = <RoundSnapshot>[];
@@ -669,7 +682,7 @@ class AutoTuneEngine {
     String? composedPrompt;
     final advisorWatch = Stopwatch()..start();
     try {
-      final result = await recommendationService.recommend(
+      final recommendFuture = recommendationService.recommend(
         currentManifest: manifest,
         currentState: state,
         callGraph: callGraph,
@@ -682,14 +695,29 @@ class AutoTuneEngine {
         groupOverrides: overlays.groupOverrides,
         onPromptComposed: (p) => composedPrompt = p,
         onToken: (tok) {
+          if (_cancelled) return;
           responseBuf.write(tok);
           sink.token(tok);
         },
         onThinking: (chunk) {
+          if (_cancelled) return;
           thinkingBuf.write(chunk);
           sink.thinking(chunk);
         },
       );
+      // Race the model against cancellation: an advisor call can run
+      // for minutes, and a Cancel click must not wait it out. On
+      // cancel the call is abandoned (its eventual completion or error
+      // is swallowed); the caller's cancelled-checkpoint finishes the
+      // session.
+      final result = await Future.any<RecommendationResult?>([
+        recommendFuture,
+        _cancelRequested.future.then((_) => null),
+      ]);
+      if (result == null) {
+        unawaited(recommendFuture.then((_) {}, onError: (_) {}));
+        return null;
+      }
       advisorWatch.stop();
       _lastAdvisorSeconds = advisorWatch.elapsed.inMilliseconds / 1000.0;
       sink.llmExchange(AutoTuneLlmExchange(
@@ -747,6 +775,11 @@ class AutoTuneEngine {
           targetSymbol: rec.symbol,
           elfHash: elfHash,
         )) {
+          // Cancellation checkpoint per streamed chunk — tokens flow
+          // continuously while the model generates, so a Cancel click
+          // lands within a token's latency instead of after the full
+          // hook is authored.
+          if (_cancelled) return null;
           switch (ev) {
             case LlmThinkingChunk(:final text):
               sink.thinking(text);
@@ -760,6 +793,7 @@ class AutoTuneEngine {
       } catch (e) {
         return 'Hook generation failed for ${rec.symbol}: $e';
       }
+      if (_cancelled) return null;
       final body = responseBuf.toString().trim();
       if (body.isEmpty) {
         return 'Hook generation produced no output for ${rec.symbol}.';

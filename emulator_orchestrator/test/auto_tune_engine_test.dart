@@ -917,6 +917,44 @@ void main() {
     expect(round1.snapshot.warnings, isEmpty);
   });
 
+  test('cancel takes effect while the advisor call is in flight', () async {
+    final sink = _RecordingSink();
+    final synth = _ScriptedSynth([
+      _result(runId: 'r0', failedSymbol: 'A', triedArtifactId: 7),
+    ]);
+    final hanging = _hanging();
+    final engine = AutoTuneEngine(
+      runSynthesis: synth.call,
+      recommendationService: hanging,
+      artifactDb: await _db(),
+      reviewPolicy: const AcceptAllReviewPolicy(),
+      sink: sink,
+      now: () => DateTime.utc(2026),
+    );
+
+    final session = engine.run(
+      project: _project(),
+      elfHash: 'h',
+      callGraph: _callGraph(['A']),
+      config: config2,
+    );
+    // Let the loop reach the (never-completing) recommend await, then
+    // cancel — the session must finish without the model returning.
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(hanging.started, isTrue, reason: 'advisor call is in flight');
+    engine.cancel();
+    final reason = await session
+        .timeout(const Duration(seconds: 2), onTimeout: () {
+      fail('cancel did not interrupt the in-flight advisor call');
+    });
+
+    expect(reason, AutoTuneStopReason.cancelled);
+    expect(sink.finishedReason, AutoTuneStopReason.cancelled);
+    // Tokens streamed after the cancel are dropped, not surfaced.
+    hanging.emitLateToken('late');
+    expect(sink.tokens, isNot(contains('late')));
+  });
+
   test('enrichment records coverage numbers on the metrics', () {
     final enriched = enrichSynthesizerResult(
       result: _result(runId: 'r0', success: true),
@@ -1011,6 +1049,53 @@ RecommendationService _scripted(List<RecommendationResult> results) {
   final client = LlmClient(host: 'localhost:11435', model: 'gemma4:e4b');
   return _ScriptedRecommender(
     results,
+    llmClient: client,
+    insightService: LastRunInsightService(llmClient: client),
+    artifactDb: ArtifactDatabase.forTesting(NativeDatabase.memory()),
+  );
+}
+
+/// Recommender whose `recommend` never completes — the shape of a
+/// model that is still composing. Exercises the engine's cancel race.
+class _HangingRecommender extends RecommendationService {
+  _HangingRecommender({
+    required super.llmClient,
+    required super.insightService,
+    required super.artifactDb,
+  });
+
+  var started = false;
+  void Function(String token)? _onToken;
+
+  /// Simulate a token arriving from the abandoned stream after cancel.
+  void emitLateToken(String token) => _onToken?.call(token);
+
+  @override
+  Future<RecommendationResult> recommend({
+    required SynthesisManifest currentManifest,
+    required HookDecisionState currentState,
+    required CallGraph callGraph,
+    List<RoundSnapshot> history = const [],
+    OptimizationTarget? optimizationTarget,
+    RecommendationMode mode = RecommendationMode.auto,
+    List<FrontierEntry> frontier = const [],
+    RoundFeedback? feedback,
+    int maxRecommendations = RecommendationService.defaultMaxRecommendations,
+    List<SymbolGroup> symbolGroups = const [],
+    Map<String, GroupOverrideState> groupOverrides = const {},
+    void Function(String token)? onToken,
+    void Function(String chunk)? onThinking,
+    void Function(String prompt)? onPromptComposed,
+  }) {
+    started = true;
+    _onToken = onToken;
+    return Completer<RecommendationResult>().future;
+  }
+}
+
+_HangingRecommender _hanging() {
+  final client = LlmClient(host: 'localhost:11435', model: 'gemma4:e4b');
+  return _HangingRecommender(
     llmClient: client,
     insightService: LastRunInsightService(llmClient: client),
     artifactDb: ArtifactDatabase.forTesting(NativeDatabase.memory()),

@@ -114,7 +114,7 @@ are injected interfaces:
   `AcceptAllReviewPolicy` (accept everything, never retry); the UI plugs in
   `UiReviewPolicy` (`emulator_ui/.../synthesize/ui_review_policy.dart`),
   chosen at session start: interactive mode pauses the loop while you
-  accept, reject, or edit each recommendation in the auto-tune modal;
+  accept, reject, or edit each recommendation in the inline auto-tune panel;
   accept-all mode behaves exactly like the CLI.
 - **[Sink](@ref gloss_sink)** — where progress goes. Every phase
   transition, every streamed token, the full per-round LLM exchange, each
@@ -123,9 +123,9 @@ are injected interfaces:
   `round_NN_manifest.json`, `round_NN_trace.txt`, `summary.md` — see
   @ref storage_map) — **both surfaces run it**, so a UI session leaves the
   same artifact trail a CLI session does. The UI additionally fans the same
-  events (via `MultiSink`) into a `UiAutoTuneSink` that feeds the modal's
+  events (via `MultiSink`) into a `UiAutoTuneSink` that feeds the inline panel's
   state, persists each round's snapshot onto the project, and appends a
-  compact per-round line to the modal's session strip.
+  compact per-round line to the panel's session strip.
 
 Same engine, same rounds, same stopping conditions — different policy and
 sink. That's the whole difference between `resect-cli autotune` and clicking

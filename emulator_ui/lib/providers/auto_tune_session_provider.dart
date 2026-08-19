@@ -39,6 +39,7 @@ class AutoTuneSessionState {
     this.stopReason,
     this.errorMessage,
     this.reportDirPath,
+    this.maxRounds,
   });
 
   /// Ordered by round (0 = baseline).
@@ -55,6 +56,11 @@ class AutoTuneSessionState {
 
   /// Where the session's report files live, when known.
   final String? reportDirPath;
+
+  /// The session's configured round budget — fixes the trajectory
+  /// chart's x-axis so it doesn't rescale as rounds land. Null on
+  /// disk-hydrated sessions (the budget isn't persisted).
+  final int? maxRounds;
 
   /// The round whose overlays the session holds when finished — the
   /// highest executed count among non-reverted rounds (the engine's
@@ -81,6 +87,7 @@ class AutoTuneSessionState {
     String? stopReason,
     String? errorMessage,
     String? reportDirPath,
+    int? maxRounds,
   }) =>
       AutoTuneSessionState(
         rounds: rounds ?? this.rounds,
@@ -88,6 +95,7 @@ class AutoTuneSessionState {
         stopReason: stopReason ?? this.stopReason,
         errorMessage: errorMessage ?? this.errorMessage,
         reportDirPath: reportDirPath ?? this.reportDirPath,
+        maxRounds: maxRounds ?? this.maxRounds,
       );
 }
 
@@ -95,11 +103,12 @@ class AutoTuneSessionNotifier extends StateNotifier<AutoTuneSessionState?> {
   AutoTuneSessionNotifier() : super(null);
 
   /// A new live session is starting — clear whatever was shown.
-  void beginLive(String reportDirPath) {
+  void beginLive(String reportDirPath, {int? maxRounds}) {
     state = AutoTuneSessionState(
       rounds: const [],
       live: true,
       reportDirPath: reportDirPath,
+      maxRounds: maxRounds,
     );
   }
 
@@ -123,6 +132,7 @@ class AutoTuneSessionNotifier extends StateNotifier<AutoTuneSessionState?> {
       stopReason: stopReason,
       errorMessage: errorMessage,
       reportDirPath: s.reportDirPath,
+      maxRounds: s.maxRounds,
     );
   }
 

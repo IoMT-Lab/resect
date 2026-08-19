@@ -215,5 +215,12 @@ void main() {
         rounds: rounds, value: (r) => r.coverage, size: size);
     expect(cov[1], isNull); // null value → series gap
     expect(cov[2], const Offset(100, 50));
+
+    // Fixed round budget: the axis spans 0..maxRound, so early rounds
+    // sit at the left instead of stretching to fill the width.
+    final fixed = trajectoryOffsets(
+        rounds: rounds, value: (r) => r.fidelity, size: size, maxRound: 10);
+    expect(fixed[1]!.dx, closeTo(10, 1e-9)); // round 1 of 10 → 10% across
+    expect(fixed[2]!.dx, closeTo(20, 1e-9));
   });
 }

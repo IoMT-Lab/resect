@@ -19,6 +19,13 @@ import 'synthesis_controller.dart';
 import 'ui_auto_tune_sink.dart';
 import 'ui_review_policy.dart';
 
+/// The auto-tune orchestrator whose session the Synthesize tab is
+/// currently rendering inline (null = no active/undismissed session).
+/// Set by the Auto-tune launch flow; cleared (and the orchestrator
+/// disposed) by the panel's Close button.
+final autoTuneOrchestratorProvider =
+    StateProvider<LlmSynthesisOrchestrator?>((ref) => null);
+
 /// UI adapter for the shared [AutoTuneEngine] — the closed-loop
 /// LLM-orchestrated synthesizer.
 ///
@@ -164,7 +171,7 @@ class LlmSynthesisOrchestrator extends ChangeNotifier {
       // (a previous live run or a disk-hydrated one).
       container
           .read(autoTuneSessionProvider.notifier)
-          .beginLive(reportDir.path);
+          .beginLive(reportDir.path, maxRounds: config.maxRounds);
       final reportSink = AutoTuneReportSink(
         reportDir: reportDir,
         callGraph: callGraph,
