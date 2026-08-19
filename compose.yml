@@ -7,7 +7,7 @@
 
 services:
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.32.5
     restart: unless-stopped
     profiles: [init, normal]
     volumes: [ollama-models:/root/.ollama]
@@ -30,7 +30,7 @@ services:
     # Pulls the shipped inference + embedding models into the ollama-models
     # volume, then exits. Idempotent: already-present models report "up to date"
     # and this returns immediately on warm boots.
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.32.5
     restart: no
     profiles: [init]
     environment:
@@ -50,14 +50,14 @@ services:
         echo "Model pull complete."
 
   renode:
-    image: nexus.medmakers.io/docker/renode:latest
+    image: nexus.medmakers.io/docker/renode:1.16.1-35c28a02
     restart: unless-stopped
     profiles: [normal]
     environment:
       RENODE_COMMS_HOST: "resect"
 
   resect:
-    image: nexus.medmakers.io/docker/resect:latest
+    image: nexus.medmakers.io/docker/resect:0.2.0
     restart: no
     profiles: [normal]
     init: true
