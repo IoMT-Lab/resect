@@ -2,9 +2,13 @@ import 'package:emulator_orchestrator/data/models/recommendation.dart';
 import 'package:emulator_orchestrator/data/models/round_snapshot.dart';
 import 'package:emulator_orchestrator/services/llm/recommendation_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../providers/auto_tune_session_provider.dart';
+import '../../../widgets/metric_trajectory_chart.dart';
 import '../llm_synthesis_orchestrator.dart';
 import '../ui_auto_tune_sink.dart' show AutoTuneRoundLine;
+import 'auto_tune_session_view.dart';
 import 'recommendation_review_row.dart';
 
 /// Blocking modal dialog that hosts an active auto-tune session.
@@ -71,6 +75,9 @@ class _AutoTuneModalState extends State<AutoTuneModal> {
                   _RoundHistoryStrip(lines: roundLines),
                   const Divider(height: 1),
                 ],
+                // Live trajectory — grows as rounds land. The done body
+                // shows the full session view instead.
+                if (state is! AutoTuneFinished) const _LiveChart(),
                 Expanded(child: _body(state)),
                 const Divider(height: 1),
                 _footer(state),
@@ -571,14 +578,16 @@ class _BudgetExhaustedBody extends StatelessWidget {
   }
 }
 
-class _DoneBody extends StatelessWidget {
+class _DoneBody extends ConsumerWidget {
   const _DoneBody({required this.state});
   final AutoTuneFinished state;
 
   @override
-  Widget build(BuildContext context) => Center(
+  Widget build(BuildContext context, WidgetRef ref) {
+    final reportDir = ref.watch(
+        autoTuneSessionProvider.select((s) => s?.reportDirPath));
+    return SingleChildScrollView(
       child: Column(
-        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(_reasonHeadline(state.reason),
@@ -600,9 +609,21 @@ class _DoneBody extends StatelessWidget {
                   fontSize: 12,
                 )),
           ],
+          const SizedBox(height: 16),
+          // The full session results: trajectory chart, metric band,
+          // compact per-round report — same data the report files carry.
+          const AutoTuneSessionView(),
+          if (reportDir != null) ...[
+            const SizedBox(height: 8),
+            Text('Full reports: $reportDir',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontFamily: 'monospace',
+                    )),
+          ],
         ],
       ),
     );
+  }
 
   String _reasonHeadline(AutoTuneFinishReason r) {
     switch (r) {
@@ -669,6 +690,28 @@ class _DoneBody extends StatelessWidget {
   }
 }
 
+/// The trajectory chart shown while the session is still running —
+/// grows a point per completed round. Hidden until the first round
+/// lands; the done body replaces it with the full [AutoTuneSessionView].
+class _LiveChart extends ConsumerWidget {
+  const _LiveChart();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final session = ref.watch(autoTuneSessionProvider);
+    if (session == null || session.rounds.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: MetricTrajectoryChart(
+        rounds: sessionTrajectory(session),
+        height: 110,
+      ),
+    );
+  }
+}
+
 /// Compact per-round session strip: one monospace line per completed
 /// round (outcome, overall fidelity, executed count/delta). The full
 /// story lives in the report files the session writes to
@@ -694,11 +737,12 @@ class _RoundHistoryStrip extends StatelessWidget {
                 'R${l.round}  ${l.outcome}  '
                 'fid ${l.overallFidelity.toStringAsFixed(3)}  '
                 'exec ${l.executedCount}'
-                '${l.executedDelta != 0 ? ' (${l.executedDelta > 0 ? '+' : ''}${l.executedDelta})' : ''}',
+                '${l.executedDelta != 0 ? ' (${l.executedDelta > 0 ? '+' : ''}${l.executedDelta})' : ''}'
+                '${l.reverted ? '  REVERTED' : ''}',
                 style: TextStyle(
                   fontSize: 11,
                   fontFamily: 'monospace',
-                  color: muted,
+                  color: l.reverted ? const Color(0xFFE57373) : muted,
                 ),
               ),
           ],

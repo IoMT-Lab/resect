@@ -9,7 +9,7 @@ import 'package:emulator_orchestrator/data/models/call_graph.dart';
 import 'package:emulator_orchestrator/data/models/comms_assignment.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart'
-    show ManifestDecision;
+    show ManifestDecision, StopTiming;
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
 import 'package:emulator_orchestrator/data/repositories/emulator_repository.dart';
 import 'package:emulator_orchestrator/orchestrator/auto_tune_engine.dart';
@@ -18,6 +18,7 @@ import 'package:emulator_orchestrator/orchestrator/comms/comms_bus_service.dart'
 import 'package:emulator_orchestrator/orchestrator/comms/comms_session.dart';
 import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
 import 'package:emulator_orchestrator/orchestrator/engine/dart/dart_engine.dart';
+import 'package:emulator_orchestrator/services/analysis/artifact_census.dart';
 import 'package:emulator_orchestrator/services/analysis/fidelity_calculator.dart';
 import 'package:emulator_orchestrator/services/comms/comms_assignment_merge.dart';
 import 'package:emulator_orchestrator/services/comms/comms_classifier.dart';
@@ -69,8 +70,12 @@ void main(List<String> args) async {
         _printUsage();
         exit(1);
     }
-  } catch (e) {
+  } catch (e, st) {
+    // Print the stack too: a bare message ("Bad state: No element") is
+    // unlocatable — a live session died exactly that way and the throw
+    // site had to be hunted by hand.
     stderr.writeln('Error: $e');
+    stderr.writeln(st);
     exit(1);
   }
 
@@ -363,6 +368,20 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
     }
     stderr.writeln('Duration: ${result.totalDuration.inSeconds}s');
 
+    final stops = result.manifest?.stops ?? const <StopTiming>[];
+    if (stops.isNotEmpty) {
+      final first = stops.first;
+      stderr.writeln('First stop: ${first.elapsedSeconds.toStringAsFixed(1)}s '
+          '(${first.kind}${first.symbol != null ? ' at ${first.symbol}' : ''}) '
+          '· ${stops.length} stop(s) total');
+    }
+    final phases = result.manifest?.phaseTimings;
+    if (phases != null) {
+      stderr.writeln('Time split: hook selection '
+          '${phases.selectionSeconds.toStringAsFixed(1)}s · hook generation '
+          '${phases.generationSeconds.toStringAsFixed(1)}s');
+    }
+
     // Enrich through the one shared path (same numbers as the UI and
     // the auto-tune reports: hooked set = manifest decisions), then keep
     // the richer FidelityResult block in the JSON output from the same
@@ -399,6 +418,23 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
       outputMap['fidelity'] = fidelity.toJson();
       stderr.writeln('Fidelity: $fidelity');
     }
+
+    // Artifact census — the knowledge that fed this synthesis. The
+    // plain synthesize path has no RAG index and no overlay maps, so
+    // those buckets are empty/zero by construction.
+    final census = await computeArtifactCensus(
+      db: orchestrator.artifactDb,
+      elfHash: elfHash,
+      hookOverrides: const {},
+      hookBindings: const {},
+      commsAssignments: mergedComms,
+      symbolGroups: symbolGroups,
+    );
+    outputMap['census'] = census.toJson();
+    stderr.writeln('Artifacts: ${census.hookArtifacts} hooks (catalog) · '
+        '${census.commsAssignments} comms · ${census.groupMembers} grouped '
+        '· ${census.signatures} signatures · ${census.decompilations} '
+        'decompilations · ${census.ragChunksTotal} RAG chunks');
 
     final resultJson = const JsonEncoder.withIndent('  ').convert(outputMap);
     if (outputPath != null) {
@@ -624,13 +660,6 @@ Future<void> _runAutotune(Map<String, String> flags) async {
     var carriedHooks = const <String, String>{};
     Future<SynthesizerResult?> runSynthesis(
         AutoTuneOverlays overlays, int round) async {
-      // Fresh machine per round: `load` re-creates the Renode machine
-      // (createMachine clears any prior state) and reloads firmware, so
-      // each round is a clean synthesis process. NOT resetEmulation() —
-      // that stops the whole engine process. Warm start seeds hooks,
-      // never machine state.
-      await orchestrator.emulationController.load(replPath, elfPath);
-
       // Collect executed symbols from the RAW trace stream, deduping
       // per-round locally. `filteredTraceStream` can't be used across
       // rounds: its seen-set only resets on (re)connect, so once round 0
@@ -641,6 +670,16 @@ Future<void> _runAutotune(Map<String, String> flags) async {
         if (e.isEntry) executed.add(e.symbol);
       });
       try {
+        // Fresh machine per round: `load` re-creates the Renode machine
+        // (createMachine clears any prior state) and reloads firmware, so
+        // each round is a clean synthesis process. NOT resetEmulation() —
+        // that stops the whole engine process. Warm start seeds hooks,
+        // never machine state. INSIDE the try: a dropped Renode
+        // connection surfaces from the client as a bare state error
+        // (observed live: `Bad state: No element` killed a session at
+        // round 7); failing the round as `synthesisError` keeps the
+        // session's reports instead of crashing the process.
+        await orchestrator.emulationController.load(replPath, elfPath);
         final result = await orchestrator.runSynthesizer(
           elfPath: elfPath,
           baseImagePath: replPath,
@@ -688,6 +727,7 @@ Future<void> _runAutotune(Map<String, String> flags) async {
       callGraph: callGraph,
       startedAt: startedAt,
       manifestsDir: Directory('$projectDir/manifests'),
+      artifactLabels: await artifactLabelsFor(orchestrator.artifactDb),
       color: useColor,
     );
 
@@ -699,6 +739,7 @@ Future<void> _runAutotune(Map<String, String> flags) async {
       reviewPolicy: const AcceptAllReviewPolicy(),
       sink: sink,
       symbolGroups: symbolGroups,
+      ragStatus: () async => ragIndex.statusSnapshot(emulator),
     );
 
     stderr.writeln('Starting auto-tune: max $maxRounds rounds, '

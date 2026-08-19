@@ -623,20 +623,68 @@ void main() {
       // pickable `symbol`, so the LLM can never target it.
       final schema = await svc.buildRecommendationSchema(
         currentManifest: _manifest(decisions: [
-          _decision('main', 0),
+          _decision('app_task', 0),
           _decision('MAX_ITERATIONS_REACHED', 1),
         ]),
         currentState: _emptyState,
-        callGraph: _callGraph(['main']), // sentinel absent from the graph
+        callGraph: _callGraph(['app_task']), // sentinel absent from the graph
         mode: RecommendationMode.job2Coverage,
         frontier: const [],
       );
       final symbol = propsOf(branchFor(schema, 'set_forced_override'))[
           'symbol']! as Map<String, Object?>;
       final symEnum = (symbol['enum']! as List).cast<String>();
-      expect(symEnum, contains('main'));
+      expect(symEnum, contains('app_task'));
       expect(symEnum, isNot(contains('MAX_ITERATIONS_REACHED')),
           reason: 'a symbol not in the call graph must be unrepresentable');
+      await db.close();
+    });
+
+    test('parse-time filter drops overrides and generated hooks on '
+        'protected entry points, keeps clears', () async {
+      final db = await _seedDb(const []);
+      final svc = _makeService(db);
+      const raw = '{"prose":"p","recommendations":['
+          '{"kind":"set_forced_override","rationale":"r","symbol":"main","artifact_id":1},'
+          '{"kind":"generate_custom_hook","rationale":"r","symbol":"Reset_Handler"},'
+          '{"kind":"clear_forced_override","rationale":"r","symbol":"main"},'
+          '{"kind":"set_forced_override","rationale":"r","symbol":"app_task","artifact_id":1}'
+          ']}';
+      final result = svc.parseOutputForTest(raw,
+          validSymbols: {'main', 'Reset_Handler', 'app_task'});
+      expect(result.parseFailure, isFalse);
+      expect(result.recommendations, hasLength(2));
+      expect(result.recommendations[0], isA<ClearForcedOverride>());
+      expect((result.recommendations[1] as SetForcedOverride).symbol,
+          'app_task');
+      await db.close();
+    });
+
+    test('symbol enum excludes protected entry points even when they are '
+        'on the frontier or in decisions', () async {
+      final db = await _seedDb(const []);
+      final svc = _makeService(db);
+      final schema = await svc.buildRecommendationSchema(
+        currentManifest: _manifest(decisions: [
+          _decision('main', 0),
+          _decision('app_task', 1),
+        ]),
+        currentState: _emptyState,
+        callGraph: _callGraph(['main', 'Reset_Handler', 'app_task', 'leaf']),
+        mode: RecommendationMode.job2Coverage,
+        frontier: const [
+          FrontierEntry(symbol: 'main', unexecutedCallees: ['leaf']),
+        ],
+      );
+      final symbol = propsOf(branchFor(schema, 'set_forced_override'))[
+          'symbol']! as Map<String, Object?>;
+      final symEnum = (symbol['enum']! as List).cast<String>();
+      expect(symEnum, isNot(contains('main')),
+          reason: 'forcing an entry point deletes the program — '
+              'unrepresentable at the decoder');
+      expect(symEnum, isNot(contains('Reset_Handler')));
+      expect(symEnum, contains('app_task'));
+      expect(symEnum, contains('leaf'));
       await db.close();
     });
 
@@ -786,11 +834,21 @@ void main() {
               symbol: 'main', unexecutedCallees: <String>['blocker']),
         ],
       );
-      // The four playbook moves.
-      expect(prompt, contains('LEAF POLLS'));
-      expect(prompt, contains('WRAPPER-SKIP'));
+      // The principle + the playbook moves.
+      expect(prompt, contains('PRINCIPLE: a hook STANDS IN'));
+      expect(prompt, contains('SPIN RULE'));
+      expect(prompt, contains('VALUE CHOICE'));
+      expect(prompt, contains('WRAPPER-SKIP — AN EXPERIMENT'));
       expect(prompt, contains('HANDS OFF'));
       expect(prompt, contains('BOUNDARY ONLY'));
+      // Wrapper-skip states its cost and the revert contract.
+      expect(prompt, contains('deletes its whole body'));
+      expect(prompt, contains('reverted'));
+      // The void-enable poison is named.
+      expect(prompt, contains('NEVER be forced to "Return 0" as a skip'));
+      // One recommendation per symbol.
+      expect(prompt,
+          contains('never more than one recommendation for the same symbol'));
       // Batch allowance replaces the throttle phrasing.
       expect(prompt, contains('up to 10 recommendations'));
       expect(prompt, isNot(contains('one or a small number')));
@@ -891,7 +949,9 @@ void main() {
       await db.close();
     });
 
-    test('escalation task framing replaces the playbook', () async {
+    test(
+        'escalation task states the cost + revert contract and keeps '
+        'the hands-off/boundary cautions', () async {
       final db = await _seedDb(const []);
       final svc = _makeService(db);
       final prompt = await svc.composePrompt(
@@ -906,9 +966,84 @@ void main() {
         ),
       );
       expect(prompt, contains('ESCALATION ROUND'));
-      expect(prompt, isNot(contains('LEAF POLLS')),
-          reason: 'the playbook is replaced, not appended — leaf-poll '
-              'guidance is what the model kept repeating');
+      // The unconditional batch-kill framing is gone — that exact
+      // instruction produced the observed session collapses.
+      expect(prompt, isNot(contains('EVERY stalled caller')));
+      expect(prompt, isNot(contains('is the right trade')));
+      // Cost + measure/revert contract, cautions retained.
+      expect(prompt, contains('deletes its whole body'));
+      expect(prompt, contains('start with one'));
+      expect(prompt, contains('MEASURED'));
+      expect(prompt, contains('reverts the whole round'));
+      expect(prompt, contains('HANDS OFF'));
+      expect(prompt, contains('BOUNDARY ONLY'));
+      // Leaf-poll guidance stays out of escalation rounds (the schema
+      // can't express leaf targets there anyway).
+      expect(prompt, isNot(contains('VALUE CHOICE')));
+      await db.close();
+    });
+
+    test('feedback renders refusals and reverted moves with their rules',
+        () async {
+      final db = await _seedDb(const []);
+      final svc = _makeService(db);
+      final prompt = await svc.composePrompt(
+        currentManifest: lowCoverage(),
+        currentState: _emptyState,
+        callGraph: _callGraph(['main', 'HAL_RCC_OscConfig']),
+        mode: RecommendationMode.job2Coverage,
+        feedback: const RoundFeedback(
+          coveragePrev: 25,
+          coverageNow: 25,
+          refused: [
+            SetForcedOverride(rationale: 'r', symbol: 'main', artifactId: 1),
+          ],
+          revertedMoves: [
+            SetForcedOverride(
+                rationale: 'r', symbol: 'HAL_RCC_OscConfig', artifactId: 1),
+          ],
+          revertedOutcome: 'executed fell 39 (best) → 15',
+        ),
+      );
+      expect(prompt, contains('REFUSED and NOT applied'));
+      expect(prompt, contains('set_forced_override main ← #1'));
+      expect(prompt, contains('Do not re-emit them'));
+      expect(prompt, contains('APPLIED, MEASURED, and REVERTED'));
+      expect(prompt, contains('executed fell 39 (best) → 15'));
+      expect(prompt, contains('NO LONGER in effect'));
+      expect(prompt,
+          contains('set_forced_override HAL_RCC_OscConfig ← #1'));
+      await db.close();
+    });
+
+    test('no prompt site says bare "return success"; error-sink task '
+        'names the per-kind values', () async {
+      final db = await _seedDb(const []);
+      final svc = _makeService(db);
+      // Error-sink framing: halt at a handler with a recent trace.
+      final manifest = SynthesisManifest(
+        manifestVersion: 2,
+        elfHash: 'a' * 64,
+        elfFileName: 'test.elf',
+        synthesizerRunId: 'run1',
+        result: const ManifestRunResult(
+            success: true, totalIterations: 1, durationSeconds: 1.0),
+        decisions: [_decision('HAL_I2C_Init', 0)],
+        finalExecutionSymbol: 'Error_Handler',
+        recentExecutionTrace: const ['HAL_I2C_Init', 'Error_Handler'],
+      );
+      final prompt = await svc.composePrompt(
+        currentManifest: manifest,
+        currentState: _emptyState,
+        callGraph: _callGraph(['HAL_I2C_Init', 'Error_Handler']),
+        mode: RecommendationMode.job2Coverage,
+      );
+      expect(prompt.contains('return success'), isFalse,
+          reason: '"success" names no number — the model resolves it to '
+              'Return 1, which froze a time reader live and is wrong '
+              'even for HAL status codes (HAL_OK = 0)');
+      expect(prompt, contains('0/HAL_OK'));
+      expect(prompt, contains('the value its CALLER needs'));
       await db.close();
     });
 

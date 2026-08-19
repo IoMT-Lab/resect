@@ -147,8 +147,13 @@ container invocation are in @ref cli and @ref containers.
 ## Reading a session afterwards
 
 Ask three questions, in order: What was the coverage trajectory across
-rounds (`summary.md`)? Which recommendations were applied each round, and
-did the round after them improve (`round_NN.md`)? Why did it stop —
+rounds (`summary.md` — its table also carries each round's synthesis time
+and first stop, with cumulative selection / generation / advisor time
+below)? Which recommendations were applied each round, and did the round
+after them improve (`round_NN.md` — ordered as the round's story: what
+changed going in and why, what happened (stop log + time split), results,
+why it stopped where it did, hooks in effect with human-readable artifact
+labels, frontier, and an artifact census)? Why did it stop —
 `maxRounds` means the session used its round budget, `noCoverageProgress`
 means it ran out of moves that changed anything. @ref autotune_decisions has
 the longer version, including which file to open when a recommendation looks

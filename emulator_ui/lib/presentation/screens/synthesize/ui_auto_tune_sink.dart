@@ -5,6 +5,7 @@ import 'package:emulator_orchestrator/orchestrator/auto_tune_engine.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../providers/app_providers.dart';
+import '../../../providers/auto_tune_session_provider.dart';
 import '../../../providers/autosave_provider.dart';
 import 'llm_synthesis_orchestrator.dart'
     show
@@ -24,6 +25,7 @@ class AutoTuneRoundLine {
     required this.overallFidelity,
     required this.executedCount,
     required this.executedDelta,
+    this.reverted = false,
   });
 
   final int round;
@@ -34,6 +36,11 @@ class AutoTuneRoundLine {
   /// Executed-symbol count change vs the previous reported round
   /// (0 for the first line).
   final int executedDelta;
+
+  /// True when the engine measured this round, saw coverage collapse,
+  /// and rolled its changes back — the strip marks it so a reverted
+  /// round doesn't read as a kept one.
+  final bool reverted;
 }
 
 /// [AutoTuneSink] that feeds the auto-tune modal: maps engine phases
@@ -162,7 +169,23 @@ class UiAutoTuneSink implements AutoTuneSink {
       unawaited(container.read(autosaveControllerProvider).trigger());
     }
 
-    // 3. The compact strip line.
+    // 3. Feed the session view: the folded manifest (metrics, stops,
+    //    phase timings, census) + snapshot, straight from the report —
+    //    the same record the report files are rendered from. A result
+    //    with no manifest (possible in scripted tests) has nothing for
+    //    the session view.
+    final manifest = report.result.manifest;
+    if (manifest != null) {
+      container.read(autoTuneSessionProvider.notifier).addRound(
+            AutoTuneSessionRoundRecord(
+              round: report.round,
+              manifest: manifest,
+              snapshot: snapshot,
+            ),
+          );
+    }
+
+    // 4. The compact strip line.
     final executedCount = snapshot.executedSymbols.length;
     final result = report.result;
     final outcome = result.success
@@ -177,6 +200,7 @@ class UiAutoTuneSink implements AutoTuneSink {
       executedCount: executedCount,
       executedDelta:
           _prevExecutedCount == null ? 0 : executedCount - _prevExecutedCount!,
+      reverted: report.reverted,
     ));
     _prevExecutedCount = executedCount;
   }
@@ -184,6 +208,9 @@ class UiAutoTuneSink implements AutoTuneSink {
   @override
   void finished(AutoTuneStopReason reason,
       {required int finalRound, String? errorMessage}) {
+    container
+        .read(autoTuneSessionProvider.notifier)
+        .finishLive(reason.name, errorMessage: errorMessage);
     emitState(AutoTuneFinished(
       reason: reason,
       finalRound: finalRound,

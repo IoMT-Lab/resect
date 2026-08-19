@@ -383,6 +383,13 @@ class ArtifactDatabase extends _$ArtifactDatabase {
                 t.elfHash.equals(elfHash) & t.symbolName.equals(symbolName)))
           .getSingleOrNull();
 
+  /// Count the Ghidra-extracted signatures stored for [elfHash] — 0
+  /// when extraction never ran. Used by the artifact census.
+  Future<int> countSignaturesFor(String elfHash) async =>
+      (await (select(signatures)..where((t) => t.elfHash.equals(elfHash)))
+              .get())
+          .length;
+
   /// Get every template artifact (origin='default').
   Future<List<Artifact>> getTemplates() =>
       (select(artifacts)..where((t) => t.origin.equals('default'))).get();

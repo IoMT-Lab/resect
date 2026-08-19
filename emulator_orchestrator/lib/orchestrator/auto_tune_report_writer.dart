@@ -13,10 +13,10 @@ import 'auto_tune_engine.dart';
 /// and debugged after the fact.
 ///
 /// Per round `N` (0 = baseline), under [reportDir]:
-///   - `round_NN.md`           — human-readable outcome + metrics +
-///                                coverage frontier + synthesizer
-///                                decisions + the LLM's recommendations
-///                                and rationale + what was applied.
+///   - `round_NN.md`           — the round's story: what changed going
+///                                in (and why), what happened (stop log,
+///                                time split), results, why it stopped,
+///                                hooks in effect, frontier, census.
 ///   - `round_NN_manifest.json`— the enriched manifest (also copied to
 ///                                [manifestsDir] as `<run_id>.json` when
 ///                                given, matching the UI's convention).
@@ -34,6 +34,7 @@ class AutoTuneReportSink implements AutoTuneSink {
     required this.callGraph,
     required this.startedAt,
     this.manifestsDir,
+    this.artifactLabels = const {},
     bool? color,
     void Function(String message)? log,
   })  : _log = log ?? stderr.writeln,
@@ -61,6 +62,11 @@ class AutoTuneReportSink implements AutoTuneSink {
   /// `<run_id>.json` — the same location the UI persists manifests, so
   /// reopening the project in the UI finds them.
   final Directory? manifestsDir;
+
+  /// Artifact id → human-readable effect label ("Return 1", "Stateful
+  /// increment (from 0)"…), resolved once at construction via
+  /// `artifactLabelsFor`. Ids missing from the map render as bare `#id`.
+  final Map<int, String> artifactLabels;
 
   final void Function(String message) _log;
 
@@ -172,9 +178,9 @@ class AutoTuneReportSink implements AutoTuneSink {
   // -- Console rendering -----------------------------------------------------
 
   /// The scannable, color-coded per-round block: round + outcome, run
-  /// metrics, the symbols hooked reactively during the run (halt symbol
-  /// highlighted), the LLM's recommendation + rationale, and the overlay
-  /// changes applied to reach this round.
+  /// metrics + timings, the symbols hooked reactively during the run
+  /// (halt symbol highlighted), the LLM's recommendation + rationale,
+  /// and the overlay changes applied to reach this round.
   String _consoleBlock(AutoTuneRoundReport r) {
     final manifest = r.result.manifest!;
     final m = r.metrics;
@@ -183,7 +189,9 @@ class AutoTuneReportSink implements AutoTuneSink {
     final bar = '━' * width;
 
     // Header: round + outcome badge, right-aligned.
-    final label = r.round == 0 ? ' ROUND 0  (baseline)' : ' ROUND ${r.round}';
+    final label = r.round == 0
+        ? ' ROUND 0  (baseline)'
+        : ' ROUND ${r.round}${r.reverted ? '  [REVERTED]' : ''}';
     final o = _outcome(r.result, manifest);
     final pad = (width - label.length - o.text.length).clamp(1, width);
     buf
@@ -191,20 +199,38 @@ class AutoTuneReportSink implements AutoTuneSink {
       ..writeln(_cyan(bar))
       ..writeln('${_bold(_cyan(label))}${' ' * pad}${o.colored}')
       ..writeln(_cyan(bar));
+    if (r.reverted) {
+      buf.writeln(" ${_red('REVERTED')} — coverage collapsed vs the session "
+          "best; this round's overlay changes were rolled back.");
+    }
+    for (final w in r.warnings) {
+      buf.writeln(' ${_yellow('⚠')} ${_dim(w)}');
+    }
 
-    // 3) METRICS.
-    final executed = manifest.executedSymbols ?? const [];
-    final total = callGraph.symbols.length;
-    final pct = total == 0 ? 0.0 : executed.length / total * 100;
-    final covText = '${executed.length}/$total (${pct.toStringAsFixed(1)}%)';
+    // METRICS. Coverage comes from the recorded metrics when present
+    // (single source of truth); the call-graph fallback covers old
+    // manifests.
+    final executedCount =
+        m.executedCount ?? (manifest.executedSymbols ?? const []).length;
+    final total = m.totalSymbols ?? callGraph.symbols.length;
+    final pct = total == 0 ? 0.0 : executedCount / total * 100;
+    final covText = '$executedCount/$total (${pct.toStringAsFixed(1)}%)';
     buf.writeln(' ${_bold('METRICS')}   '
         'fidelity ${_cyan(m.overallFidelity.toStringAsFixed(3))}  ·  '
         'coverage ${pct < 25 ? _yellow(covText) : _green(covText)}  ·  '
         'cov-fidelity ${m.coverageFidelity == null ? _dim('n/a') : _cyan(m.coverageFidelity!.toStringAsFixed(3))}');
+    final firstStop = manifest.stops?.isNotEmpty == true
+        ? manifest.stops!.first
+        : null;
+    final split = _timeSplit(r, manifest);
+    buf.writeln(' ${_bold('TIME')}      '
+        'synthesis ${_cyan(_secs(r.result.totalDuration.inMilliseconds / 1000.0))}'
+        '${firstStop != null ? '  ·  first stop ${_yellow(_secs(firstStop.elapsedSeconds))} ${_dim('(${_stopKind(firstStop.kind)}${firstStop.symbol != null ? ' at ${firstStop.symbol}' : ''})')}' : ''}'
+        '${split.isNotEmpty ? '  ·  $split' : ''}');
 
-    // 2) Symbols hooked reactively during the run (where execution
-    //    stopped and a hook was inserted). Pre-seeded overrides/comms/
-    //    warm-start are applied before the run and only summarized.
+    // Symbols hooked reactively during the run (where execution
+    // stopped and a hook was inserted). Pre-seeded overrides/comms/
+    // warm-start are applied before the run and only summarized.
     final reactive =
         manifest.decisions.where((d) => _reactive(d.decisionKind)).toList();
     final preseeded = manifest.decisions.length - reactive.length;
@@ -218,7 +244,7 @@ class AutoTuneReportSink implements AutoTuneSink {
       final sym = isHalt ? _red(d.symbol) : _hookColor(d.decisionKind, d.symbol);
       buf.writeln('   ${_hookGlyph(d.decisionKind)} $sym'
           '  ${_dim(manifestDecisionKindShortLabel[d.decisionKind] ?? d.decisionKind.name)}'
-          '${id != null ? _dim('  #$id') : ''}'
+          '${id != null ? '  ${_cyan(_labelFor(id))}' : ''}'
           '${isHalt ? _red('  ← halt (candidates exhausted)') : ''}');
     }
     if (preseeded > 0) {
@@ -228,7 +254,7 @@ class AutoTuneReportSink implements AutoTuneSink {
       buf.writeln('   ${_yellow('⏸ last pause: ${manifest.lastPauseSymbol}')}');
     }
 
-    // 4 + 5) The recommendation that produced this round + what changed.
+    // The recommendation that produced this round + what changed.
     final rec = r.recommendation;
     if (rec != null) {
       buf
@@ -258,9 +284,31 @@ class AutoTuneReportSink implements AutoTuneSink {
         buf.writeln('   ${_yellow('∅')} ${_recLineColored(rr)}'
             '${_dim('  (no-op — already in effect, skipped)')}');
       }
+      for (final rr in r.refusedDestructive) {
+        buf.writeln('   ${_red('✗')} ${_recLineColored(rr)}'
+            '${_dim('  (REFUSED — destructive, not applied)')}');
+      }
     }
     buf.writeln();
     return buf.toString();
+  }
+
+  /// `selection Xs · generation Ys · advisor Zs` — empty when nothing
+  /// was measured. Generation combines the synthesizer's in-run hook
+  /// authoring with the auto-tune round's custom-hook pass. The report
+  /// fields are authoritative in-memory; the manifest's folded copies
+  /// back them up when a report was rebuilt from disk.
+  String _timeSplit(AutoTuneRoundReport r, SynthesisManifest manifest) {
+    final pt = manifest.phaseTimings;
+    final hookGen = r.hookGenSeconds ?? pt?.roundHookGenSeconds;
+    final advisor = r.advisorSeconds ?? pt?.advisorSeconds;
+    final gen = (pt?.generationSeconds ?? 0) + (hookGen ?? 0);
+    final parts = <String>[
+      if (pt != null) 'selection ${_cyan(_secs(pt.selectionSeconds))}',
+      if (pt != null || hookGen != null) 'generation ${_cyan(_secs(gen))}',
+      if (advisor != null) 'advisor ${_cyan(_secs(advisor))}',
+    ];
+    return parts.join('  ·  ');
   }
 
   ({String text, String colored}) _outcome(
@@ -310,12 +358,12 @@ class AutoTuneReportSink implements AutoTuneSink {
       case SetForcedOverride(:final symbol, :final artifactId, :final scope):
         final s = (scope == null || scope.isEmpty) ? '' : _dim(' scope=$scope');
         return '${_dim('set_forced_override')} ${_bold(symbol)} '
-            '${_dim('←')} ${_cyan('#$artifactId')}$s';
+            '${_dim('←')} ${_cyan(_labelFor(artifactId))}$s';
       case ClearForcedOverride(:final symbol):
         return '${_dim('clear_forced_override')} ${_bold(symbol)}';
       case SetPreference(:final symbol, :final artifactId):
         return '${_dim('set_preference')} ${_bold(symbol)} '
-            '${_dim('←')} ${_cyan('#$artifactId')}';
+            '${_dim('←')} ${_cyan(_labelFor(artifactId))}';
       case GenerateCustomHook(:final symbol):
         return '${_magenta('generate_custom_hook')} ${_bold(symbol)}';
       case AdjustIterationCap(:final newValue):
@@ -337,37 +385,192 @@ class AutoTuneReportSink implements AutoTuneSink {
   String _cyan(String s) => _paint(s, '\x1b[1;36m');
   String _magenta(String s) => _paint(s, '\x1b[35m');
 
-  // -- Rendering -------------------------------------------------------------
+  // -- Markdown rendering ------------------------------------------------------
 
+  /// Round page, ordered as the round's story: what changed going in
+  /// (and why) → what happened (stop log + time split) → results → why
+  /// it stopped where it did → hooks in effect → frontier → census.
   String _renderRoundMarkdown(AutoTuneRoundReport report) {
     final manifest = report.result.manifest!;
     final m = report.metrics;
     final buf = StringBuffer()
       ..writeln('# Auto-tune round ${report.round}'
-          '${report.round == 0 ? ' (baseline)' : ''}')
-      ..writeln()
+          '${report.round == 0 ? ' (baseline)' : ''}'
+          ' — ${_outcomeLine(report.result, manifest)}'
+          '${report.reverted ? ' — REVERTED' : ''}')
+      ..writeln();
+    if (report.reverted) {
+      buf
+        ..writeln("**REVERTED**: this round's coverage collapsed versus "
+            'the session best; its overlay changes were measured, rolled '
+            'back, and reported to the model as poisoned. The metrics below '
+            'describe the run that triggered the revert.')
+        ..writeln();
+    }
+    for (final w in report.warnings) {
+      buf.writeln('> ⚠ $w');
+    }
+    if (report.warnings.isNotEmpty) buf.writeln();
+    buf
       ..writeln('- Run ID: `${manifest.synthesizerRunId}`')
+      ..writeln()
+      // 1) What changed going in — the moves (and reasons) that produced
+      //    this round's overlay state.
+      ..writeln('## What changed going in');
+    final rec = report.recommendation;
+    if (rec == null) {
+      buf.writeln('Nothing — baseline synthesis with the pre-seeded '
+          'overlays.');
+    } else {
+      if (rec.prose.trim().isNotEmpty) {
+        buf
+          ..writeln("**Model's summary:** ${rec.prose.trim()}")
+          ..writeln();
+      }
+      if (rec.recommendations.isEmpty) {
+        buf.writeln('The model returned no recommendations.');
+      }
+      // The model's proposals, numbered in emission order, each with its
+      // fate — so a proposal that was refused or skipped is as visible
+      // as one that landed.
+      final appliedLines =
+          report.appliedRecommendations.map(_recLineMd).toSet();
+      final skippedLines = report.skippedNoOps.map(_recLineMd).toSet();
+      final refusedLines = report.refusedDestructive.map(_recLineMd).toSet();
+      for (var i = 0; i < rec.recommendations.length; i++) {
+        final r = rec.recommendations[i];
+        final line = _recLineMd(r);
+        final fate = appliedLines.contains(line)
+            ? '— **applied**'
+            : skippedLines.contains(line)
+                ? '— skipped as a no-op (already in effect)'
+                : refusedLines.contains(line)
+                    ? '— REFUSED as destructive (engine backstop, not '
+                        'applied)'
+                    : '— not applied';
+        buf.writeln('${i + 1}. $line $fate');
+        if (r.rationale.trim().isNotEmpty) {
+          buf.writeln('   - _why:_ ${r.rationale.trim()}');
+        }
+      }
+      // Applied moves that match no proposal verbatim (edited during an
+      // interactive review) still need to be on the record.
+      final proposalLines = rec.recommendations.map(_recLineMd).toSet();
+      final edited = report.appliedRecommendations
+          .where((r) => !proposalLines.contains(_recLineMd(r)))
+          .toList();
+      if (edited.isNotEmpty) {
+        buf
+          ..writeln()
+          ..writeln('**Also applied (edited during review):**');
+        for (final r in edited) {
+          buf.writeln('- ${_recLineMd(r)}');
+        }
+      }
+    }
+    buf.writeln();
+
+    // 2) What happened — outcome, run time, the stop log, and where the
+    //    run's wall time went.
+    final stops = manifest.stops ?? const <StopTiming>[];
+    buf
+      ..writeln('## What happened')
       ..writeln('- Outcome: ${_outcomeLine(report.result, manifest)}')
       ..writeln('- Iterations: ${report.result.totalIterations}')
-      ..writeln('- Duration: ${report.result.totalDuration.inSeconds}s')
-      ..writeln();
+      ..writeln('- Synthesis time: '
+          '${_secs(report.result.totalDuration.inMilliseconds / 1000.0)}');
+    if (stops.isNotEmpty) {
+      buf.writeln('- Time to first stop: '
+          '${_secs(stops.first.elapsedSeconds)} '
+          '(${_stopKind(stops.first.kind)}'
+          '${stops.first.symbol != null ? ' at `${stops.first.symbol}`' : ''})');
+    }
+    final split = _timeSplitMd(report, manifest);
+    if (split != null) buf.writeln('- Time split: $split');
+    if (stops.isNotEmpty) {
+      buf
+        ..writeln()
+        ..writeln('Stop log (run wall time → stop condition):');
+      for (final s in stops) {
+        buf.writeln('- ${_secs(s.elapsedSeconds)} → ${_stopKind(s.kind)}'
+            '${s.symbol != null ? ' at `${s.symbol}`' : ''}');
+      }
+    }
+    buf.writeln();
 
-    // Metrics.
+    // 3) Results. Coverage from recorded metrics when present; the
+    // call-graph fallback covers old manifests.
     final executed = manifest.executedSymbols ?? const [];
-    final total = callGraph.symbols.length;
-    final pct = total == 0 ? 0.0 : (executed.length / total) * 100;
+    final executedCount = m.executedCount ?? executed.length;
+    final total = m.totalSymbols ?? callGraph.symbols.length;
+    final pct = total == 0 ? 0.0 : (executedCount / total) * 100;
     buf
-      ..writeln('## Metrics')
-      ..writeln('- Overall fidelity: ${m.overallFidelity.toStringAsFixed(3)}')
+      ..writeln('## Results')
+      ..writeln('- Fidelity: ${m.overallFidelity.toStringAsFixed(3)}')
       ..writeln('- Coverage fidelity: '
           '${m.coverageFidelity?.toStringAsFixed(3) ?? 'n/a'}')
-      ..writeln('- Symbols executed: ${executed.length} of $total '
+      ..writeln('- Coverage: $executedCount of $total symbols executed '
           '(${pct.toStringAsFixed(1)}%)')
       ..writeln('- Hooked: ${m.hookedCount} · Intact: ${m.intactCount} · '
           'Degraded: ${m.degradedCount}')
-      ..writeln();
+      ..writeln()
+      // 4) Why it stopped where it did.
+      ..writeln('## Why it stopped where it did');
+    if (report.result.success) {
+      buf.writeln('The firmware ran cleanly — no unhandled accesses left.');
+    } else {
+      if (manifest.failedSymbol != null) {
+        buf.writeln('- Halted at `${manifest.failedSymbol}` — every hook '
+            'candidate for it was tried and the access repeated.');
+      } else if (manifest.lastPauseSymbol != null) {
+        buf.writeln('- Last pause at `${manifest.lastPauseSymbol}`.');
+      }
+      if (manifest.terminationReason != null) {
+        buf.writeln('- Termination reason: '
+            '${manifest.terminationReason!.name}');
+      }
+      if (manifest.finalExecutionSymbol != null) {
+        buf.writeln('- Final symbol executing when the run ended: '
+            '`${manifest.finalExecutionSymbol}`');
+      }
+      final trace = manifest.recentExecutionTrace;
+      if (trace != null && trace.isNotEmpty) {
+        buf
+          ..writeln('- Recent call sequence (most recent last, consecutive '
+              'repeats collapsed):')
+          ..writeln('  ${_collapseTrace(trace).map((s) => '`$s`').join(' → ')}');
+      }
+    }
+    buf.writeln();
 
-    // Coverage frontier — where this run stopped expanding.
+    // 5) Hooks in effect during the run.
+    final reactive =
+        manifest.decisions.where((d) => _reactive(d.decisionKind)).toList();
+    final preseeded = manifest.decisions.length - reactive.length;
+    buf.writeln('## Hooks in effect');
+    if (manifest.decisions.isEmpty) {
+      buf.writeln('(none recorded)');
+    } else {
+      if (preseeded > 0) {
+        buf.writeln('$preseeded hook(s) were pre-seeded before the run '
+            '(overrides / comms / warm-start):');
+        for (final d in manifest.decisions
+            .where((d) => !_reactive(d.decisionKind))) {
+          buf.writeln('- ${_decisionLineMd(d)}');
+        }
+        buf.writeln();
+      }
+      buf.writeln(reactive.isEmpty
+          ? 'No hooks were inserted reactively during the run.'
+          : 'Inserted reactively during the run (where execution stopped):');
+      for (final d in reactive) {
+        buf.writeln('- ${_decisionLineMd(d)}'
+            '${manifest.failedSymbol == d.symbol ? ' ← **halt point**' : ''}');
+      }
+    }
+    buf.writeln();
+
+    // 6) Coverage frontier — where this run stopped expanding.
     final frontier = computeFrontier(
       executedSymbols: executed.toSet(),
       callGraph: callGraph,
@@ -381,68 +584,63 @@ class AutoTuneReportSink implements AutoTuneSink {
             '${e.unexecutedCallees.join(', ')}');
       }
     }
+    buf.writeln();
 
-    // Synthesizer decisions taken during the run.
-    buf
-      ..writeln()
-      ..writeln('## Synthesizer decisions this run');
-    if (manifest.decisions.isEmpty) {
-      buf.writeln('(none recorded)');
+    // 7) Artifact census — the knowledge feeding this round.
+    final census = report.census ?? manifest.census;
+    buf.writeln('## Artifact census');
+    if (census == null) {
+      buf.writeln('(not computed)');
     } else {
-      for (final d in manifest.decisions) {
-        final id = d.appliedHook.artifactId;
-        final kindLabel =
-            manifestDecisionKindShortLabel[d.decisionKind] ?? d.decisionKind.name;
-        buf.writeln('- `${d.symbol}` ← $kindLabel '
-            '(${d.decisionSource})${id != null ? ' applied=#$id' : ''}');
-      }
-    }
-
-    // LLM recommendations that produced THIS round (empty on baseline).
-    buf
-      ..writeln()
-      ..writeln('## LLM recommendations');
-    final rec = report.recommendation;
-    if (rec == null) {
-      buf.writeln('No LLM call — baseline run.');
-    } else {
-      if (rec.prose.trim().isNotEmpty) {
-        buf
-          ..writeln('**Summary:** ${rec.prose.trim()}')
-          ..writeln();
-      }
-      if (rec.recommendations.isEmpty) {
-        buf.writeln('(model returned no recommendations)');
-      } else {
-        for (var i = 0; i < rec.recommendations.length; i++) {
-          final r = rec.recommendations[i];
-          buf.writeln('${i + 1}. ${_recLine(r)}');
-          if (r.rationale.trim().isNotEmpty) {
-            buf.writeln('   - _${r.rationale.trim()}_');
-          }
-        }
-      }
-      buf
-        ..writeln()
-        ..writeln('**Applied this round (auto-accepted):**');
-      if (report.appliedRecommendations.isEmpty) {
-        buf.writeln('(none)');
-      } else {
-        for (final r in report.appliedRecommendations) {
-          buf.writeln('- ${_recLine(r)}');
-        }
-      }
-      if (report.skippedNoOps.isNotEmpty) {
-        buf
-          ..writeln()
-          ..writeln('**Skipped as no-ops (already in effect):**');
-        for (final r in report.skippedNoOps) {
-          buf.writeln('- ${_recLine(r)}');
-        }
-      }
+      _writeCensus(buf, census);
     }
     buf.writeln();
     return buf.toString();
+  }
+
+  void _writeCensus(StringBuffer buf, ArtifactCensus c) {
+    buf
+      ..writeln('- Hook artifacts in the catalog: ${c.hookArtifacts} '
+          '(whole catalog — not yet firmware-scoped)')
+      ..writeln('- Hook bindings: ${c.hookBindings}')
+      ..writeln('- Forced overrides: ${c.forcedOverrides}')
+      ..writeln('- Comms assignments: ${c.commsAssignments}')
+      ..writeln('- Symbols in recognized groups: ${c.groupMembers}')
+      ..writeln('- Ghidra signatures: ${c.signatures} · '
+          'decompilations: ${c.decompilations}');
+    if (c.ragChunksByKind.isEmpty) {
+      buf.writeln('- RAG chunks: 0 (no index)');
+    } else {
+      final kinds = c.ragChunksByKind.entries
+          .map((e) => '${e.key} ${e.value}')
+          .join(', ');
+      buf.writeln('- RAG chunks: ${c.ragChunksTotal} ($kinds)');
+    }
+    buf.writeln('- Total artifacts feeding synthesis: ${c.total}');
+  }
+
+  String _decisionLineMd(ManifestDecision d) {
+    final id = d.appliedHook.artifactId;
+    final kindLabel =
+        manifestDecisionKindShortLabel[d.decisionKind] ?? d.decisionKind.name;
+    return '`${d.symbol}` ← ${id != null ? '${_labelFor(id)} ' : ''}'
+        '($kindLabel, ${d.decisionSource})';
+  }
+
+  String? _timeSplitMd(AutoTuneRoundReport r, SynthesisManifest manifest) {
+    final pt = manifest.phaseTimings;
+    final hookGen = r.hookGenSeconds ?? pt?.roundHookGenSeconds;
+    final advisor = r.advisorSeconds ?? pt?.advisorSeconds;
+    if (pt == null && advisor == null && hookGen == null) {
+      return null;
+    }
+    final gen = (pt?.generationSeconds ?? 0) + (hookGen ?? 0);
+    final parts = <String>[
+      if (pt != null) 'hook selection ${_secs(pt.selectionSeconds)}',
+      if (pt != null || hookGen != null) 'hook generation ${_secs(gen)}',
+      if (advisor != null) 'advisor ${_secs(advisor)}',
+    ];
+    return parts.join(' · ');
   }
 
   String _renderSummaryMarkdown(
@@ -460,16 +658,94 @@ class AutoTuneReportSink implements AutoTuneSink {
       ..writeln()
       ..writeln('## Per-round trajectory')
       ..writeln()
-      ..writeln('| Round | Outcome | Overall fid | Coverage fid | Executed |')
-      ..writeln('|------:|---------|------------:|-------------:|---------:|');
+      ..writeln('| Round | Outcome | Overall fid | Coverage fid | Executed '
+          '| Time | First stop |')
+      ..writeln('|------:|---------|------------:|-------------:|---------:'
+          '|-----:|-----------|');
+    // The session's BEST round by executed count (reverted rounds can't
+    // be best — their changes were rolled back).
+    var bestRound = -1;
+    var bestExecuted = -1;
+    for (final r in _rounds) {
+      final executed = r.result.manifest!.executedSymbols?.length ?? 0;
+      if (!r.reverted && executed > bestExecuted) {
+        bestExecuted = executed;
+        bestRound = r.round;
+      }
+    }
     for (final r in _rounds) {
       final manifest = r.result.manifest!;
       final executed = manifest.executedSymbols?.length ?? 0;
-      buf.writeln('| ${r.round} '
+      final marks = [
+        if (r.round == bestRound) 'BEST',
+        if (r.reverted) 'REVERTED',
+      ].join(', ');
+      final firstStop = manifest.stops?.isNotEmpty == true
+          ? manifest.stops!.first
+          : null;
+      buf.writeln('| ${r.round}${marks.isEmpty ? '' : ' ($marks)'} '
           '| ${_outcomeShort(r.result, manifest)} '
           '| ${r.metrics.overallFidelity.toStringAsFixed(3)} '
           '| ${r.metrics.coverageFidelity?.toStringAsFixed(3) ?? 'n/a'} '
-          '| $executed |');
+          '| $executed '
+          '| ${_secs(r.result.totalDuration.inMilliseconds / 1000.0)} '
+          '| ${firstStop == null ? '—' : '${_secs(firstStop.elapsedSeconds)} ${_stopKind(firstStop.kind)}${firstStop.symbol != null ? ' at `${firstStop.symbol}`' : ''}'} |');
+    }
+    if (bestRound >= 0) {
+      buf
+        ..writeln()
+        ..writeln("The session finished holding round $bestRound's overlays "
+            "(best: $bestExecuted executed). Reverted rounds' changes are "
+            'NOT in effect.');
+    }
+
+    // Cumulative time — where the whole session's wall clock went.
+    var synth = 0.0, selection = 0.0, generation = 0.0, advisor = 0.0;
+    var haveSplit = false;
+    for (final r in _rounds) {
+      synth += r.result.totalDuration.inMilliseconds / 1000.0;
+      final pt = r.result.manifest!.phaseTimings;
+      if (pt != null) {
+        selection += pt.selectionSeconds;
+        generation += pt.generationSeconds;
+        haveSplit = true;
+      }
+      final hookGen = r.hookGenSeconds ?? pt?.roundHookGenSeconds;
+      if (hookGen != null) {
+        generation += hookGen;
+        haveSplit = true;
+      }
+      final adv = r.advisorSeconds ?? pt?.advisorSeconds;
+      if (adv != null) {
+        advisor += adv;
+        haveSplit = true;
+      }
+    }
+    buf
+      ..writeln()
+      ..writeln('## Cumulative time')
+      ..writeln()
+      ..writeln('- Total synthesis (emulation) time: ${_secs(synth)} across '
+          '${_rounds.length} round(s)');
+    if (haveSplit) {
+      buf
+        ..writeln('- Hook selection: ${_secs(selection)}')
+        ..writeln('- Hook generation (LLM authoring): ${_secs(generation)}')
+        ..writeln('- Advisor (recommendation) calls: ${_secs(advisor)}');
+    }
+
+    // Census — the final round's counts stand for the session's
+    // cumulative knowledge (the catalog and index only grow).
+    final lastCensus = _rounds.isEmpty
+        ? null
+        : (_rounds.last.census ?? _rounds.last.result.manifest!.census);
+    if (lastCensus != null) {
+      buf
+        ..writeln()
+        ..writeln('## Artifact census (final round — cumulative: these '
+            'stores only grow during a session)')
+        ..writeln();
+      _writeCensus(buf, lastCensus);
     }
 
     buf
@@ -507,15 +783,17 @@ class AutoTuneReportSink implements AutoTuneSink {
     return 'no-converge';
   }
 
-  static String _recLine(Recommendation r) {
+  /// Plain-markdown recommendation line, label-first with the artifact
+  /// id retained for tooling: `` set_forced_override `sym` ← "Return 1" (#2) ``.
+  String _recLineMd(Recommendation r) {
     switch (r) {
       case SetForcedOverride(:final symbol, :final artifactId, :final scope):
         final s = (scope == null || scope.isEmpty) ? '' : ' scope=$scope';
-        return 'set_forced_override `$symbol` ← #$artifactId$s';
+        return 'set_forced_override `$symbol` ← ${_labelFor(artifactId)}$s';
       case ClearForcedOverride(:final symbol):
         return 'clear_forced_override `$symbol`';
       case SetPreference(:final symbol, :final artifactId):
-        return 'set_preference `$symbol` ← #$artifactId';
+        return 'set_preference `$symbol` ← ${_labelFor(artifactId)}';
       case GenerateCustomHook(:final symbol, :final intent):
         final i = (intent == null || intent.isEmpty) ? '' : ' intent="$intent"';
         return 'generate_custom_hook `$symbol`$i';
@@ -526,6 +804,43 @@ class AutoTuneReportSink implements AutoTuneSink {
       case ClearGroupOverride(:final scope):
         return 'clear_group_override `$scope`';
     }
+  }
+
+  /// `"Return 1" (#2)` when the id has a known label, `#2` otherwise.
+  String _labelFor(int id) {
+    final label = artifactLabels[id];
+    return label == null ? '#$id' : '"$label" (#$id)';
+  }
+
+  static String _secs(double s) => '${s.toStringAsFixed(1)}s';
+
+  static String _stopKind(String kind) {
+    switch (kind) {
+      case 'unhandled_access':
+        return 'unhandled access';
+      case 'clean_exit':
+        return 'clean exit';
+      default:
+        return kind;
+    }
+  }
+
+  /// Collapse consecutive repeats: `[a, b, b, b, c]` → `[a, b ×3, c]`.
+  static List<String> _collapseTrace(List<String> trace) {
+    final out = <String>[];
+    String? prev;
+    var count = 0;
+    for (final s in trace) {
+      if (s == prev) {
+        count++;
+        continue;
+      }
+      if (prev != null) out.add(count > 1 ? '$prev ×$count' : prev);
+      prev = s;
+      count = 1;
+    }
+    if (prev != null) out.add(count > 1 ? '$prev ×$count' : prev);
+    return out;
   }
 
   static String _pad(int round) => round.toString().padLeft(2, '0');

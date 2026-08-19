@@ -3,6 +3,7 @@ import 'package:emulator_orchestrator/data/models/hook_binding.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app_providers.dart';
+import 'auto_tune_session_provider.dart';
 import 'config_providers.dart';
 
 /// Owns the bidirectional sync between an [Emulator] project and the live
@@ -49,6 +50,10 @@ class AutosaveController {
   void restoreArtifacts(Emulator? emulator) {
     final result = emulator?.synthesisResult;
     ref.read(synthesisResultProvider.notifier).state = result;
+    // Rehydrate the newest persisted auto-tune session (if any) so the
+    // Synthesize tab's session view survives a reopen — including
+    // sessions run headlessly against the same project.
+    ref.read(autoTuneSessionProvider.notifier).hydrateFromDisk(emulator);
     ref.read(executedSymbolsProvider.notifier).state =
         Set<String>.from(emulator?.executedSymbols ?? const <String>{});
     ref.read(lastRunInsightProvider.notifier).state = emulator?.lastRunInsight;

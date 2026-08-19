@@ -83,6 +83,47 @@ class RecommendationDiagnostic {
       'thinkingChunks=$thinkingChunks';
 }
 
+/// Symbols the recommendation pipeline must never let auto-tune target
+/// with a forced override, preference, or generated hook: skipping an
+/// entry point deletes the entire program under it (observed live:
+/// `main` forced to Return 0 left 3 executed symbols and a dead
+/// session). Enforced twice — subtracted from the constrained-decoding
+/// symbol enum, and dropped again at parse time because the decoder's
+/// enforcement is soft. `clear_forced_override` is exempt (removing an
+/// override is always safe).
+const kProtectedSymbols = {'main', 'Reset_Handler', '_start'};
+
+/// The one principle every playbook step is an instance of, stated
+/// once so the steps read as applications of it rather than a rule
+/// pile.
+const _playbookPrinciple =
+    'PRINCIPLE: a hook STANDS IN for the function it replaces — pick '
+    'the behavior its callers would observe from the original: flags '
+    'read as states, counters and time ADVANCE between calls, status '
+    'returns use the callee\'s own convention (HAL-style success is '
+    'usually 0/HAL_OK), and a skipped body means everything beneath '
+    'it never happens. Every round is MEASURED: a round that makes '
+    'coverage collapse is reverted wholesale and remembered.';
+
+/// Playbook cautions rendered on BOTH normal and escalation rounds —
+/// escalation used to replace the playbook wholesale, which deleted
+/// exactly these rules on the rounds that did the damage.
+const _playbookStepHandsOff =
+    'HANDS OFF: comms-virtualized symbols (annotated `comms:*`) are '
+    'already covered as a bus — never force them individually. Void '
+    'register-writers (annotated "void register writes") gain nothing '
+    'from a forced return value — skip them. Void enable/disable-style '
+    'writers (`*_Enable`, `*_Disable`, `*_ForceReset`) must NEVER be '
+    'forced to "Return 0" as a skip — the peripheral simply never gets '
+    'enabled; use the stateful write artifacts if they need anything, '
+    'otherwise leave them intact.';
+
+const _playbookStepBoundary =
+    'BOUNDARY ONLY: target only executed symbols or direct unreached '
+    'callees on the frontier. A forced override on a symbol execution '
+    'never reaches does nothing.';
+
+
 /// Structured feedback the auto-tune engine threads into the NEXT
 /// round's prompt after a round produced no coverage movement (or
 /// every recommendation was filtered as a no-op). Rendered as a
@@ -97,6 +138,9 @@ class RoundFeedback {
     required this.coverageNow,
     this.stalledCallers = const [],
     this.noOpSkipped = const [],
+    this.refused = const [],
+    this.revertedMoves = const [],
+    this.revertedOutcome,
   });
 
   /// Executed-symbol count from the round before last.
@@ -113,6 +157,17 @@ class RoundFeedback {
   /// Recommendations from the last round that were dropped because
   /// they were already in effect (no-ops).
   final List<Recommendation> noOpSkipped;
+
+  /// Recommendations the ENGINE refused outright (entry-point targets —
+  /// deleting the program is never right). Rendered so the model knows
+  /// they were rejected — not silently lost — and why.
+  final List<Recommendation> refused;
+
+  /// The previous round's applied moves, when that round was MEASURED,
+  /// found to have collapsed coverage, and rolled back wholesale.
+  /// [revertedOutcome] carries the measurement ("executed fell 39 → 15").
+  final List<Recommendation> revertedMoves;
+  final String? revertedOutcome;
 }
 
 /// What [RecommendationService.recommend] returns.
@@ -467,36 +522,75 @@ class RecommendationService {
           buf.writeln('  - ${_formatRecommendationCompact(r)}');
         }
       }
+      if (feedback.refused.isNotEmpty) {
+        buf.writeln(
+            '- These recommendations were REFUSED and NOT applied '
+            '(entry points are never overridable — skipping them '
+            'deletes the program). Do not re-emit them:');
+        for (final r in feedback.refused) {
+          buf.writeln('  - ${_formatRecommendationCompact(r)}');
+        }
+      }
+      if (feedback.revertedMoves.isNotEmpty) {
+        buf.writeln(
+            '- These moves were APPLIED, MEASURED, and REVERTED — '
+            '${feedback.revertedOutcome ?? 'coverage collapsed'} — so '
+            'they are NO LONGER in effect. Do not re-emit them as-is; '
+            'if a TARGET was right, try a different artifact/value on '
+            'it (e.g. a value that advances instead of a constant):');
+        for (final r in feedback.revertedMoves) {
+          buf.writeln('  - ${_formatRecommendationCompact(r)}');
+        }
+      }
       if (feedback.stalledCallers.isNotEmpty) {
         // Render each candidate with its unreached-callee count from
-        // the frontier. NOTE the count is NOT a ranking: the spinning
+        // the frontier PLUS the facts the model needs to weigh the
+        // skip's cost: whether the caller ran cleanly, and which
+        // working overrides live beneath it (a Return-0 skip disables
+        // them). NOTE the callee count is NOT a ranking: the spinning
         // wrapper is often the one with FEW unreached callees (it
         // stalls at its first internal gate), while high counts just
         // mean a big wrapper.
+        final executedSet =
+            currentManifest.executedSymbols?.toSet() ?? <String>{};
+        final overrideSymbols = {
+          for (final d in currentState.decisions)
+            if (d.kind == HookDecisionKind.override) d.symbol,
+        };
         String detail(String s) {
+          final notes = <String>[];
           for (final e in frontier) {
             if (e.symbol == s) {
-              return '`$s` (${e.unexecutedCalleeCount} unreached '
-                  'callees)';
+              notes.add('${e.unexecutedCalleeCount} unreached callees');
+              break;
             }
           }
-          return '`$s`';
+          if (executedSet.contains(s)) notes.add('ran cleanly this round');
+          final beneath = overriddenHooksBeneath(callGraph, s, overrideSymbols);
+          if (beneath.isNotEmpty) {
+            notes.add('working hooks beneath it: '
+                '${beneath.take(3).join(', ')}'
+                '${beneath.length > 3 ? ', …' : ''} — a Return-0 skip '
+                'disables them');
+          }
+          return notes.isEmpty ? '`$s`' : '`$s` (${notes.join('; ')})';
         }
 
         buf.writeln(
             '- Leaf-level fixes are already in effect and coverage is '
-            'frozen. The blocker is an INLINED busy-wait inside one '
+            'frozen. The blocker may be an INLINED busy-wait inside one '
             'of these executed callers (no leaf function to hook): '
             '${feedback.stalledCallers.map(detail).join(', ')}.');
         buf.writeln(
-            '- ESCALATE NOW: do not re-recommend leaf polls — emit '
-            '`set_forced_override` with the "Return 0" artifact for '
-            'EVERY stalled caller you can defend, in one batch. '
-            'The callee count is NOT a ranking — do not prefer the '
-            'large wrappers; the spin can hide in any of them. '
-            "Skipping a wrapper's body unblocks everything after it; "
-            'losing the coverage inside one wrapper to reach the code '
-            'behind it is the right trade.');
+            '- ESCALATE: skip the stalled caller(s) most consistent '
+            'with the halt evidence (prefer ones at or near the end of '
+            'the "Recent call sequence") via `set_forced_override` with '
+            'the "Return 0" artifact. Skipping a caller deletes its '
+            'whole body: every function and working hook beneath it '
+            'stops executing — so prefer starting with ONE and batch '
+            'more only when each is individually defensible. The round '
+            'is MEASURED: if coverage collapses it is reverted '
+            'wholesale and remembered. Do not re-recommend leaf polls.');
       }
     }
 
@@ -512,22 +606,31 @@ class RecommendationService {
     buf.writeln('## Your task');
     final escalating = feedback != null && feedback.stalledCallers.isNotEmpty;
     if (escalating) {
-      // Escalation replaces the playbook outright. The previous
-      // round's leaf fixes are in effect and coverage is frozen — a
-      // repeat is worthless, and the schema restricts symbols to the
-      // stalled callers so the model cannot produce one.
+      // Escalation AUGMENTS the playbook rather than replacing it: the
+      // batch-kill instruction this section used to carry produced the
+      // observed self-destruction (working init callers force-returned
+      // 0, their subtree overrides dead, coverage collapsing round over
+      // round). One skip per round, chosen against the halt evidence,
+      // with the playbook's cautions still in force.
       buf.writeln(
           'ESCALATION ROUND. Every leaf-level fix from the previous '
-          'round is already in effect and coverage did not move — the '
-          'blocker is an INLINED busy-wait inside one of the stalled '
-          'callers listed in "## Feedback from last round" (the '
-          'response schema only accepts those symbols this round). '
-          'Emit `set_forced_override` with the "Return 0" artifact '
-          'for the stalled caller(s) most likely to be spinning — '
-          "skipping a wrapper's body unblocks everything after it. "
-          "If a caller's behavior can't be faked by returning 0, "
-          'use `generate_custom_hook` for it instead. Do NOT '
-          're-recommend leaf polls.');
+          'round is already in effect and coverage did not move. The '
+          'response schema only accepts the stalled callers listed in '
+          '"## Feedback from last round" this round; the likely blocker '
+          'is a busy-wait INLINED inside one of them. Skipping a caller '
+          'with "Return 0" deletes its whole body — every function it '
+          'calls, including working hooks beneath it, stops executing, '
+          'and a caller that completed cleanly is NOT proof it contains '
+          'the spin. Prefer the caller most consistent with the halt '
+          'evidence (at or near the end of the "Recent call sequence"); '
+          'start with one, and batch more skips only when each is '
+          'individually defensible — the round is MEASURED, and a '
+          'coverage collapse reverts the whole round and is remembered. '
+          "If a caller's behavior cannot be faked by returning 0, use "
+          '`generate_custom_hook` for it instead. Do not re-recommend '
+          'leaf polls. These cautions still apply:');
+      buf.writeln(_playbookStepHandsOff);
+      buf.writeln(_playbookStepBoundary);
     } else if (resolvedMode == RecommendationMode.job1Authorship &&
         haltSymbol != null) {
       // Job 1 — reactive. An unhandled access fired at `$haltSymbol`
@@ -557,8 +660,8 @@ class RecommendationService {
             '`$haltSymbol`, which looks like an error/fault handler — an '
             'init or check FAILED and the firmware bailed to it. Do NOT '
             'hook the handler. In the "Recent call sequence", the call '
-            'just before `$haltSymbol` is the one that failed — force '
-            'THAT call to return success so execution continues instead '
+            'just before `$haltSymbol` is the one that failed — '
+            '$kValueForSuccessGuidance — so execution continues instead '
             'of diverting to the handler. Then apply this playbook:');
       } else {
         buf.writeln(
@@ -579,49 +682,55 @@ class RecommendationService {
           'hook is NOT a wasted round. And if the stall symbol is an '
           'error/fault handler (e.g. `Error_Handler`, `*Fault*`), do NOT '
           'hook it — read the "Recent call sequence" line, find the call '
-          'that ran just before it (that call failed), and force THAT '
-          'call to return success instead.');
+          'that ran just before it (that call failed), and '
+          '$kValueForSuccessGuidance.');
+      buf.writeln(_playbookPrinciple);
       buf.writeln(
-          '1. LEAF POLLS: the frontier annotations tell you what each '
-          'callee IS — status poll, clock getter, counter, void '
-          'writes — from its decompiled body; trust them over name '
-          'guessing. A status poll busy-waits forever in emulation — '
-          'force it with the RIGHT value: ready/active flags (names '
-          'like `IsReady`, `IsActiveFlag_*`) → the "Return 1" '
-          'artifact; busy flags → "Return 0"; clock/frequency getters '
-          '→ an artifact returning a realistic core-clock frequency '
-          'in Hz if the catalog has one — returning 1 breaks '
-          'baud/prescaler math, so if no such artifact exists use '
-          '`generate_custom_hook` with intent "return the chip\'s '
-          'core clock frequency in Hz"; tick/time counters → the '
-          'incrementing artifact so time advances. Annotations also '
-          'carry status: promote the ones marked "NOT applied this '
-          'run" to forced overrides — that is usually the single '
-          'best move. Ones marked "ALREADY IN EFFECT" are done '
-          '(EXCEPT the stall point in step 0, whose hook may be '
-          'wrong); recommending them again is a wasted round.');
+          '1. SPIN RULE: if the "Recent call sequence" line shows the '
+          'SAME function repeated (rendered `(×N)`) and that function '
+          'is NOT already hooked, the firmware is parked in a wait '
+          'loop polling it. Force THAT function first — this beats '
+          'every other move when it applies. The loop exits on the '
+          'ANSWER you make the function give, so pick the value per '
+          'step 2.');
       buf.writeln(
-          '2. WRAPPER-SKIP: if the leaf polls are already forced and '
-          'coverage still does not move, the spin is INLINED inside '
-          'an executed frontier caller (an `*_Init`/`*Config` '
-          'function with unreached callees). Force that CALLER itself '
-          'with "Return 0" to skip its body — the code after it is '
-          'worth far more than the code inside it.');
+          '2. VALUE CHOICE: decide what a function RETURNS before '
+          'picking its artifact. `Is*`/`*ActiveFlag*`/`*Ready*` '
+          'checks → "Return 1" for ready/active, "Return 0" for '
+          'busy. `Get*`/`Read*` names return a VALUE, never a '
+          'success code: time/tick/count readers → the "Stateful '
+          'increment" artifact (the value must ADVANCE between '
+          'calls); clock/frequency getters → a realistic Hz value '
+          '(via `generate_custom_hook` if the catalog lacks one); '
+          'unsure what it reads → `generate_custom_hook`, never a '
+          'guessed constant. Frontier annotations (present only when '
+          'Ghidra extraction ran — headless sessions usually have '
+          'none) come from decompiled bodies and outrank the name; '
+          'with no annotation the NAME is your only evidence — '
+          'reason from it. Promote annotations marked "NOT applied '
+          'this run" to forced overrides; ones marked "ALREADY IN '
+          'EFFECT" are done (except the step-0 stall point) — '
+          'repeating them wastes the round.');
       buf.writeln(
-          '3. HANDS OFF: comms-virtualized symbols (annotated '
-          '`comms:*`) are already covered as a bus — never force '
-          'them individually. Void register-writers (annotated '
-          '"void register writes") gain nothing from a forced return '
-          'value — skip them.');
-      buf.writeln(
-          '4. BOUNDARY ONLY: target only executed symbols or direct '
-          'unreached callees on the frontier. A forced override on a '
-          'symbol execution never reaches does nothing.');
+          '3. WRAPPER-SKIP — AN EXPERIMENT, PAID FOR BY REVERT: when '
+          'steps 1-2 are exhausted and coverage still does not move, '
+          'the spin may be INLINED inside an executed frontier '
+          'caller. Skipping a caller with "Return 0" deletes its '
+          'whole body — everything beneath it, including working '
+          'hooks, stops happening. Prefer the caller the halt '
+          'evidence places the stall INSIDE (at or near the end of '
+          'the "Recent call sequence"). Batch only skips you can '
+          'individually defend: the round is MEASURED, and if '
+          'coverage collapses the whole round is reverted and '
+          'remembered.');
+      buf.writeln(_playbookStepHandsOff);
+      buf.writeln(_playbookStepBoundary);
       buf.writeln(
           'You may emit up to $maxRecommendations recommendations — '
           'batch every defensible fix for this round (e.g. force ALL '
-          'the ready-flags on the frontier at once). Do not pad: '
-          'every entry needs its own defensible rationale.');
+          'the ready-flags on the frontier at once), never more than '
+          'one recommendation for the same symbol. Do not pad: every '
+          'entry needs its own defensible rationale.');
     } else {
       buf.writeln(
           'Based on the run metrics, decisions, and available hook '
@@ -655,6 +764,14 @@ class RecommendationService {
   ///     counts as a diagnostic.
   ///   - `malformedJson`: [raw] has content but doesn't decode to
   ///     the expected shape.
+  /// Test seam for the parse-time filters (call-graph membership,
+  /// protected entry points) without a live LLM stream. Tests only.
+  RecommendationResult parseOutputForTest(
+    String raw, {
+    Set<String> validSymbols = const {},
+  }) =>
+      _parseOutput(raw, 'test', null, validSymbols: validSymbols);
+
   RecommendationResult _parseOutput(
     String raw,
     String model,
@@ -732,6 +849,16 @@ class RecommendationService {
             !validSymbols.contains(target)) {
           stderr.writeln('[recommendation] dropping ${r.kind} for '
               'non-call-graph symbol "$target"');
+          continue;
+        }
+        // Entry points are never a legal target for an override,
+        // preference, or generated hook — skipping one deletes the
+        // whole program beneath it. Clears remain allowed.
+        if (target != null &&
+            r is! ClearForcedOverride &&
+            kProtectedSymbols.contains(target)) {
+          stderr.writeln('[recommendation] dropping ${r.kind} targeting '
+              'protected entry point "$target"');
           continue;
         }
         recs.add(r);
@@ -885,7 +1012,10 @@ class RecommendationService {
     // imperative do-not-repeat instruction. Constrained decoding is
     // the lever prose isn't.
     if (feedback != null && feedback.stalledCallers.isNotEmpty) {
-      final stalled = feedback.stalledCallers.toList()..sort();
+      final stalled = feedback.stalledCallers
+          .where((s) => !kProtectedSymbols.contains(s))
+          .toList()
+        ..sort();
       final groupScopes = _relevantGroups(symbolGroups, stalled.toSet())
           .map((g) => g.scope)
           .toList()
@@ -912,7 +1042,10 @@ class RecommendationService {
         LastRunInsightService.looksLikeErrorSink(haltSink) &&
         recentTrace.isNotEmpty) {
       final pathSymbols = recentTrace
-          .where((s) => s != haltSink && callGraph.symbols.containsKey(s))
+          .where((s) =>
+              s != haltSink &&
+              !kProtectedSymbols.contains(s) &&
+              callGraph.symbols.containsKey(s))
           .toSet()
           .toList()
         ..sort();
@@ -964,7 +1097,10 @@ class RecommendationService {
     // that isn't a function. This is what makes a pick like
     // `MAX_ITERATIONS_REACHED` unrepresentable at the decoder.
     final symbolEnum = candidates
-        .where((s) => s.isNotEmpty && callGraph.symbols.containsKey(s))
+        .where((s) =>
+            s.isNotEmpty &&
+            !kProtectedSymbols.contains(s) &&
+            callGraph.symbols.containsKey(s))
         .toList()
       ..sort();
     final groupScopes = _relevantGroups(symbolGroups, candidates)
@@ -1090,15 +1226,7 @@ class RecommendationService {
   /// Same derivation as the catalog block: the `name` column if set,
   /// else derived from the hook body via [_hookLabel]. Used to annotate
   /// the overlay so applied hooks show what they DO at their symbol.
-  Future<Map<int, String>> _artifactLabels() async {
-    final all = await artifactDb.getAllArtifacts();
-    return {
-      for (final a in all)
-        a.id: (a.name != null && a.name!.trim().isNotEmpty)
-            ? a.name!.trim()
-            : _hookLabel(a.artifactData),
-    };
-  }
+  Future<Map<int, String>> _artifactLabels() => artifactLabelsFor(artifactDb);
 
   Future<String> _renderArtifactCatalog() async {
     final all = await artifactDb.getAllArtifacts();
@@ -1163,34 +1291,10 @@ class RecommendationService {
     }
   }
 
-  /// Same regex set as the Hook Database dialog's `_hookLabel` and
-  /// `metadata_panel.dart`'s copy — derives a human-readable label
-  /// from the hook body when the row's `name` column is unset
-  /// (which is the case for every default template). Kept inline
-  /// because the orchestrator package can't import UI files; the
-  /// canonical labeler lives there. If a third copy shows up, the
-  /// right move is to pull this into a shared util.
-  static String _hookLabel(String code) {
-    final trimmed = code.trim();
-    final inc = RegExp(r"incrementVariable\('value',\s*(-?\d+)")
-        .firstMatch(trimmed);
-    if (inc != null) return 'Stateful increment (from ${inc.group(1)})';
-    final set =
-        RegExp(r"setVariable\('value',\s*(-?\d+)\)").firstMatch(trimmed);
-    if (set != null) return 'Stateful write (value ${set.group(1)})';
-    final get =
-        RegExp(r"getVariable\('value',\s*(-?\d+)\)").firstMatch(trimmed);
-    if (get != null) return 'Stateful read (default ${get.group(1)})';
-    if (trimmed.contains('Create(0,')) return 'Return 0';
-    if (trimmed.contains('Create(1,')) return 'Return 1';
-    final ret =
-        RegExp(r'setReturnValue\(cpu,\s*(-?\d+)\)').firstMatch(trimmed);
-    if (ret != null) return 'Return ${ret.group(1)}';
-    final lastLine = trimmed.split('\n').last.trim();
-    return lastLine.length > 40
-        ? '${lastLine.substring(0, 37)}…'
-        : lastLine;
-  }
+  /// Delegates to the top-level [hookArtifactLabel] so the prompt
+  /// catalog, the auto-tune engine's destructive-override backstop, and
+  /// any future consumer share one labeler.
+  static String _hookLabel(String code) => hookArtifactLabel(code);
 
   static String _truncate(String s, int n) =>
       s.length <= n ? s : '${s.substring(0, n - 1)}…';
@@ -1352,7 +1456,10 @@ Rules:
      positions, not guesses. If execution ended in an error/fault
      handler (e.g. `Error_Handler`, `*Fault*`), the real failure
      is the call JUST BEFORE it in the recent sequence — force
-     THAT call to return success. Do NOT hook the handler; that
+     THAT call to return the value its CALLER needs to proceed
+     (status-returning init/check → the success STATUS, usually
+     0/HAL_OK; `Is*` check → 1; `Get*` reader → the value it
+     reads, never a blind 1). Do NOT hook the handler; that
      hides the failure without advancing coverage.
   2. WHETHER improvement is even possible — the "Reachable-code
      coverage" headroom. Near-zero headroom means little is left
@@ -1377,4 +1484,45 @@ Rules:
   over volume.
 - Do not narrate. Get to the JSON.
 ''';
+}
+
+/// Canonical human label for a hook artifact body ("Return 0",
+/// "Return 1", "Stateful increment (from N)", …). Same regex set as the
+/// Hook Database dialog's `_hookLabel` and `metadata_panel.dart`'s copy
+/// — derives the label from the body when the row's `name` column is
+/// unset (which is the case for every default template). The label IS
+/// the semantic identity of a template: the prompt catalog renders it
+/// and the auto-tune engine's destructive-override backstop keys off it
+/// ("Return 0" = a body-deleting skip), so there is exactly one
+/// implementation.
+/// Artifact id → human-readable effect label for every row in the DB:
+/// the `name` column if set, else derived from the hook body via
+/// [hookArtifactLabel]. Shared by the prompt catalog/overlay and the
+/// report writer (so reports say "Stateful read (default 0)" instead
+/// of a bare #id).
+Future<Map<int, String>> artifactLabelsFor(ArtifactDatabase db) async {
+  final all = await db.getAllArtifacts();
+  return {
+    for (final a in all)
+      a.id: (a.name != null && a.name!.trim().isNotEmpty)
+          ? a.name!.trim()
+          : hookArtifactLabel(a.artifactData),
+  };
+}
+
+String hookArtifactLabel(String code) {
+  final trimmed = code.trim();
+  final inc =
+      RegExp(r"incrementVariable\('value',\s*(-?\d+)").firstMatch(trimmed);
+  if (inc != null) return 'Stateful increment (from ${inc.group(1)})';
+  final set = RegExp(r"setVariable\('value',\s*(-?\d+)\)").firstMatch(trimmed);
+  if (set != null) return 'Stateful write (value ${set.group(1)})';
+  final get = RegExp(r"getVariable\('value',\s*(-?\d+)\)").firstMatch(trimmed);
+  if (get != null) return 'Stateful read (default ${get.group(1)})';
+  if (trimmed.contains('Create(0,')) return 'Return 0';
+  if (trimmed.contains('Create(1,')) return 'Return 1';
+  final ret = RegExp(r'setReturnValue\(cpu,\s*(-?\d+)\)').firstMatch(trimmed);
+  if (ret != null) return 'Return ${ret.group(1)}';
+  final lastLine = trimmed.split('\n').last.trim();
+  return lastLine.length > 40 ? '${lastLine.substring(0, 37)}…' : lastLine;
 }

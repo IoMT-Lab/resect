@@ -193,8 +193,8 @@ class LastRunInsightService {
       final endSym = trace.last;
       if (looksLikeErrorSink(endSym)) {
         buf.writeln('  ↳ `$endSym` looks like an error/fault handler. The '
-            'real failure is the call JUST BEFORE it in the sequence — fix '
-            'THAT (e.g. make the failing init/check return success). Do NOT '
+            'real failure is the call JUST BEFORE it in the sequence — '
+            '$kValueForSuccessGuidance. Do NOT '
             'hook the handler itself; that hides the failure without '
             'advancing coverage.');
       }
@@ -467,9 +467,23 @@ class LastRunInsightService {
       buf.writeln('Executed functions whose callees were never reached — '
           'the boundary where forward progress stopped. A silent '
           'blocker is likely at or below one of these:');
+      // Facts the model needs before it considers skipping a frontier
+      // CALLER: every one of these executed, and some carry working
+      // overrides in their subtree that a Return-0 skip would disable.
+      final overrideSymbols = {
+        for (final d in currentState.decisions)
+          if (d.kind == HookDecisionKind.override) d.symbol,
+      };
       for (final e in frontier) {
-        buf.writeln('- `${e.symbol}` → ${e.unexecutedCalleeCount} '
-            'unreached callee(s):');
+        final beneath =
+            overriddenHooksBeneath(callGraph, e.symbol, overrideSymbols);
+        final cost = beneath.isEmpty
+            ? ''
+            : '; working hooks beneath it: ${beneath.take(3).join(', ')}'
+                '${beneath.length > 3 ? ', …' : ''} — a Return-0 skip '
+                'disables them';
+        buf.writeln('- `${e.symbol}` (executed cleanly$cost) → '
+            '${e.unexecutedCalleeCount} unreached callee(s):');
         for (final callee in e.unexecutedCallees.take(6)) {
           final note = _frontierAnnotation(
               currentState.forSymbol(callee), appliedThisRun);
@@ -694,4 +708,40 @@ Rules:
 - Do not restate the input. Don't say "Based on the manifest…".
   Get to the recommendation.
 ''';
+}
+
+/// The one shared phrasing for "make the failing call succeed" — every
+/// prompt site uses this instead of the bare words "return success",
+/// which name no number and which the model resolved to Return 1 (the
+/// dominant pattern in its history). Observed damage: Return 1 on a
+/// time reader froze the clock; and for HAL-style status functions
+/// success is 0 (HAL_OK), so a blind 1 is wrong there too.
+const kValueForSuccessGuidance =
+    'force THAT call to return the value its CALLER needs to proceed — '
+    'for a status-returning init/check that is the success STATUS '
+    '(HAL-style status codes: success is usually 0/HAL_OK → "Return '
+    '0"); for an `Is*`/`*Ready*` check → "Return 1"; for a `Get*` '
+    'value reader → the value it reads (an advancing count for time, '
+    'never a constant) — a blind "Return 1" is almost always wrong';
+
+/// Transitive callees of [root] (BFS over direct-call edges) that are
+/// in [overridden] — the working hooks a Return-0 skip of [root] would
+/// disable. Rendered on wrapper-skip candidates (the coverage frontier
+/// here, the stalled-caller feedback in RecommendationService) so the
+/// model sees the cost of skipping a caller before it chooses to.
+List<String> overriddenHooksBeneath(
+    CallGraph g, String root, Set<String> overridden) {
+  final hits = <String>[];
+  final visited = <String>{root};
+  final queue = [root];
+  while (queue.isNotEmpty) {
+    final node = g.symbols[queue.removeLast()];
+    if (node == null) continue;
+    for (final callee in node.calledSymbols.keys) {
+      if (!visited.add(callee)) continue;
+      if (overridden.contains(callee)) hits.add(callee);
+      queue.add(callee);
+    }
+  }
+  return hits;
 }

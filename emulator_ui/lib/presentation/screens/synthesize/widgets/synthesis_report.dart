@@ -19,10 +19,16 @@ class SynthesisReport extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final result = ref.watch(synthesisResultProvider);
     final metrics = ref.watch(manifestMetricsProvider);
-    final totalSymbols =
-        ref.watch(callgraphProvider).valueOrNull?.symbols.length;
     if (result == null) return const SizedBox.shrink();
-    final executedCount = result.manifest?.executedSymbols?.length;
+    // Coverage comes from the RECORDED metrics (single source of truth
+    // with the reports); the call-graph/executed-list fallbacks cover
+    // manifests from before the numbers were recorded.
+    final totalSymbols = metrics?.totalSymbols ??
+        ref.watch(callgraphProvider).valueOrNull?.symbols.length;
+    final executedCount =
+        metrics?.executedCount ?? result.manifest?.executedSymbols?.length;
+    final stops = result.manifest?.stops;
+    final phases = result.manifest?.phaseTimings;
     final decisionsBySymbol = {
       for (final d in result.manifest?.decisions ?? const <ManifestDecision>[])
         d.symbol: d,
@@ -50,6 +56,29 @@ class SynthesisReport extends ConsumerWidget {
           const SizedBox(height: 16),
           _buildFidelityDisplay(metrics,
               executedCount: executedCount, totalSymbols: totalSymbols),
+        ],
+
+        // Run timing from the recorded manifest metrics: time to first
+        // stop, stop-condition count, and where the wall time went.
+        if (stops != null && stops.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Text(
+            'First stop: ${stops.first.elapsedSeconds.toStringAsFixed(1)}s '
+            '(${stops.first.kind.replaceAll('_', ' ')}'
+            '${stops.first.symbol != null ? ' at ${stops.first.symbol}' : ''}) '
+            '· ${stops.length} stop(s) total',
+            style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
+          ),
+        ],
+        if (phases != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            'Time split: hook selection '
+            '${phases.selectionSeconds.toStringAsFixed(1)}s · hook generation '
+            '${(phases.generationSeconds + (phases.roundHookGenSeconds ?? 0)).toStringAsFixed(1)}s'
+            '${phases.advisorSeconds != null ? ' · advisor ${phases.advisorSeconds!.toStringAsFixed(1)}s' : ''}',
+            style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
+          ),
         ],
 
         if (!result.success && result.failedSymbol != null) ...[

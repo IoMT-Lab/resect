@@ -113,6 +113,26 @@ class SynthesizerWorkflow {
     _isRunning = true;
     final stopwatch = Stopwatch()..start();
 
+    // Timing instrumentation for the manifest: every stop condition
+    // stamped with the run clock (first entry = time to first crash),
+    // per-iteration wall clock, and where non-emulation time went
+    // (hook candidate selection vs LLM hook authoring).
+    final stops = <StopTiming>[];
+    final iterationTimings = <IterationTiming>[];
+    Duration? currentIterStart;
+    void closeIteration(int iterIndex) {
+      if (currentIterStart == null) return;
+      iterationTimings.add(IterationTiming(
+        iterationIndex: iterIndex,
+        wallClockSeconds:
+            (stopwatch.elapsed - currentIterStart!).inMilliseconds / 1000.0,
+      ));
+      currentIterStart = null;
+    }
+
+    final selectionWatch = Stopwatch();
+    final generationWatch = Stopwatch();
+
     // Accumulated state across iterations
     final hookMap = <String, String>{};        // symbol → hookName
     final hookIndex = <String, int>{};          // symbol → current hook index
@@ -207,6 +227,7 @@ class SynthesizerWorkflow {
       // success where no pause fires and `lastPauseSymbol` is stale.
       final finalExecutionSymbol = emulationController.lastExecutedSymbol;
       final recentExecutionTrace = emulationController.recentExecutionTrace;
+      closeIteration(iteration);
       final manifest = buildManifest(
         elfHash: elfHash,
         elfFileName: elfFileName,
@@ -220,6 +241,12 @@ class SynthesizerWorkflow {
         terminationReason: reason,
         finalExecutionSymbol: finalExecutionSymbol,
         recentExecutionTrace: recentExecutionTrace,
+        timing: List.unmodifiable(iterationTimings),
+        stops: List.unmodifiable(stops),
+        phaseTimings: PhaseTimings(
+          selectionSeconds: selectionWatch.elapsed.inMilliseconds / 1000.0,
+          generationSeconds: generationWatch.elapsed.inMilliseconds / 1000.0,
+        ),
       );
       return SynthesizerResult(
         success: success,
@@ -319,7 +346,9 @@ class SynthesizerWorkflow {
 
     try {
       while (iteration < maxIterations && _isRunning) {
+        closeIteration(iteration);
         iteration++;
+        currentIterStart = stopwatch.elapsed;
 
         _eventController.add(SynthesizerIterationStarted(
           iteration: iteration,
@@ -365,6 +394,10 @@ class SynthesizerWorkflow {
 
         if (pauseEvent == null) {
           // Firmware ran cleanly — success.
+          stops.add(StopTiming(
+            elapsedSeconds: stopwatch.elapsed.inMilliseconds / 1000.0,
+            kind: 'clean_exit',
+          ));
           stopwatch.stop();
           final result = buildResult(
             success: true,
@@ -380,12 +413,22 @@ class SynthesizerWorkflow {
         if (pauseEvent.unhandledAccess != true || pauseEvent.symbol == null) {
           print('[Synthesizer] Non-unhandled pause at ${pauseEvent.symbol}, '
               'waiting for resume...');
+          stops.add(StopTiming(
+            elapsedSeconds: stopwatch.elapsed.inMilliseconds / 1000.0,
+            kind: 'pause',
+            symbol: pauseEvent.symbol,
+          ));
           await _waitForResumeOrReset();
           continue;
         }
 
         final symbol = pauseEvent.symbol!;
         lastObservedPauseSymbol = symbol;
+        stops.add(StopTiming(
+          elapsedSeconds: stopwatch.elapsed.inMilliseconds / 1000.0,
+          kind: 'unhandled_access',
+          symbol: symbol,
+        ));
         print('[Synthesizer] Unhandled access at symbol: $symbol');
 
         // Forced override that failed: bail out, don't try alternatives.
@@ -416,6 +459,7 @@ class SynthesizerWorkflow {
         // the engine; here we apply its plan. Members with a user override
         // or comms hook are excluded, and a member with no recognized role
         // has no hook and is left to normal per-symbol handling.
+        selectionWatch.start();
         final groupPlan = planGroupOverride(
           faultSymbol: symbol,
           groupOf: groupOf,
@@ -423,6 +467,7 @@ class SynthesizerWorkflow {
           overriddenSymbols: overriddenSymbols,
           suppressedScopes: suppressedGroupScopes,
         );
+        selectionWatch.stop();
         if (groupPlan != null) {
           installGroupPlan(groupPlan);
           print('[Synthesizer] Object group "${groupPlan.scope}" — '
@@ -446,6 +491,7 @@ class SynthesizerWorkflow {
           return a.intrinsicScore ?? 0.0;
         }
 
+        selectionWatch.start();
         if (!hookCache.containsKey(symbol)) {
           var hooks = await artifactDb.getArtifactsForSymbolByName(
             elfHash,
@@ -484,6 +530,7 @@ class SynthesizerWorkflow {
           hookCache[symbol] = hooks;
         }
         final hooks = hookCache[symbol]!;
+        selectionWatch.stop();
 
         if (hooks.isEmpty) {
           print('[Synthesizer] ERROR: No hooks found for "$symbol" — '
@@ -529,6 +576,7 @@ class SynthesizerWorkflow {
             llmGenerator != null &&
             !triedLlm.contains(symbol)) {
           triedLlm.add(symbol);
+          generationWatch.start();
           final llmBinding = await _tryLlmFallback(
             symbol: symbol,
             iteration: iteration,
@@ -536,6 +584,7 @@ class SynthesizerWorkflow {
             llmGenerator: llmGenerator,
             platform: platform,
           );
+          generationWatch.stop();
           if (llmBinding != null) {
             activeBindings[symbol] = llmBinding;
             // Clear the per-symbol cache so the next iteration

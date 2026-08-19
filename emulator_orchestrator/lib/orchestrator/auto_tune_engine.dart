@@ -15,6 +15,10 @@ import '../data/models/synthesis_manifest.dart';
 import '../data/models/synthesizer_result.dart';
 import '../services/analysis/coverage_frontier.dart';
 import '../services/analysis/fidelity_calculator.dart';
+import '../data/models/rag_index_status.dart';
+import '../services/analysis/artifact_census.dart';
+import '../services/llm/last_run_insight_service.dart'
+    show overriddenHooksBeneath;
 import '../services/llm/llm_client.dart';
 import '../services/llm/llm_hook_generator.dart';
 import '../services/llm/recommendation_service.dart';
@@ -50,6 +54,7 @@ class AutoTuneEngine {
     this.hookGenerator,
     this.symbolGroups = const [],
     this.now = DateTime.now,
+    this.ragStatus,
   });
 
   /// Runs one synthesis with the engine's current overlays and returns
@@ -90,6 +95,10 @@ class AutoTuneEngine {
   /// Clock seam. Real `DateTime.now` in production; a fixed stamp in
   /// tests so snapshots are deterministic.
   final DateTime Function() now;
+
+  /// Optional RAG-index count snapshot for the per-round artifact
+  /// census (`RagIndex.statusSnapshot`); null when no index exists.
+  final Future<RagIndexStatus?> Function()? ragStatus;
 
   var _cancelled = false;
 
@@ -170,30 +179,77 @@ class AutoTuneEngine {
     RoundFeedback buildFeedback({
       required SynthesisManifest manifest,
       required List<Recommendation> noOpSkipped,
+      List<Recommendation> refused = const [],
+      List<Recommendation> revertedMoves = const [],
+      String? revertedOutcome,
     }) {
       final executed = manifest.executedSymbols?.toSet() ?? const <String>{};
       final frontier = computeFrontier(
         executedSymbols: executed,
         callGraph: callGraph,
       );
+      final base = [
+        for (final e in frontier)
+          if (!entryPoints.contains(e.symbol) &&
+              !overlays.hookOverrides.containsKey(e.symbol) &&
+              !commsCovered.contains(e.symbol))
+            e.symbol,
+      ];
+      // Rank candidates by how likely they actually CONTAIN the stall:
+      // callers on the recent-call path into the halt point first (the
+      // spin is provably at/near the end of that path), and callers
+      // whose subtree carries working overrides last (skipping one
+      // forfeits those hooks) — kept only when nothing safer remains.
+      final onPath = manifest.recentExecutionTrace?.toSet() ?? const <String>{};
+      final overrideKeys = overlays.hookOverrides.keys.toSet();
+      bool carriesHooks(String s) =>
+          overriddenHooksBeneath(callGraph, s, overrideKeys).isNotEmpty;
+      final ranked = [
+        ...base.where((s) => onPath.contains(s) && !carriesHooks(s)),
+        ...base.where((s) => !onPath.contains(s) && !carriesHooks(s)),
+        ...base.where(carriesHooks),
+      ];
+      final safeCount = ranked.length - ranked.where(carriesHooks).length;
       return RoundFeedback(
         coveragePrev: prevExecuted?.length ?? executed.length,
         coverageNow: executed.length,
-        stalledCallers: [
-          for (final e in frontier)
-            if (!entryPoints.contains(e.symbol) &&
-                !overlays.hookOverrides.containsKey(e.symbol) &&
-                !commsCovered.contains(e.symbol))
-              e.symbol,
-        ].take(8).toList(),
+        stalledCallers: (safeCount > 0
+                ? ranked.where((s) => !carriesHooks(s))
+                : ranked)
+            .take(8)
+            .toList(),
         noOpSkipped: noOpSkipped,
+        refused: refused,
+        revertedMoves: revertedMoves,
+        revertedOutcome: revertedOutcome,
       );
+    }
+
+    // Best-so-far anchor: the highest executed count seen this session
+    // and the overlay state that produced it. Rounds that collapse
+    // below half of it are reverted; the session's final overlays are
+    // restored to the best on finish. This is the outcome-measurement
+    // enforcement that replaced the per-pattern refusals.
+    var bestExecuted = 0;
+    var bestOverlays = overlays.copy();
+    var bestRound = 0;
+    _censusElfHash = elfHash;
+    _censusOverlays = overlays;
+    _lastAdvisorSeconds = null;
+    _lastHookGenSeconds = null;
+    void trackBest(int executedCount, int roundNo) {
+      if (executedCount > bestExecuted) {
+        bestExecuted = executedCount;
+        bestOverlays = overlays.copy();
+        bestRound = roundNo;
+      }
     }
 
     // Round 0: baseline.
     if (seedBaseline != null) {
       prevFailure = failureOf(seedBaseline);
       prevExecuted = seedBaseline.manifest?.executedSymbols?.toSet();
+      trackBest(prevExecuted?.length ?? 0, 0);
     } else {
       sink.phase(AutoTunePhase.baseline);
       final baseline = await runSynthesis(overlays, 0);
@@ -207,15 +263,19 @@ class AutoTuneEngine {
         result: baseline,
         overlays: overlays,
         history: history,
+        census: await _census(project),
       );
       prevFailure = failureOf(baseline);
       prevExecuted = baseline.manifest!.executedSymbols?.toSet();
+      trackBest(prevExecuted?.length ?? 0, 0);
     }
 
     // Rounds 1..maxRounds.
     var round = 1;
     while (round <= config.maxRounds) {
       if (_cancelled) return _finish(AutoTuneStopReason.cancelled, round - 1);
+      _lastAdvisorSeconds = null;
+      _lastHookGenSeconds = null;
 
       // The manifest to reason about is the most recent round's.
       final lastManifest = history.isEmpty
@@ -275,6 +335,87 @@ class AutoTuneEngine {
         return _finish(AutoTuneStopReason.userRejectedAll, round - 1);
       }
 
+      // Dedupe identical entries BEFORE the no-op filter and budget
+      // accounting — the model sometimes emits the same recommendation
+      // several times in one response, and duplicates would otherwise
+      // burn slots and misreport as distinct moves.
+      final deduped = <Recommendation>[];
+      final seenKeys = <String>{};
+      for (final r in acceptedOrEdited) {
+        if (seenKeys.add(_recommendationKey(r))) deduped.add(r);
+      }
+      final duplicateCount = acceptedOrEdited.length - deduped.length;
+      if (duplicateCount > 0) {
+        stderr.writeln('[auto-tune] ignored $duplicateCount duplicate '
+            'recommendation(s) in round $round');
+      }
+
+      // One HARD guard and several ADVISORY checks. Hard: overriding an
+      // entry point deletes the program — refused regardless of what the
+      // model said (the decoder's enforcement is soft). Everything else
+      // that USED to be refused here (constants on time readers, skips
+      // of proven parents, multi-skip batches) is now a WARNING on the
+      // round: the measure-and-revert loop below is the enforcement — a
+      // round that regresses is rolled back wholesale — so the engine
+      // no longer needs to predict badness by name pattern.
+      final lastExecuted =
+          lastManifest.executedSymbols?.toSet() ?? const <String>{};
+      final refused = <Recommendation>[];
+      final warnings = <String>[];
+      final safe = <Recommendation>[];
+      var executedSkipCount = 0;
+      for (final r in deduped) {
+        if (r is SetForcedOverride && kProtectedSymbols.contains(r.symbol)) {
+          refused.add(r);
+          stderr.writeln('[auto-tune] REFUSED override on entry point '
+              '`${r.symbol}`');
+          continue;
+        }
+        if (r is SetForcedOverride) {
+          if (_kTimeReaderName.hasMatch(r.symbol) &&
+              await _isConstantReturnArtifact(r.artifactId)) {
+            warnings.add('`${r.symbol}` ← constant: looks like a frozen '
+                'time/counter reader — likely wants a Stateful increment');
+          }
+          if (await _isReturnZeroArtifact(r.artifactId) &&
+              lastExecuted.contains(r.symbol)) {
+            executedSkipCount++;
+            final hooksBeneath = overriddenHooksBeneath(
+                callGraph, r.symbol, overlays.hookOverrides.keys.toSet());
+            if (hooksBeneath.isNotEmpty) {
+              warnings.add('`${r.symbol}` ← Return 0 skips a caller that '
+                  'executed cleanly; working hooks beneath it stop '
+                  'executing (${hooksBeneath.take(3).join(', ')})');
+            }
+          }
+        }
+        safe.add(r);
+      }
+      if (executedSkipCount > 1) {
+        warnings.add('$executedSkipCount wrapper-skips in one round — each '
+            'forfeits a subtree; a regressing round is reverted wholesale');
+      }
+      for (final w in warnings) {
+        stderr.writeln('[auto-tune] WARN: $w');
+      }
+      if (safe.isEmpty && refused.isNotEmpty) {
+        // Everything the model wanted targeted entry points. Treat like
+        // an all-no-op round: stagnate, escalate with the refusals named.
+        stagnantRounds++;
+        if (stagnantRounds >= config.stagnantRoundLimit) {
+          return _finish(AutoTuneStopReason.noCoverageProgress, round,
+              errorMessage: 'Round $round: every recommendation was '
+                  'refused as destructive.');
+        }
+        pendingFeedback = buildFeedback(
+          manifest: lastManifest,
+          noOpSkipped: const [],
+          refused: refused,
+        );
+        round++;
+        continue;
+      }
+
       // Drop recommendations already in effect (same override/
       // preference, or the same artifact the last run applied
       // reactively). Re-applying one burns a full synthesis round on
@@ -282,7 +423,7 @@ class AutoTuneEngine {
       // this. Skipped entries surface in the round report and in the
       // next round's feedback so the model is told not to repeat them.
       final filtered = filterNoOpRecommendations(
-        recommendations: acceptedOrEdited,
+        recommendations: safe,
         hookOverrides: overlays.hookOverrides,
         hookOverrideScopes: overlays.hookOverrideScopes,
         hookPreferences: overlays.hookPreferences,
@@ -327,12 +468,15 @@ class AutoTuneEngine {
         }
       }
       if (generateRecs.isNotEmpty) {
+        final genWatch = Stopwatch()..start();
         final err = await _generateAndSeedCustomHooks(
           generateRecs,
           round: round,
           elfHash: elfHash,
           overlays: overlays,
         );
+        genWatch.stop();
+        _lastHookGenSeconds = genWatch.elapsed.inMilliseconds / 1000.0;
         if (_cancelled) return _finish(AutoTuneStopReason.cancelled, round - 1);
         if (err != null) {
           return _finish(AutoTuneStopReason.llmError, round,
@@ -340,7 +484,10 @@ class AutoTuneEngine {
         }
       }
 
-      // Apply the reviewed overlay edits into the engine's overlays.
+      // Apply the reviewed overlay edits into the engine's overlays,
+      // keeping the pre-apply state so a regressing round can be
+      // rolled back wholesale.
+      final preRoundOverlays = overlays.copy();
       overlays.apply(effective);
 
       // Re-synthesize with the new overlays. Display round+1 — the user
@@ -354,8 +501,21 @@ class AutoTuneEngine {
             errorMessage: 'Synthesis returned no manifest.');
       }
 
+      // Measure the round: a collapse below half of the session's best
+      // means this round's changes made things worse — roll them back
+      // (after reporting) and tell the model what was measured. This
+      // catches every "locally reasonable, globally wrong" move —
+      // frozen counters, bad skips — without name knowledge.
+      final currentExecuted = runResult.manifest!.executedSymbols?.toSet();
+      final executedCount = currentExecuted?.length ?? 0;
+      final reverted = bestExecuted > 0 && executedCount < bestExecuted * 0.5;
+      final revertNote = reverted
+          ? 'executed fell $bestExecuted (best) → $executedCount'
+          : null;
+
       // Emit this round's report (+ append to history for the next
-      // recommend call).
+      // recommend call) BEFORE any rollback, so the snapshot records
+      // what actually ran.
       _emitRound(
         round: round,
         result: runResult,
@@ -365,7 +525,39 @@ class AutoTuneEngine {
         decisions: review.decisions,
         applied: effective,
         skippedNoOps: skippedNoOps,
+        refused: refused,
+        warnings: warnings,
+        reverted: reverted,
+        census: await _census(project),
       );
+
+      if (reverted) {
+        overlays.restoreFrom(preRoundOverlays);
+        stderr.writeln('[auto-tune] REVERTED round $round: $revertNote — '
+            'overlays restored');
+        // A reverted round is a stagnant round: its changes are gone,
+        // so the evidence next round is unchanged except for the
+        // poisoned-move memory. prevFailure/prevExecuted stay put.
+        stagnantRounds++;
+        if (stagnantRounds >= config.stagnantRoundLimit) {
+          overlays.restoreFrom(bestOverlays);
+          return _finish(AutoTuneStopReason.noCoverageProgress, round,
+              errorMessage: 'Round $round reverted ($revertNote); '
+                  'no path forward after $stagnantRounds stagnant rounds. '
+                  'Final overlays are round $bestRound\'s (best).');
+        }
+        pendingFeedback = buildFeedback(
+          manifest: lastManifest,
+          noOpSkipped: skippedNoOps,
+          refused: refused,
+          revertedMoves: effective,
+          revertedOutcome: revertNote,
+        );
+        round++;
+        continue;
+      }
+
+      trackBest(executedCount, round);
 
       // No-progress guard: stop only on a TRUE repeat — same failing
       // symbol as the prior round AND no new hook tried for it.
@@ -377,6 +569,7 @@ class AutoTuneEngine {
         currentTried: currentTried,
         prevTried: prevFailure?.tried ?? const {},
       )) {
+        overlays.restoreFrom(bestOverlays);
         return _finish(AutoTuneStopReason.noProgressOnSymbol, round);
       }
       prevFailure = currentFailed == null
@@ -388,7 +581,6 @@ class AutoTuneEngine {
       // nothing observable. Escalate once (wrapper-skip feedback), stop
       // at the configured limit; any coverage movement resets the
       // counter.
-      final currentExecuted = runResult.manifest!.executedSymbols?.toSet();
       if (isCoverageStagnant(
         prevExecuted: prevExecuted,
         currentExecuted: currentExecuted,
@@ -396,15 +588,18 @@ class AutoTuneEngine {
       )) {
         stagnantRounds++;
         if (stagnantRounds >= config.stagnantRoundLimit) {
+          overlays.restoreFrom(bestOverlays);
           return _finish(AutoTuneStopReason.noCoverageProgress, round,
               errorMessage:
                   'Coverage frozen at ${currentExecuted?.length ?? 0} '
                   'executed symbols for $stagnantRounds rounds '
-                  '(escalation tried).');
+                  '(escalation tried). Final overlays are round '
+                  '$bestRound\'s (best).');
         }
         pendingFeedback = buildFeedback(
           manifest: runResult.manifest!,
           noOpSkipped: skippedNoOps,
+          refused: refused,
         );
       } else {
         stagnantRounds = 0;
@@ -413,6 +608,7 @@ class AutoTuneEngine {
 
       round++;
     }
+    overlays.restoreFrom(bestOverlays);
     return _finish(AutoTuneStopReason.maxRounds, config.maxRounds);
   }
 
@@ -421,6 +617,11 @@ class AutoTuneEngine {
   /// The most recent synthesis result emitted to a round report. Used
   /// as the manifest source for the next round's recommend call.
   SynthesizerResult? _lastResult;
+
+  /// Wall time of the most recent advisor (recommendation) LLM call and
+  /// custom-hook authoring pass, carried onto the round report.
+  double? _lastAdvisorSeconds;
+  double? _lastHookGenSeconds;
 
   AutoTuneStopReason _finish(
     AutoTuneStopReason reason,
@@ -466,6 +667,7 @@ class AutoTuneEngine {
     final thinkingBuf = StringBuffer();
     final responseBuf = StringBuffer();
     String? composedPrompt;
+    final advisorWatch = Stopwatch()..start();
     try {
       final result = await recommendationService.recommend(
         currentManifest: manifest,
@@ -488,6 +690,8 @@ class AutoTuneEngine {
           sink.thinking(chunk);
         },
       );
+      advisorWatch.stop();
+      _lastAdvisorSeconds = advisorWatch.elapsed.inMilliseconds / 1000.0;
       sink.llmExchange(AutoTuneLlmExchange(
         round: round,
         model: result.model,
@@ -495,9 +699,12 @@ class AutoTuneEngine {
         thinking: thinkingBuf.toString(),
         response: responseBuf.toString(),
         result: result,
+        durationSeconds: _lastAdvisorSeconds,
       ));
       return result;
     } catch (e) {
+      advisorWatch.stop();
+      _lastAdvisorSeconds = advisorWatch.elapsed.inMilliseconds / 1000.0;
       sink.llmExchange(AutoTuneLlmExchange(
         round: round,
         model: null,
@@ -506,6 +713,7 @@ class AutoTuneEngine {
         response: responseBuf.toString(),
         result: null,
         errorMessage: e.toString(),
+        durationSeconds: _lastAdvisorSeconds,
       ));
       _finish(AutoTuneStopReason.llmError, round - 1,
           errorMessage: e.toString());
@@ -587,8 +795,21 @@ class AutoTuneEngine {
     List<RecommendationDecision> decisions = const [],
     List<Recommendation> applied = const [],
     List<Recommendation> skippedNoOps = const [],
+    List<Recommendation> refused = const [],
+    List<String> warnings = const [],
+    bool reverted = false,
+    ArtifactCensus? census,
   }) {
-    final manifest = result.manifest!;
+    // Fold the round's telemetry (advisor / hook-gen wall time, census)
+    // into the manifest BEFORE emitting, so the sink-written
+    // round_NN_manifest.json is the complete per-round record and a
+    // disk reader (UI session reload, tools) loses nothing.
+    final manifest = result.manifest!.withRoundTelemetry(
+      advisorSeconds: _lastAdvisorSeconds,
+      roundHookGenSeconds: _lastHookGenSeconds,
+      census: census,
+    );
+    final folded = result.withManifest(manifest);
     final metrics = manifest.metrics ?? _fallbackMetrics(manifest);
     final executed = manifest.executedSymbols ?? const <String>[];
     final snapshot = RoundSnapshot(
@@ -609,19 +830,96 @@ class AutoTuneEngine {
       llmRecommendations: recommendation?.recommendations,
       userDecisions: decisions.isEmpty ? null : decisions,
       llmProse: recommendation?.prose,
+      reverted: reverted,
+      warnings: warnings,
     );
     history.add(snapshot);
-    _lastResult = result;
+    _lastResult = folded;
     sink.round(AutoTuneRoundReport(
       round: round,
-      result: result,
+      result: folded,
       metrics: metrics,
       snapshot: snapshot,
       recommendation: recommendation,
       decisions: decisions,
       appliedRecommendations: applied,
       skippedNoOps: skippedNoOps,
+      refusedDestructive: refused,
+      warnings: warnings,
+      reverted: reverted,
+      advisorSeconds: _lastAdvisorSeconds,
+      hookGenSeconds: _lastHookGenSeconds,
+      census: census,
     ));
+  }
+
+  /// Per-round artifact census — null when it fails (census must never
+  /// break a round).
+  Future<ArtifactCensus?> _census(Emulator project) async {
+    try {
+      return await computeArtifactCensus(
+        db: artifactDb,
+        elfHash: _censusElfHash ?? '',
+        hookOverrides: _censusOverlays?.hookOverrides ?? const {},
+        hookBindings: _censusOverlays?.hookBindings ?? const {},
+        commsAssignments: project.commsAssignments,
+        symbolGroups: symbolGroups,
+        ragStatus: await ragStatus?.call(),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String? _censusElfHash;
+  AutoTuneOverlays? _censusOverlays;
+
+  /// Identity key for de-duplicating recommendations within one round's
+  /// response — the model sometimes emits the same entry several times.
+  static String _recommendationKey(Recommendation r) => switch (r) {
+        SetForcedOverride(:final symbol, :final artifactId, :final scope) =>
+          'sfo:$symbol:$artifactId:${scope ?? ''}',
+        ClearForcedOverride(:final symbol) => 'cfo:$symbol',
+        SetPreference(:final symbol, :final artifactId) =>
+          'sp:$symbol:$artifactId',
+        GenerateCustomHook(:final symbol) => 'gch:$symbol',
+        SetGroupOverride(:final scope) => 'sgo:$scope',
+        ClearGroupOverride(:final scope) => 'cgo:$scope',
+        AdjustIterationCap(:final newValue) => 'aic:$newValue',
+      };
+
+  /// Function names that READ time/ticks/counters — forcing one to a
+  /// constant freezes the clock. Same family the report grader uses.
+  static final _kTimeReaderName = RegExp(
+      r'GetTick|GetAbsoluteTime|GetCounter|GetTime|_Counter\b',
+      caseSensitive: false);
+
+  /// Whether [artifactId]'s body is the body-deleting "Return 0"
+  /// template, per the shared [hookArtifactLabel] semantics. Bodies are
+  /// cached per session; the cache refreshes when an unknown id shows
+  /// up (freshly authored hooks land mid-session).
+  Map<int, String>? _artifactBodyCache;
+  Future<bool> _isReturnZeroArtifact(int artifactId) async =>
+      await _artifactLabel(artifactId) == 'Return 0';
+
+  /// Whether [artifactId] is any constant-return template (Return 0 /
+  /// Return 1 / Return N) — the wrong shape for a value that must
+  /// advance between calls.
+  Future<bool> _isConstantReturnArtifact(int artifactId) async {
+    final label = await _artifactLabel(artifactId);
+    return label != null && label.startsWith('Return ');
+  }
+
+  Future<String?> _artifactLabel(int artifactId) async {
+    if (_artifactBodyCache == null ||
+        !_artifactBodyCache!.containsKey(artifactId)) {
+      _artifactBodyCache = {
+        for (final a in await artifactDb.getAllArtifacts())
+          a.id: a.artifactData,
+      };
+    }
+    final body = _artifactBodyCache![artifactId];
+    return body == null ? null : hookArtifactLabel(body);
   }
 
   /// Metrics fallback when an adapter returned an un-enriched manifest.
@@ -682,6 +980,39 @@ class AutoTuneOverlays {
   final Map<String, HookBinding> hookBindings;
   final Map<String, GroupOverrideState> groupOverrides;
   int iterationCap;
+
+  /// Deep-enough copy for the engine's revert machinery (map contents
+  /// copied; values are immutable).
+  AutoTuneOverlays copy() => AutoTuneOverlays(
+        hookOverrides: Map<String, int>.from(hookOverrides),
+        hookOverrideScopes: Map<String, String>.from(hookOverrideScopes),
+        hookPreferences: Map<String, int>.from(hookPreferences),
+        hookBindings: Map<String, HookBinding>.from(hookBindings),
+        groupOverrides: Map<String, GroupOverrideState>.from(groupOverrides),
+        iterationCap: iterationCap,
+      );
+
+  /// Restore this instance IN PLACE to [other]'s state. In place
+  /// because the engine hands the same instance to every synthesis
+  /// call — reassigning would silently decouple them.
+  void restoreFrom(AutoTuneOverlays other) {
+    hookOverrides
+      ..clear()
+      ..addAll(other.hookOverrides);
+    hookOverrideScopes
+      ..clear()
+      ..addAll(other.hookOverrideScopes);
+    hookPreferences
+      ..clear()
+      ..addAll(other.hookPreferences);
+    hookBindings
+      ..clear()
+      ..addAll(other.hookBindings);
+    groupOverrides
+      ..clear()
+      ..addAll(other.groupOverrides);
+    iterationCap = other.iterationCap;
+  }
 
   /// Apply a reviewed batch of recommendations to these maps in place,
   /// via the shared applier core (same source of truth as the UI's
@@ -854,6 +1185,7 @@ class AutoTuneLlmExchange {
     this.model,
     this.result,
     this.errorMessage,
+    this.durationSeconds,
   });
 
   final int round;
@@ -863,6 +1195,9 @@ class AutoTuneLlmExchange {
   final String? model;
   final RecommendationResult? result;
   final String? errorMessage;
+
+  /// Wall time of the LLM call, when measured.
+  final double? durationSeconds;
 }
 
 /// Structured record of one completed round — everything a report or
@@ -878,6 +1213,12 @@ class AutoTuneRoundReport {
     this.decisions = const [],
     this.appliedRecommendations = const [],
     this.skippedNoOps = const [],
+    this.refusedDestructive = const [],
+    this.warnings = const [],
+    this.reverted = false,
+    this.advisorSeconds,
+    this.hookGenSeconds,
+    this.census,
   });
 
   final int round;
@@ -893,6 +1234,33 @@ class AutoTuneRoundReport {
   /// reports so a session that keeps re-recommending current state is
   /// visible at a glance.
   final List<Recommendation> skippedNoOps;
+
+  /// Recommendations the engine REFUSED outright (entry-point targets).
+  /// Surfaced in reports so a refusal is auditable, and echoed into the
+  /// next round's feedback.
+  final List<Recommendation> refusedDestructive;
+
+  /// Advisory notes on this round's applied moves (suspected frozen
+  /// counter, skip of a caller with working hooks beneath, multi-skip
+  /// batch). Warnings never block — the measure-and-revert loop is the
+  /// enforcement; these exist so a human reading the report (and the
+  /// model reading feedback) can see the risk that was taken.
+  final List<String> warnings;
+
+  /// True when this round's changes were measured, found to collapse
+  /// coverage below half the session best, and rolled back after the
+  /// report was emitted. The snapshot still records what actually ran.
+  final bool reverted;
+
+  /// Wall time of this round's advisor (recommendation) LLM call, and
+  /// of the custom-hook authoring pass when one ran. Null on the
+  /// baseline round / when not measured.
+  final double? advisorSeconds;
+  final double? hookGenSeconds;
+
+  /// Counts of the artifacts feeding this round's synthesis. Null when
+  /// the census couldn't be computed.
+  final ArtifactCensus? census;
 }
 
 /// Why the auto-tune session ended. 1:1 with the UI's
@@ -941,6 +1309,8 @@ SynthesisManifest enrichManifestWithMetrics({
       intactCount: fidelity.intactFunctions,
       degradedCount: fidelity.degradedFunctions,
       hookedCount: fidelity.hookedFunctions,
+      executedCount: executedSymbols.length,
+      totalSymbols: callGraph.symbols.length,
     ),
     executedSymbols: executedSymbols.toList()..sort(),
   );

@@ -565,6 +565,164 @@ void main() {
       expect(manifest.result.totalIterations, 0);
     });
 
+    test('timing metrics round-trip through JSON', () {
+      // stops / phase_timings / census / timing are the report metrics
+      // added for the report reorg — all optional, so a v2 manifest
+      // stays valid without them (next test).
+      final manifest = buildManifest(
+        elfHash: 'abc',
+        elfFileName: 'f.elf',
+        runId: 'r',
+        success: false,
+        totalIterations: 3,
+        duration: const Duration(seconds: 9),
+        failedSymbol: 'HAL_Init',
+        attempts: const {},
+        timing: const [
+          IterationTiming(iterationIndex: 0, wallClockSeconds: 1.5),
+          IterationTiming(iterationIndex: 1, wallClockSeconds: 2.0),
+        ],
+        stops: const [
+          StopTiming(
+              elapsedSeconds: 0.8, kind: 'unhandled_access', symbol: 'HAL_Init'),
+          StopTiming(elapsedSeconds: 4.2, kind: 'pause'),
+          StopTiming(elapsedSeconds: 9.0, kind: 'clean_exit'),
+        ],
+        phaseTimings:
+            const PhaseTimings(selectionSeconds: 1.2, generationSeconds: 30.5),
+      );
+      final decoded = SynthesisManifest.fromJson(
+          jsonDecode(jsonEncode(manifest.toJson())) as Map<String, dynamic>);
+      expect(decoded.timing, hasLength(2));
+      expect(decoded.timing![1].wallClockSeconds, 2.0);
+      expect(decoded.stops, hasLength(3));
+      expect(decoded.stops!.first.elapsedSeconds, 0.8);
+      expect(decoded.stops!.first.kind, 'unhandled_access');
+      expect(decoded.stops!.first.symbol, 'HAL_Init');
+      expect(decoded.stops![1].symbol, isNull);
+      expect(decoded.phaseTimings!.selectionSeconds, 1.2);
+      expect(decoded.phaseTimings!.generationSeconds, 30.5);
+      // Auto-tune round fields default null until folded in.
+      expect(decoded.phaseTimings!.advisorSeconds, isNull);
+      expect(decoded.phaseTimings!.roundHookGenSeconds, isNull);
+    });
+
+    test('withRoundTelemetry folds advisor/hook-gen/census in', () {
+      final manifest = buildManifest(
+        elfHash: 'abc',
+        elfFileName: 'f.elf',
+        runId: 'r',
+        success: true,
+        totalIterations: 1,
+        duration: const Duration(seconds: 2),
+        failedSymbol: null,
+        attempts: const {},
+        phaseTimings:
+            const PhaseTimings(selectionSeconds: 1.0, generationSeconds: 2.0),
+      );
+      final folded = manifest.withRoundTelemetry(
+        advisorSeconds: 40.0,
+        roundHookGenSeconds: 5.0,
+        census: const ArtifactCensus(
+          hookArtifacts: 1,
+          hookBindings: 0,
+          forcedOverrides: 0,
+          commsAssignments: 0,
+          groupMembers: 0,
+          ragChunksByKind: {},
+          signatures: 0,
+          decompilations: 0,
+        ),
+      );
+      final decoded = SynthesisManifest.fromJson(
+          jsonDecode(jsonEncode(folded.toJson())) as Map<String, dynamic>);
+      expect(decoded.phaseTimings!.selectionSeconds, 1.0);
+      expect(decoded.phaseTimings!.advisorSeconds, 40.0);
+      expect(decoded.phaseTimings!.roundHookGenSeconds, 5.0);
+      expect(decoded.census!.hookArtifacts, 1);
+
+      // Folding onto a manifest with NO phase timings creates them
+      // (zeroed workflow phases) rather than dropping the round times.
+      final bare = buildManifest(
+        elfHash: 'abc',
+        elfFileName: 'f.elf',
+        runId: 'r2',
+        success: true,
+        totalIterations: 1,
+        duration: Duration.zero,
+        failedSymbol: null,
+        attempts: const {},
+      ).withRoundTelemetry(advisorSeconds: 7.0);
+      expect(bare.phaseTimings!.advisorSeconds, 7.0);
+      expect(bare.phaseTimings!.selectionSeconds, 0.0);
+    });
+
+    test('metrics coverage numbers round-trip and back-fill as null', () {
+      const withCoverage = ManifestMetrics(
+        overallFidelity: 0.8,
+        coverageFidelity: null,
+        subgraphFidelity: null,
+        intactCount: 1,
+        degradedCount: 0,
+        hookedCount: 0,
+        executedCount: 50,
+        totalSymbols: 945,
+      );
+      final decoded = ManifestMetrics.fromJson(
+          jsonDecode(jsonEncode(withCoverage.toJson()))
+              as Map<String, dynamic>);
+      expect(decoded.executedCount, 50);
+      expect(decoded.totalSymbols, 945);
+      expect(decoded.coverageRatio, closeTo(50 / 945, 1e-9));
+
+      // Old metrics JSON without the keys → nulls, no ratio.
+      final old = ManifestMetrics.fromJson(const {
+        'overall_fidelity': 0.5,
+        'intact_count': 1,
+        'degraded_count': 0,
+        'hooked_count': 0,
+      });
+      expect(old.executedCount, isNull);
+      expect(old.coverageRatio, isNull);
+    });
+
+    test('census round-trips through JSON and totals add up', () {
+      const census = ArtifactCensus(
+        hookArtifacts: 40,
+        hookBindings: 3,
+        forcedOverrides: 2,
+        commsAssignments: 5,
+        groupMembers: 12,
+        ragChunksByKind: {'docs': 100, 'symbols': 50},
+        signatures: 900,
+        decompilations: 7,
+      );
+      final decoded = ArtifactCensus.fromJson(
+          jsonDecode(jsonEncode(census.toJson())) as Map<String, dynamic>);
+      expect(decoded.ragChunksByKind, {'docs': 100, 'symbols': 50});
+      expect(decoded.ragChunksTotal, 150);
+      expect(decoded.total, 40 + 3 + 2 + 5 + 12 + 150 + 900 + 7);
+    });
+
+    test('v2 manifest without timing metrics still parses', () {
+      final manifest = buildManifest(
+        elfHash: 'abc',
+        elfFileName: 'f.elf',
+        runId: 'r',
+        success: true,
+        totalIterations: 0,
+        duration: Duration.zero,
+        failedSymbol: null,
+        attempts: const {},
+      );
+      final decoded = SynthesisManifest.fromJson(
+          jsonDecode(jsonEncode(manifest.toJson())) as Map<String, dynamic>);
+      expect(decoded.timing, isNull);
+      expect(decoded.stops, isNull);
+      expect(decoded.phaseTimings, isNull);
+      expect(decoded.census, isNull);
+    });
+
     test('every built manifest stamps the current version', () {
       // Regression guard: a manifest built fresh always claims v2 (or
       // whatever the current version is). Old code paths that hardcoded

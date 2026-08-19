@@ -50,6 +50,8 @@ class RoundSnapshot {
     this.resumePointSymbol,
     this.deviceProfileSnapshot,
     this.groupOverrides = const {},
+    this.reverted = false,
+    this.warnings = const [],
   });
 
   /// Schema version this snapshot was written with. Bump on shape
@@ -132,6 +134,16 @@ class RoundSnapshot {
   /// work lands.
   final String? deviceProfileSnapshot;
 
+  /// True when this round's overlay changes collapsed coverage versus
+  /// the session best and the engine rolled them back after measuring.
+  /// The snapshot still records what actually ran.
+  final bool reverted;
+
+  /// Engine advisory notes on this round's applied moves (suspected
+  /// frozen counter, wrapper-skip risk, …). Never blocking — recorded
+  /// so session views can badge risky rounds.
+  final List<String> warnings;
+
   static const _currentSnapshotVersion = 1;
 
   /// Version this build stamps onto new snapshots. Exposed for
@@ -170,6 +182,8 @@ class RoundSnapshot {
           'resume_point_symbol': resumePointSymbol,
         if (deviceProfileSnapshot != null)
           'device_profile_snapshot': deviceProfileSnapshot,
+        if (reverted) 'reverted': reverted,
+        if (warnings.isNotEmpty) 'warnings': warnings,
       };
 
   factory RoundSnapshot.fromJson(Map<String, dynamic> json) {
@@ -231,6 +245,11 @@ class RoundSnapshot {
           json['memory_map_checkpoint_path'] as String?,
       resumePointSymbol: json['resume_point_symbol'] as String?,
       deviceProfileSnapshot: json['device_profile_snapshot'] as String?,
+      reverted: json['reverted'] as bool? ?? false,
+      warnings: (json['warnings'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList() ??
+          const [],
     );
   }
 }

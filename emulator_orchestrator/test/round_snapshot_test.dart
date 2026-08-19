@@ -35,14 +35,14 @@ void main() {
       final json = original.toJson();
       expect(json.containsKey('scope'), isFalse);
       final decoded =
-          Recommendation.fromJson(json) as SetForcedOverride;
+          Recommendation.fromJson(json)! as SetForcedOverride;
       expect(decoded.scope, isNull);
     });
 
     test('ClearForcedOverride round-trips', () {
       const original = ClearForcedOverride(rationale: 'oops', symbol: 's');
       final decoded =
-          Recommendation.fromJson(original.toJson()) as ClearForcedOverride;
+          Recommendation.fromJson(original.toJson())! as ClearForcedOverride;
       expect(decoded.symbol, 's');
       expect(decoded.rationale, 'oops');
     });
@@ -51,7 +51,7 @@ void main() {
       const original = SetPreference(
           rationale: 'try this first', symbol: 's', artifactId: 12);
       final decoded =
-          Recommendation.fromJson(original.toJson()) as SetPreference;
+          Recommendation.fromJson(original.toJson())! as SetPreference;
       expect(decoded.symbol, 's');
       expect(decoded.artifactId, 12);
     });
@@ -63,7 +63,7 @@ void main() {
         intent: 'return current SpO2 reading',
       );
       final decoded =
-          Recommendation.fromJson(original.toJson()) as GenerateCustomHook;
+          Recommendation.fromJson(original.toJson())! as GenerateCustomHook;
       expect(decoded.symbol, 'mystery_fn');
       expect(decoded.intent, 'return current SpO2 reading');
     });
@@ -76,7 +76,7 @@ void main() {
       final json = original.toJson();
       expect(json.containsKey('intent'), isFalse);
       final decoded =
-          Recommendation.fromJson(json) as GenerateCustomHook;
+          Recommendation.fromJson(json)! as GenerateCustomHook;
       expect(decoded.intent, isNull);
     });
 
@@ -86,7 +86,7 @@ void main() {
         newValue: 25,
       );
       final decoded =
-          Recommendation.fromJson(original.toJson()) as AdjustIterationCap;
+          Recommendation.fromJson(original.toJson())! as AdjustIterationCap;
       expect(decoded.newValue, 25);
     });
 
@@ -252,6 +252,22 @@ void main() {
       expect(decoded.userDecisions!.length, 1);
       expect(decoded.userDecisions!.single.action, UserAction.accepted);
       expect(decoded.llmProse, 'short summary');
+    });
+
+    test('reverted + warnings round-trip; absent keys default off', () {
+      final base = sample().toJson();
+      // Old snapshots (no keys) parse as not-reverted, no warnings.
+      final old = RoundSnapshot.fromJson(
+          jsonDecode(jsonEncode(base)) as Map<String, dynamic>);
+      expect(old.reverted, isFalse);
+      expect(old.warnings, isEmpty);
+
+      base['reverted'] = true;
+      base['warnings'] = ['`X` ← constant: looks like a frozen counter'];
+      final decoded = RoundSnapshot.fromJson(
+          jsonDecode(jsonEncode(base)) as Map<String, dynamic>);
+      expect(decoded.reverted, isTrue);
+      expect(decoded.warnings, hasLength(1));
     });
 
     test('forward-compat null slots round-trip as null', () {

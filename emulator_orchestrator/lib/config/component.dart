@@ -201,11 +201,46 @@ class LlmHookGenComponent extends Component {
     return cfg.isEmpty ? OllamaInstaller.localHost : cfg;
   }
 
+  ComponentStatus _statusFromTags(List<String> installedTags) {
+    final inferenceTag = _inferenceModel();
+    final hasInference =
+        installedTags.any((t) => _tagMatches(t, inferenceTag));
+    final hasEmbed = installedTags.any((t) => _tagMatches(t, _embedModel));
+    if (hasInference && hasEmbed) {
+      return ComponentStatus(true, 'Ready — $inferenceTag + $_embedModel');
+    }
+    final missing = <String>[
+      if (!hasInference) inferenceTag,
+      if (!hasEmbed) _embedModel,
+    ].join(', ');
+    return ComponentStatus(false, 'Missing: $missing');
+  }
+
   @override
   Future<ComponentStatus> detect() async {
+    // A responsive daemon at the configured host is authoritative —
+    // it may be a remote/containerized Ollama (the docker stack runs
+    // it as its own service at `ollama:11434`) with no local binary
+    // at all.
+    final host = _ollamaHost();
+    final httpTags = await ollamaTagsViaHttp(host);
+    if (httpTags != null) {
+      return _statusFromTags(httpTags);
+    }
+
     final ollama = installer.resolveBinary();
     if (ollama == null) {
-      return const ComponentStatus(false, 'Ollama not installed');
+      // No daemon answering and nothing to manage locally. Name the
+      // host when one was explicitly configured, so a wrong/downed
+      // remote daemon reads as what it is instead of "not installed".
+      final configured = (EnvConfig.load().get('LLM_OLLAMA_HOST') ?? '')
+          .trim();
+      return ComponentStatus(
+          false,
+          configured.isEmpty
+              ? 'Ollama not installed'
+              : 'Ollama not reachable at $configured (and no local '
+                  'install to start)');
     }
     // Route the CLI through whichever daemon `install()` ended up
     // spawning. The user-local daemon lives on 11435 (so it doesn't
@@ -213,7 +248,7 @@ class LlmHookGenComponent extends Component {
     // registered there — without OLLAMA_HOST the CLI hits the
     // default and reports an empty list, which previously made the
     // Modules tab show "missing" right after a successful install.
-    final host = _ollamaHost();
+    //
     // If we're managing the daemon and it isn't responsive, bring
     // it up. ensureDaemonRunning pings first and is idempotent —
     // costs ~one HTTP request when the daemon is already alive.
@@ -225,7 +260,6 @@ class LlmHookGenComponent extends Component {
         // CLI error message instead of a synthesized one.
       }
     }
-    final inferenceTag = _inferenceModel();
     List<String> installedTags;
     try {
       final r = await Process.run(
@@ -245,17 +279,7 @@ class LlmHookGenComponent extends Component {
     } catch (_) {
       return const ComponentStatus(false, 'Ollama present but not responding');
     }
-    final hasInference =
-        installedTags.any((t) => _tagMatches(t, inferenceTag));
-    final hasEmbed = installedTags.any((t) => _tagMatches(t, _embedModel));
-    if (hasInference && hasEmbed) {
-      return ComponentStatus(true, 'Ready — $inferenceTag + $_embedModel');
-    }
-    final missing = <String>[
-      if (!hasInference) inferenceTag,
-      if (!hasEmbed) _embedModel,
-    ].join(', ');
-    return ComponentStatus(false, 'Missing: $missing');
+    return _statusFromTags(installedTags);
   }
 
   /// Install drives the in-app installer + model pulls.
@@ -603,3 +627,35 @@ List<Component> buildComponentRegistry({
       MemoryMapComponent(),
       CommsBusComponent(),
     ];
+
+/// Probe an Ollama daemon at `host:port` over HTTP and return the
+/// installed model tags, or null when it doesn't answer (unreachable,
+/// non-200, or unparseable). Per the Ollama API docs
+/// (github.com/ollama/ollama/blob/main/docs/api.md): "List models that
+/// are available locally" is `GET /api/tags`, returning
+/// `{"models": [{"name": "llama3.2:latest", ...}, ...]}` — the tag is
+/// the `name` field of each entry.
+///
+/// Top-level (not a component method) so tests can exercise it against
+/// a stub HTTP server directly.
+Future<List<String>?> ollamaTagsViaHttp(String host) async {
+  final client = HttpClient()
+    ..connectionTimeout = const Duration(seconds: 3);
+  try {
+    final req = await client.getUrl(Uri.parse('http://$host/api/tags'));
+    final res = await req.close();
+    if (res.statusCode != 200) return null;
+    final body = await res.transform(utf8.decoder).join();
+    final models = (jsonDecode(body) as Map<String, dynamic>)['models'];
+    if (models is! List) return null;
+    return [
+      for (final m in models)
+        if (m is Map<String, dynamic> && m['name'] is String)
+          m['name'] as String,
+    ];
+  } catch (_) {
+    return null;
+  } finally {
+    client.close(force: true);
+  }
+}

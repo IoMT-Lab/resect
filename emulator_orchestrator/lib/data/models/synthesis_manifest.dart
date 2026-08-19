@@ -68,6 +68,9 @@ class SynthesisManifest {
     this.metrics,
     this.executedSymbols,
     this.timing,
+    this.stops,
+    this.phaseTimings,
+    this.census,
   });
 
   /// Schema version. Bump on shape changes; the parser accepts every
@@ -153,6 +156,21 @@ class SynthesisManifest {
   /// timing breakdown is asked for.
   final List<IterationTiming>? timing;
 
+  /// Every stop condition the run hit, in order, each stamped with
+  /// elapsed run time — "time to first emulator crash" is the first
+  /// entry. Null on manifests that pre-date the field. Additive.
+  final List<StopTiming>? stops;
+
+  /// Where the run's wall time went beyond raw emulation: hook
+  /// candidate selection vs LLM hook generation. Null on manifests
+  /// that pre-date the field. Additive.
+  final PhaseTimings? phaseTimings;
+
+  /// Counts of the artifacts feeding this synthesis (hook catalog,
+  /// bindings, classifications, RAG chunks, Ghidra rows). Null on
+  /// manifests that pre-date the field. Additive.
+  final ArtifactCensus? census;
+
   /// Manifest versions this build can parse. The most recent
   /// version in this set is what newly-built manifests are tagged
   /// with ([_currentManifestVersion]).
@@ -183,6 +201,9 @@ class SynthesisManifest {
         if (executedSymbols != null) 'executed_symbols': executedSymbols,
         if (timing != null)
           'timing': timing!.map((t) => t.toJson()).toList(),
+        if (stops != null) 'stops': stops!.map((s) => s.toJson()).toList(),
+        if (phaseTimings != null) 'phase_timings': phaseTimings!.toJson(),
+        if (census != null) 'census': census!.toJson(),
       };
 
   factory SynthesisManifest.fromJson(Map<String, dynamic> json) {
@@ -221,6 +242,16 @@ class SynthesisManifest {
       timing: (json['timing'] as List<dynamic>?)
           ?.map((e) => IterationTiming.fromJson(e as Map<String, dynamic>))
           .toList(),
+      stops: (json['stops'] as List<dynamic>?)
+          ?.map((e) => StopTiming.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      phaseTimings: json['phase_timings'] == null
+          ? null
+          : PhaseTimings.fromJson(
+              json['phase_timings'] as Map<String, dynamic>),
+      census: json['census'] == null
+          ? null
+          : ArtifactCensus.fromJson(json['census'] as Map<String, dynamic>),
     );
   }
 
@@ -233,6 +264,9 @@ class SynthesisManifest {
     required ManifestMetrics metrics,
     required List<String> executedSymbols,
     List<IterationTiming>? timing,
+    List<StopTiming>? stops,
+    PhaseTimings? phaseTimings,
+    ArtifactCensus? census,
   }) =>
       SynthesisManifest(
         manifestVersion: manifestVersion,
@@ -249,7 +283,50 @@ class SynthesisManifest {
         metrics: metrics,
         executedSymbols: executedSymbols,
         timing: timing ?? this.timing,
+        stops: stops ?? this.stops,
+        phaseTimings: phaseTimings ?? this.phaseTimings,
+        census: census ?? this.census,
       );
+
+  /// Return a copy with the auto-tune round's telemetry folded in —
+  /// the advisor / custom-hook-authoring wall times (onto
+  /// [phaseTimings]) and the artifact census. Called by the auto-tune
+  /// engine before the round report is emitted so the written
+  /// `round_NN_manifest.json` is the complete per-round record and a
+  /// disk reader loses nothing versus the in-memory report.
+  SynthesisManifest withRoundTelemetry({
+    double? advisorSeconds,
+    double? roundHookGenSeconds,
+    ArtifactCensus? census,
+  }) {
+    final pt = phaseTimings;
+    final folded = (advisorSeconds == null && roundHookGenSeconds == null)
+        ? pt
+        : (pt ?? const PhaseTimings(selectionSeconds: 0, generationSeconds: 0))
+            .withRoundTimings(
+            advisorSeconds: advisorSeconds,
+            roundHookGenSeconds: roundHookGenSeconds,
+          );
+    return SynthesisManifest(
+      manifestVersion: manifestVersion,
+      elfHash: elfHash,
+      elfFileName: elfFileName,
+      synthesizerRunId: synthesizerRunId,
+      result: result,
+      decisions: decisions,
+      failedSymbol: failedSymbol,
+      lastPauseSymbol: lastPauseSymbol,
+      terminationReason: terminationReason,
+      finalExecutionSymbol: finalExecutionSymbol,
+      recentExecutionTrace: recentExecutionTrace,
+      metrics: metrics,
+      executedSymbols: executedSymbols,
+      timing: timing,
+      stops: stops,
+      phaseTimings: folded,
+      census: census ?? this.census,
+    );
+  }
 
   /// Format the manifest as pretty-printed JSON ready to write to
   /// disk. Uses a 2-space indent to keep diffs readable.
@@ -301,6 +378,8 @@ class ManifestMetrics {
     required this.intactCount,
     required this.degradedCount,
     required this.hookedCount,
+    this.executedCount,
+    this.totalSymbols,
   });
 
   /// Overall weighted fidelity across the whole call graph. 0–1.
@@ -324,6 +403,21 @@ class ManifestMetrics {
   /// Functions directly hooked (fidelity forced to efficacy, default 0.0).
   final int hookedCount;
 
+  /// Coverage as recorded numbers: symbols executed this run and the
+  /// call graph's total, so readers (reports, UI) never recompute the
+  /// ratio. Null on manifests enriched before these were recorded.
+  final int? executedCount;
+  final int? totalSymbols;
+
+  /// Executed / total, or null when either side wasn't recorded (or the
+  /// graph was empty).
+  double? get coverageRatio {
+    final e = executedCount;
+    final t = totalSymbols;
+    if (e == null || t == null || t == 0) return null;
+    return e / t;
+  }
+
   Map<String, dynamic> toJson() => {
         'overall_fidelity': overallFidelity,
         if (coverageFidelity != null) 'coverage_fidelity': coverageFidelity,
@@ -331,6 +425,8 @@ class ManifestMetrics {
         'intact_count': intactCount,
         'degraded_count': degradedCount,
         'hooked_count': hookedCount,
+        if (executedCount != null) 'executed_count': executedCount,
+        if (totalSymbols != null) 'total_symbols': totalSymbols,
       };
 
   factory ManifestMetrics.fromJson(Map<String, dynamic> json) =>
@@ -341,6 +437,8 @@ class ManifestMetrics {
         intactCount: json['intact_count'] as int,
         degradedCount: json['degraded_count'] as int,
         hookedCount: json['hooked_count'] as int,
+        executedCount: json['executed_count'] as int?,
+        totalSymbols: json['total_symbols'] as int?,
       );
 }
 
@@ -366,6 +464,165 @@ class IterationTiming {
         iterationIndex: json['iteration_index'] as int,
         wallClockSeconds:
             (json['wall_clock_seconds'] as num).toDouble(),
+      );
+}
+
+/// One stop condition hit during a run, stamped with the run clock.
+/// "Time to first emulator crash" is the first entry of the manifest's
+/// `stops` list.
+class StopTiming {
+  const StopTiming({
+    required this.elapsedSeconds,
+    required this.kind,
+    this.symbol,
+  });
+
+  /// Run wall time when the stop occurred.
+  final double elapsedSeconds;
+
+  /// `unhandled_access` (a fault the synthesizer will hook),
+  /// `pause` (a non-fault pause), or `clean_exit` (the run ended
+  /// without further stops).
+  final String kind;
+
+  /// The symbol involved, when the stop names one.
+  final String? symbol;
+
+  Map<String, dynamic> toJson() => {
+        'elapsed_seconds': elapsedSeconds,
+        'kind': kind,
+        if (symbol != null) 'symbol': symbol,
+      };
+
+  factory StopTiming.fromJson(Map<String, dynamic> json) => StopTiming(
+        elapsedSeconds: (json['elapsed_seconds'] as num).toDouble(),
+        kind: json['kind'] as String,
+        symbol: json['symbol'] as String?,
+      );
+}
+
+/// Where a run's wall time went beyond raw emulation.
+class PhaseTimings {
+  const PhaseTimings({
+    required this.selectionSeconds,
+    required this.generationSeconds,
+    this.advisorSeconds,
+    this.roundHookGenSeconds,
+  });
+
+  /// Time spent choosing hook candidates (DB lookup, ranking,
+  /// preference reorder, group planning).
+  final double selectionSeconds;
+
+  /// Time spent in LLM hook authoring (the synthesizer's fallback).
+  final double generationSeconds;
+
+  /// Auto-tune only: wall time of the round's advisor (recommendation)
+  /// LLM call. Null on plain synthesis runs and pre-fold manifests.
+  final double? advisorSeconds;
+
+  /// Auto-tune only: wall time of the round's custom-hook authoring
+  /// pass, when one ran. Displayed as part of generation time.
+  final double? roundHookGenSeconds;
+
+  /// Copy with the auto-tune round fields folded in.
+  PhaseTimings withRoundTimings({
+    double? advisorSeconds,
+    double? roundHookGenSeconds,
+  }) =>
+      PhaseTimings(
+        selectionSeconds: selectionSeconds,
+        generationSeconds: generationSeconds,
+        advisorSeconds: advisorSeconds ?? this.advisorSeconds,
+        roundHookGenSeconds: roundHookGenSeconds ?? this.roundHookGenSeconds,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'selection_seconds': selectionSeconds,
+        'generation_seconds': generationSeconds,
+        if (advisorSeconds != null) 'advisor_seconds': advisorSeconds,
+        if (roundHookGenSeconds != null)
+          'round_hook_gen_seconds': roundHookGenSeconds,
+      };
+
+  factory PhaseTimings.fromJson(Map<String, dynamic> json) => PhaseTimings(
+        selectionSeconds: (json['selection_seconds'] as num).toDouble(),
+        generationSeconds: (json['generation_seconds'] as num).toDouble(),
+        advisorSeconds: (json['advisor_seconds'] as num?)?.toDouble(),
+        roundHookGenSeconds:
+            (json['round_hook_gen_seconds'] as num?)?.toDouble(),
+      );
+}
+
+/// Counts of the artifacts feeding a synthesis run — how much knowledge
+/// the loop had to work with. Reported per round and cumulatively.
+class ArtifactCensus {
+  const ArtifactCensus({
+    required this.hookArtifacts,
+    required this.hookBindings,
+    required this.forcedOverrides,
+    required this.commsAssignments,
+    required this.groupMembers,
+    required this.ragChunksByKind,
+    required this.signatures,
+    required this.decompilations,
+  });
+
+  /// Hook bodies in the artifact DB. NOTE: the firmware-scoped query
+  /// ignores the ELF hash today (known debt), so this counts the whole
+  /// catalog — reports label it accordingly.
+  final int hookArtifacts;
+  final int hookBindings;
+  final int forcedOverrides;
+  final int commsAssignments;
+
+  /// Symbols belonging to recognized object groups.
+  final int groupMembers;
+
+  /// RAG chunks by source kind (docs / symbols / hooks /
+  /// decompilations …). Empty when no RAG index exists.
+  final Map<String, int> ragChunksByKind;
+
+  /// Ghidra-derived rows for this firmware (0 when extraction never ran).
+  final int signatures;
+  final int decompilations;
+
+  int get ragChunksTotal =>
+      ragChunksByKind.values.fold(0, (a, b) => a + b);
+
+  int get total =>
+      hookArtifacts +
+      hookBindings +
+      forcedOverrides +
+      commsAssignments +
+      groupMembers +
+      ragChunksTotal +
+      signatures +
+      decompilations;
+
+  Map<String, dynamic> toJson() => {
+        'hook_artifacts': hookArtifacts,
+        'hook_bindings': hookBindings,
+        'forced_overrides': forcedOverrides,
+        'comms_assignments': commsAssignments,
+        'group_members': groupMembers,
+        'rag_chunks_by_kind': ragChunksByKind,
+        'signatures': signatures,
+        'decompilations': decompilations,
+      };
+
+  factory ArtifactCensus.fromJson(Map<String, dynamic> json) =>
+      ArtifactCensus(
+        hookArtifacts: json['hook_artifacts'] as int? ?? 0,
+        hookBindings: json['hook_bindings'] as int? ?? 0,
+        forcedOverrides: json['forced_overrides'] as int? ?? 0,
+        commsAssignments: json['comms_assignments'] as int? ?? 0,
+        groupMembers: json['group_members'] as int? ?? 0,
+        ragChunksByKind: (json['rag_chunks_by_kind'] as Map<String, dynamic>?)
+                ?.map((k, v) => MapEntry(k, v as int)) ??
+            const {},
+        signatures: json['signatures'] as int? ?? 0,
+        decompilations: json['decompilations'] as int? ?? 0,
       );
 }
 

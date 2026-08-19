@@ -79,6 +79,24 @@ class SynthesizerResult {
     this.manifest,
   });
 
+  /// Copy of this result carrying [manifest] instead — used when a
+  /// caller folds extra fields into the manifest (metrics enrichment,
+  /// auto-tune round telemetry) without touching the run outcome.
+  SynthesizerResult withManifest(SynthesisManifest manifest) =>
+      SynthesizerResult(
+        success: success,
+        totalIterations: totalIterations,
+        resolvedHooks: resolvedHooks,
+        resolvedHookCode: resolvedHookCode,
+        failedSymbol: failedSymbol,
+        lastPauseSymbol: lastPauseSymbol,
+        terminationReason: terminationReason,
+        finalExecutionSymbol: finalExecutionSymbol,
+        recentExecutionTrace: recentExecutionTrace,
+        totalDuration: totalDuration,
+        manifest: manifest,
+      );
+
   factory SynthesizerResult.fromJson(Map<String, dynamic> json) => SynthesizerResult(
       success: json['success'] as bool,
       totalIterations: json['totalIterations'] as int,

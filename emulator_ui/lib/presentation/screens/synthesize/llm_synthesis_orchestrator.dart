@@ -11,6 +11,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../providers/app_providers.dart';
+import '../../../providers/auto_tune_session_provider.dart';
 import '../../../providers/comms_bus_provider.dart';
 import '../../../providers/comms_config_providers.dart';
 import '../../../providers/comms_session_scope.dart';
@@ -157,11 +158,19 @@ class LlmSynthesisOrchestrator extends ChangeNotifier {
       // SynthesisController already writes manifests/<run_id>.json.
       final startedAt = DateTime.now();
       final projectDir = File(emulatorPath).parent.path;
+      final reportDir = Directory('$projectDir/autotune_reports/'
+          '${startedAt.toIso8601String().replaceAll(':', '-')}');
+      // A fresh session replaces whatever the session view was showing
+      // (a previous live run or a disk-hydrated one).
+      container
+          .read(autoTuneSessionProvider.notifier)
+          .beginLive(reportDir.path);
       final reportSink = AutoTuneReportSink(
-        reportDir: Directory('$projectDir/autotune_reports/'
-            '${startedAt.toIso8601String().replaceAll(':', '-')}'),
+        reportDir: reportDir,
         callGraph: callGraph,
         startedAt: startedAt,
+        artifactLabels:
+            await artifactLabelsFor(container.read(artifactDatabaseProvider)),
         color: false,
         log: debugPrint,
       );
@@ -188,6 +197,12 @@ class LlmSynthesisOrchestrator extends ChangeNotifier {
         reviewPolicy: policy,
         sink: MultiSink([uiSink, reportSink]),
         symbolGroups: symbolGroups,
+        ragStatus: () async {
+          final index = container.read(ragIndexProvider);
+          final project = container.read(currentEmulatorProvider);
+          if (index == null || project == null) return null;
+          return index.statusSnapshot(project);
+        },
       );
       _engine = engine;
 

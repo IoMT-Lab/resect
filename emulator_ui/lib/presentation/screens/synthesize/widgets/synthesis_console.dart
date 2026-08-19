@@ -6,11 +6,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme.dart';
 import '../../../../providers/app_providers.dart';
+import '../../../../providers/auto_tune_session_provider.dart';
 import '../../library/library_actions.dart';
 import '../llm_synthesis_orchestrator.dart';
 import '../synthesis_controller.dart';
 import 'auto_tune_config_dialog.dart';
 import 'auto_tune_modal.dart';
+import 'auto_tune_session_view.dart';
 import 'last_run_card.dart';
 import 'pre_synthesis_report.dart';
 import 'synthesis_report.dart';
@@ -119,6 +121,12 @@ class _IdleView extends ConsumerWidget {
                   if (_ready) const PreSynthesisReport(),
                   if (_ready) const SizedBox(height: 14),
                   if (_ready) const LastRunCard(),
+                  if (_ready &&
+                      (ref.watch(autoTuneSessionProvider)?.rounds.isNotEmpty ??
+                          false)) ...const [
+                    SizedBox(height: 14),
+                    AutoTuneSessionView(),
+                  ],
                   const SizedBox(height: 20),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -442,6 +450,14 @@ class _CompleteView extends ConsumerWidget {
               ),
               const SizedBox(height: 20),
               const SynthesisReport(),
+              // Session trajectory + metrics + compact report, when the
+              // last synthesis came from an auto-tune session (live this
+              // app run, or rehydrated from autotune_reports/).
+              if (ref.watch(autoTuneSessionProvider)?.rounds.isNotEmpty ??
+                  false) ...const [
+                SizedBox(height: 14),
+                AutoTuneSessionView(),
+              ],
               const SizedBox(height: 24),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,

@@ -52,6 +52,9 @@ SynthesisManifest buildManifest({
   SynthesisTerminationReason? terminationReason,
   String? finalExecutionSymbol,
   List<String>? recentExecutionTrace,
+  List<IterationTiming>? timing,
+  List<StopTiming>? stops,
+  PhaseTimings? phaseTimings,
 }) {
   final decisions = <ManifestDecision>[];
   final symbols = attempts.keys.toList()..sort();
@@ -99,5 +102,8 @@ SynthesisManifest buildManifest({
     terminationReason: terminationReason,
     finalExecutionSymbol: finalExecutionSymbol,
     recentExecutionTrace: recentExecutionTrace,
+    timing: timing,
+    stops: stops,
+    phaseTimings: phaseTimings,
   );
 }

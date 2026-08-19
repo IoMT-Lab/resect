@@ -540,6 +540,290 @@ void main() {
     expect(sink.roundNumbers, [0, 1]);
   });
 
+  test('a Return-0 on a proven parent is WARNED and applied; a round '
+      'that collapses coverage is REVERTED and remembered', () async {
+    // Graph: P calls L; L carries a working override. Baseline executed
+    // P and L plus more (10 symbols). The model wrapper-kills P; the
+    // engine warns but applies (measure-don't-predict), the round's
+    // coverage collapses, so the round is reverted: overlays restored,
+    // feedback carries the poisoned move with the measured outcome.
+    final db = await _db();
+    final returnZeroId = await db.addArtifact(
+      artifactType: 'renode_hook',
+      artifactData: 'return Create(0, cpu.GetRegister(0).RawValue)',
+      origin: 'default',
+      name: 'return0',
+      architecture: 'ARM',
+    );
+    final baselineExecuted = [
+      'P', 'L', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h',
+    ];
+    final sink = _RecordingSink();
+    final synth = _ScriptedSynth([
+      _result(runId: 'r0', success: true, executed: baselineExecuted),
+      _result(runId: 'r1', success: true, executed: ['P']), // collapse
+    ]);
+    final client = LlmClient(host: 'localhost:11435', model: 'gemma4:e4b');
+    final recommender = _ScriptedRecommender(
+      [
+        _recs([
+          SetForcedOverride(
+              rationale: 'skip it', symbol: 'P', artifactId: returnZeroId),
+        ]),
+        _recs(const []), // after the revert: converge
+      ],
+      llmClient: client,
+      insightService: LastRunInsightService(llmClient: client),
+      artifactDb: ArtifactDatabase.forTesting(NativeDatabase.memory()),
+    );
+    final engine = AutoTuneEngine(
+      runSynthesis: synth.call,
+      recommendationService: recommender,
+      artifactDb: db,
+      reviewPolicy: const AcceptAllReviewPolicy(),
+      sink: sink,
+      now: () => DateTime.utc(2026),
+    );
+
+    final project = Emulator.create(name: 'test')
+        .copyWith(hookOverrides: {'L': returnZeroId});
+    final reason = await engine.run(
+      project: project,
+      elfHash: 'h',
+      callGraph: _edgeGraph({
+        'P': ['L'],
+        'L': [],
+      }),
+      config: const AutoTuneConfig(maxRounds: 3),
+    );
+
+    expect(reason, AutoTuneStopReason.llmEmpty);
+    expect(synth.callCount, 2, reason: 'warned move still runs — once');
+    // The kill was APPLIED for round 1's synthesis — the snapshot copies
+    // the overlay maps at emit time, before the rollback...
+    final round1 = sink.reports[1];
+    expect(round1.snapshot.hookOverrides['P'], returnZeroId);
+    // ...the report is marked reverted and carries the warning...
+    expect(round1.reverted, isTrue);
+    expect(round1.warnings.join(' '), contains('working hooks beneath'));
+    // ...and the LIVE overlays were rolled back in place (P's kill gone,
+    // L's hook intact) — overlaysAt aliases the live instance.
+    expect(synth.overlaysAt(1).hookOverrides.containsKey('P'), isFalse,
+        reason: 'in-place restore removed the reverted override');
+    expect(synth.overlaysAt(1).hookOverrides['L'], returnZeroId);
+    // ...and the next round's feedback names the poisoned move + outcome.
+    final fb = recommender.seenFeedback[1];
+    expect(fb, isNotNull);
+    expect(fb!.revertedMoves, hasLength(1));
+    expect((fb.revertedMoves.single as SetForcedOverride).symbol, 'P');
+    expect(fb.revertedOutcome, contains('10'));
+    expect(fb.revertedOutcome, contains('1'));
+  });
+
+  test('backstop refuses overrides on entry points outright', () async {
+    final db = await _db();
+    final returnZeroId = await db.addArtifact(
+      artifactType: 'renode_hook',
+      artifactData: 'return Create(0, cpu.GetRegister(0).RawValue)',
+      origin: 'default',
+      name: 'return0',
+      architecture: 'ARM',
+    );
+    final sink = _RecordingSink();
+    final synth = _ScriptedSynth([
+      _result(runId: 'r0', success: true, executed: ['main']),
+    ]);
+    final engine = AutoTuneEngine(
+      runSynthesis: synth.call,
+      recommendationService: _scripted([
+        _recs([
+          SetForcedOverride(
+              rationale: 'skip main', symbol: 'main', artifactId: returnZeroId),
+        ]),
+        _recs(const []),
+      ]),
+      artifactDb: db,
+      reviewPolicy: const AcceptAllReviewPolicy(),
+      sink: sink,
+      now: () => DateTime.utc(2026),
+    );
+
+    final reason = await engine.run(
+      project: _project(),
+      elfHash: 'h',
+      callGraph: _callGraph(['main']),
+      config: const AutoTuneConfig(maxRounds: 3),
+    );
+
+    expect(reason, AutoTuneStopReason.llmEmpty);
+    expect(synth.callCount, 1, reason: 'main must never be overridden');
+  });
+
+  test('escalation batch skips are applied with a multi-skip warning; '
+      'a winning batch is kept', () async {
+    // Baseline + a stagnant round trigger escalation; the model answers
+    // with a 3-caller batch kill. The engine warns (multi-skip) but
+    // applies all three; the batch IMPROVES coverage, so it is kept.
+    final db = await _db();
+    final returnZeroId = await db.addArtifact(
+      artifactType: 'renode_hook',
+      artifactData: 'return Create(0, cpu.GetRegister(0).RawValue)',
+      origin: 'default',
+      name: 'return0',
+      architecture: 'ARM',
+    );
+    final sink = _RecordingSink();
+    final executed = ['P1', 'P2', 'P3'];
+    final synth = _ScriptedSynth([
+      _result(runId: 'r0', success: true, executed: executed),
+      _result(runId: 'r1', success: true, executed: executed), // stagnant
+      _result(
+          runId: 'r2',
+          success: true,
+          executed: ['P1', 'P2', 'P3', 'x1', 'x2']), // batch wins
+    ]);
+    final engine = AutoTuneEngine(
+      runSynthesis: synth.call,
+      recommendationService: _scripted([
+        _recs([_pref('x1', 4)]),
+        _recs([
+          SetForcedOverride(
+              rationale: 'k1', symbol: 'P1', artifactId: returnZeroId),
+          SetForcedOverride(
+              rationale: 'k2', symbol: 'P2', artifactId: returnZeroId),
+          SetForcedOverride(
+              rationale: 'k3', symbol: 'P3', artifactId: returnZeroId),
+        ]),
+      ]),
+      artifactDb: db,
+      reviewPolicy: const AcceptAllReviewPolicy(),
+      sink: sink,
+      now: () => DateTime.utc(2026),
+    );
+
+    final reason = await engine.run(
+      project: _project(),
+      elfHash: 'h',
+      callGraph: _edgeGraph({
+        'P1': ['x1'],
+        'P2': ['x2'],
+        'P3': ['x3'],
+        'x1': [],
+        'x2': [],
+        'x3': [],
+      }),
+      config: const AutoTuneConfig(maxRounds: 2),
+    );
+
+    expect(reason, AutoTuneStopReason.maxRounds);
+    final finalOverlays = synth.overlaysAt(synth.callCount - 1);
+    expect(finalOverlays.hookOverrides['P1'], returnZeroId);
+    expect(finalOverlays.hookOverrides['P2'], returnZeroId);
+    expect(finalOverlays.hookOverrides['P3'], returnZeroId);
+    final round2 = sink.reports.last;
+    expect(round2.reverted, isFalse, reason: 'the batch improved coverage');
+    expect(round2.refusedDestructive, isEmpty);
+    expect(round2.warnings.join(' '), contains('3 wrapper-skips'));
+  });
+
+  test('a CONSTANT on a time reader is WARNED, not refused; both moves '
+      'apply', () async {
+    final db = await _db();
+    final returnOneId = await db.addArtifact(
+      artifactType: 'renode_hook',
+      artifactData: 'return Create(1, cpu.GetRegister(0).RawValue)',
+      origin: 'default',
+      name: 'return1',
+      architecture: 'ARM',
+    );
+    final incrementId = await db.addArtifact(
+      artifactType: 'renode_hook',
+      artifactData: "incrementVariable('value', 0)\nreturn value",
+      origin: 'default',
+      name: 'increment',
+      architecture: 'ARM',
+    );
+    final sink = _RecordingSink();
+    final synth = _ScriptedSynth([
+      _result(runId: 'r0', success: true, executed: ['A']),
+      _result(runId: 'r1', success: true, executed: ['A', 'B']),
+    ]);
+    final client = LlmClient(host: 'localhost:11435', model: 'gemma4:e4b');
+    final recommender = _ScriptedRecommender(
+      [
+        _recs([
+          SetForcedOverride(
+              rationale: 'freeze it',
+              symbol: 'LL_RADIO_TIMER_GetAbsoluteTime',
+              artifactId: returnOneId),
+          SetForcedOverride(
+              rationale: 'advance it',
+              symbol: 'HAL_GetTick',
+              artifactId: incrementId),
+        ]),
+        _recs(const []),
+      ],
+      llmClient: client,
+      insightService: LastRunInsightService(llmClient: client),
+      artifactDb: ArtifactDatabase.forTesting(NativeDatabase.memory()),
+    );
+    final engine = AutoTuneEngine(
+      runSynthesis: synth.call,
+      recommendationService: recommender,
+      artifactDb: db,
+      reviewPolicy: const AcceptAllReviewPolicy(),
+      sink: sink,
+      now: () => DateTime.utc(2026),
+    );
+
+    await engine.run(
+      project: _project(),
+      elfHash: 'h',
+      callGraph: _callGraph(
+          ['A', 'B', 'LL_RADIO_TIMER_GetAbsoluteTime', 'HAL_GetTick']),
+      config: const AutoTuneConfig(maxRounds: 2),
+    );
+
+    // The constant on the time reader is WARNED but applied — the
+    // measure-and-revert loop, not name patterns, is the enforcement.
+    final round1 = sink.reports[1];
+    expect(round1.refusedDestructive, isEmpty);
+    expect(round1.warnings.join(' '), contains('frozen time/counter'));
+    final applied = synth.overlaysAt(1).hookOverrides;
+    expect(applied['HAL_GetTick'], incrementId);
+    expect(applied['LL_RADIO_TIMER_GetAbsoluteTime'], returnOneId);
+  });
+
+  test('duplicate recommendations within one response are deduped',
+      () async {
+    final sink = _RecordingSink();
+    final synth = _ScriptedSynth([
+      _result(runId: 'r0', failedSymbol: 'A', triedArtifactId: 1),
+      _result(runId: 'r1', success: true, executed: ['A', 'B']),
+    ]);
+    final engine = AutoTuneEngine(
+      runSynthesis: synth.call,
+      recommendationService: _scripted([
+        _recs([_pref('A', 4), _pref('A', 4), _pref('A', 4)]),
+        _recs(const []),
+      ]),
+      artifactDb: await _db(),
+      reviewPolicy: const AcceptAllReviewPolicy(),
+      sink: sink,
+      now: () => DateTime.utc(2026),
+    );
+
+    await engine.run(
+      project: _project(),
+      elfHash: 'h',
+      callGraph: _callGraph(['A', 'B']),
+      config: config2,
+    );
+
+    expect(sink.reports[1].appliedRecommendations, hasLength(1),
+        reason: 'three identical entries are one move');
+  });
+
   test('cancel during a pending review ends the session as cancelled',
       () async {
     final sink = _RecordingSink();
@@ -578,6 +862,71 @@ void main() {
     expect(reason, AutoTuneStopReason.cancelled);
     expect(sink.finishedReason, AutoTuneStopReason.cancelled);
     expect(synth.callCount, 1, reason: 'no synthesis after cancel');
+  });
+
+  test('round reports carry advisor timing and an artifact census',
+      () async {
+    final sink = _RecordingSink();
+    final synth = _ScriptedSynth([
+      _result(runId: 'r0', failedSymbol: 'A', triedArtifactId: 7),
+      _result(runId: 'r1', success: true, executed: ['A', 'B']),
+    ]);
+    final engine = AutoTuneEngine(
+      runSynthesis: synth.call,
+      recommendationService: _scripted([
+        _recs([_pref('A', 4)]),
+        _recs(const []),
+      ]),
+      artifactDb: await _db(),
+      reviewPolicy: const AcceptAllReviewPolicy(),
+      sink: sink,
+      now: () => DateTime.utc(2026),
+    );
+
+    await engine.run(
+      project: _project(),
+      elfHash: 'h',
+      callGraph: _callGraph(['A', 'B']),
+      config: config2,
+    );
+
+    final baseline = sink.reports[0];
+    final round1 = sink.reports[1];
+    // The baseline runs before any advisor call — no advisor time.
+    expect(baseline.advisorSeconds, isNull);
+    expect(round1.advisorSeconds, isNotNull);
+    expect(round1.advisorSeconds, greaterThanOrEqualTo(0));
+    // Census is computed for every round from the artifact DB (an
+    // in-memory DB here — the counts just have to exist, not be big).
+    expect(baseline.census, isNotNull);
+    expect(round1.census, isNotNull);
+    // No RAG provider was wired → empty chunk counts, never a crash.
+    expect(round1.census!.ragChunksByKind, isEmpty);
+    // The advisor exchanges carry their wall time for the trace file.
+    expect(sink.exchanges.first.durationSeconds, isNotNull);
+    // The telemetry is FOLDED into the round manifest, so the written
+    // round_NN_manifest.json (and any disk reader) carries it too.
+    final foldedTimings = round1.result.manifest!.phaseTimings;
+    expect(foldedTimings, isNotNull);
+    expect(foldedTimings!.advisorSeconds, round1.advisorSeconds);
+    expect(round1.result.manifest!.census, isNotNull);
+    // The snapshot records the round's reverted/warnings flags (false /
+    // empty on an ordinary round) so session views can read them after
+    // a project reopen.
+    expect(round1.snapshot.reverted, isFalse);
+    expect(round1.snapshot.warnings, isEmpty);
+  });
+
+  test('enrichment records coverage numbers on the metrics', () {
+    final enriched = enrichSynthesizerResult(
+      result: _result(runId: 'r0', success: true),
+      callGraph: _callGraph(['A', 'B', 'C', 'D']),
+      executedSymbols: {'A', 'B', 'C'},
+    );
+    final metrics = enriched.manifest!.metrics!;
+    expect(metrics.executedCount, 3);
+    expect(metrics.totalSymbols, 4);
+    expect(metrics.coverageRatio, closeTo(0.75, 1e-9));
   });
 }
 
@@ -746,6 +1095,19 @@ CallGraph _callGraph(List<String> symbols) => CallGraph(
       symbols: {
         for (final s in symbols)
           s: cg_sym.Symbol(name: s, numInstructions: 1, calledSymbols: const {}),
+      },
+    );
+
+/// Call graph with explicit caller → callee edges.
+CallGraph _edgeGraph(Map<String, List<String>> edges) => CallGraph(
+      elfPath: '/dev/null',
+      symbols: {
+        for (final e in edges.entries)
+          e.key: cg_sym.Symbol(
+            name: e.key,
+            numInstructions: 1,
+            calledSymbols: {for (final c in e.value) c: 1},
+          ),
       },
     );
 
