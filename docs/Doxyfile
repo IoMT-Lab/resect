@@ -27,4 +27,11 @@ USE_MDFILE_AS_MAINPAGE = docs/pages/index.md
 # still rendered, just not indexed.
 TOC_INCLUDE_HEADINGS   = 3
 
+# No source code is scanned, so the only graphs Doxygen would produce are
+# directory-dependency diagrams of docs/pages — noise, and they require
+# Graphviz. Keep graph generation off entirely.
+HAVE_DOT               = NO
+CLASS_GRAPH            = NO
+DIRECTORY_GRAPH        = NO
+
 QUIET                  = YES

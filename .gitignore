@@ -62,3 +62,6 @@ workdir/
 !workdir/example/Example.emu
 
 !docker/resect.config
+
+# Working papers / drafts — not part of the shipped repo
+papers/

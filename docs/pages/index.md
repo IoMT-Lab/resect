@@ -43,12 +43,14 @@ each one stands alone.
 
 ### Part I — Getting oriented
 
-- @subpage getting_started — install Resect and run your first synthesis in
-  about five minutes.
+- @subpage getting_started — run your first synthesis, in a container or on
+  the host.
+- @subpage containers — the Docker stack: services, volumes, scripts, and
+  what the images deliberately leave out.
 - @subpage where_things_live — a "pick a process, get the files" index for
   navigating the layered codebase.
-- @subpage workspace_layout — the packages in this repository and the sibling
-  repositories they depend on.
+- @subpage workspace_layout — the packages in this repository and the hosted
+  engine packages they depend on.
 - @subpage storage_map — every file and database Resect writes on disk, and
   why it lives where it does.
 - @subpage cli — driving Resect headlessly from the command line.
@@ -78,9 +80,14 @@ each one stands alone.
   maps that decide which hook a symbol gets.
 - @subpage symbol_groups — recognizing peripheral "objects" from symbol
   names and hooking their member functions together.
+- @subpage pre_synthesis — everything before iteration one: the call graph,
+  the annotation layer, the three classifiers, and how hook candidates get
+  ranked.
 - @subpage synthesis — a single synthesizer run, iteration by iteration.
 - @subpage autotune — the closed loop that runs synthesis repeatedly and
   lets an LLM tune the setup between rounds.
+- @subpage autotune_decisions — what the LLM is shown each round, what it may
+  answer, and what happens to the answer.
 - @subpage comms_virtualization — how firmware I2C/SPI/UART traffic is
   forwarded out of the emulator to a virtual device.
 

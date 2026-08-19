@@ -1,7 +1,7 @@
 import 'package:emulator_orchestrator/data/models/comms_assignment.dart';
-import 'package:emulator_orchestrator/services/hooks/hook_catalog.dart';
 import 'package:emulator_orchestrator/orchestrator/comms/comms_bus_service.dart';
 import 'package:emulator_orchestrator/orchestrator/comms/device_handler.dart';
+import 'package:emulator_orchestrator/services/hooks/hook_catalog.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'comms_config_providers.dart';
@@ -67,29 +67,15 @@ class CommsBusController {
               prevCfg.handler != nextCfg.handler);
 
       if (shouldRun && (!isRunning || settingsChanged)) {
-        // try {
-        //   await service.start(cls, nextCfg.port, _makeHandler(nextCfg.handler));
-        // } on PortInUseException catch (e) {
-        //   // Bounce the toggle back to false so the UI reflects reality.
-        //   // ignore: avoid_print
-        //   print('Comms bus ($cls): $e — disabling Virtualize.');
-        //   final current = _ref.read(commsProtocolConfigProvider);
-        //   final updated = Map<CommsClass, CommsProtocolConfig>.from(current);
-        //   updated[cls] = nextCfg.copyWith(virtualized: false);
-        //   _ref.read(commsProtocolConfigProvider.notifier).state = updated;
-        // }
+        // Deliberately no start here: bus servers are SESSION-scoped
+        // now — CommsSessionScope (comms_session_scope.dart) starts
+        // them around each synthesis/auto-tune run through the shared
+        // startCommsSession, honoring the tab's configs when any
+        // protocol is virtualized. This controller only reconciles
+        // stops when a toggle turns off outside a run.
       } else if (!shouldRun && isRunning) {
         await service.stop(cls);
       }
-    }
-  }
-
-  static DeviceHandler _makeHandler(CommsDeviceHandlerKind kind) {
-    switch (kind) {
-      case CommsDeviceHandlerKind.zero:
-        return const ZeroDeviceHandler();
-      case CommsDeviceHandlerKind.random:
-        return const RandomDeviceHandler();
     }
   }
 }

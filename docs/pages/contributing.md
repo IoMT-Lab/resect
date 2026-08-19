@@ -6,21 +6,26 @@ these docs) in the shape the @ref architecture describes.
 ## Dev setup
 
 1. Clone this repo and run `./install.sh` (see @ref getting_started).
-2. For work that touches the sibling packages, clone them next to this
-   repo (`renode-dart`, `callgraph-dart`, `hooks-dart`, `signatures-dart`,
-   `lints-dart`) and create the git-ignored `pubspec_overrides.yaml`
-   redirecting to them — @ref workspace_layout explains the wiring and its
-   pitfalls.
-3. LLM features need Ollama, signature features need Ghidra; both install
-   from **Tools ▸ System Configuration** inside the app. Machine-local
-   paths and module toggles live in `resect.config`.
+2. The engine packages resolve from the hosted package repository, so no
+   sibling checkouts are needed to build. To co-develop one, add a
+   git-ignored `pubspec_overrides.yaml` pointing at your local checkout —
+   and remember that shipping the change needs a **version bump**, because
+   the hosted repository serves immutable versions. @ref workspace_layout has
+   the details.
+3. Emulation needs a reachable Renode **server** (`RENODE_HOST`/`RENODE_PORT`
+   in `resect.config`) — the container stack provides one; otherwise start a
+   patched portable build in server mode yourself. LLM features need Ollama;
+   signature features need Ghidra. The latter two install from
+   **Tools ▸ System Configuration** inside the app.
 
 ## Running things
 
     ./run.sh                 # the desktop app (add --regen after DB schema edits)
-    dart run emulator_orchestrator:cli --help    # headless
+    dart run emulator_orchestrator:cli --help    # headless, on the host
+    ./scripts/run_cli.sh                         # headless, in the container
 
-The CLI commands have their own page: @ref cli.
+The CLI commands have their own page: @ref cli; the container stack is
+@ref containers.
 
 ## Tests
 
@@ -34,7 +39,9 @@ relevant one when you touch its subsystem.
 One rule: **a clean analyzer is not a passing test, and a passing test is
 not a working feature.** Before calling a change done, run the
 concrete thing — the CLI command, the UI flow, the tool script — and watch
-it do what you claimed.
+it do what you claimed. For anything touching the loops, run it the way
+users will: through the container stack, and say which image you used
+(pulled or locally built).
 
 ## Code conventions
 

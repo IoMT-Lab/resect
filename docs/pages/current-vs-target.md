@@ -50,46 +50,16 @@ Nothing stands between callers and the raw
   `emulator_ui/lib/presentation/dialogs/hook_database_dialog.dart`
   (~1850 lines) and `llm_hook_gen_dialog.dart` (~1277 lines).
 - The "generate a hook with the LLM, store it, and seed a binding" sequence
-  is written out **three times**:
+  is written out **twice**:
   `AutoTuneEngine._generateAndSeedCustomHooks`
-  (`emulator_orchestrator/lib/orchestrator/auto_tune_engine.dart`),
-  `LlmSynthesisOrchestrator._generateAndSeedCustomHooks`
-  (`emulator_ui/.../llm_synthesis_orchestrator.dart`), and
+  (`emulator_orchestrator/lib/orchestrator/auto_tune_engine.dart`) and
   `SynthesizerWorkflow._tryLlmFallback`
   (`emulator_orchestrator/lib/orchestrator/workflows/synthesizer_workflow.dart`).
+  (A third copy in the UI's old auto-tune loop was deleted when the UI
+  adopted the engine.)
 
 Target: the five-verb @ref controller_artifacts, with the triplicated logic
 folded into one `generateAndBind`. Closed by roadmap phase @ref phase_p3.
-
-## Gap 3 — Two auto-tune loops {#gap_two_loops}
-
-The [auto-tune](@ref gloss_autotune) loop exists twice:
-
-- The engine: `AutoTuneEngine`
-  (`emulator_orchestrator/lib/orchestrator/auto_tune_engine.dart`) —
-  UI-agnostic, pluggable [review policy](@ref gloss_review_policy) and
-  [sink](@ref gloss_sink). **Used only by the CLI.**
-- The UI's own copy: `LlmSynthesisOrchestrator`
-  (`emulator_ui/lib/presentation/screens/synthesize/llm_synthesis_orchestrator.dart`)
-  — a `ChangeNotifier` wired directly to Riverpod. It **lags the engine**:
-  no [stagnation](@ref gloss_stagnation) guard, no no-op recommendation
-  filtering, no escalation feedback, no per-round recommendation cap.
-
-So a UI auto-tune session can churn to `maxRounds` on stagnant coverage
-where a CLI session stops early with `noCoverageProgress`. The two share the
-recommendation-apply step (`recommendation_overlay_applier.dart`) but
-nothing else. Target: the UI adopts the engine with an interactive review
-policy; the UI copy is deleted. Closed by roadmap phase @ref phase_p4.
-
-## Gap 4 — Triplicated fidelity enrichment {#gap_fidelity}
-
-Folding [fidelity](@ref gloss_fidelity) metrics into a run result is written
-out three times: `SynthesisController._enrichManifest` (UI),
-`LlmSynthesisOrchestrator._recomputeMetrics` (UI), and
-`enrichManifestWithMetrics` / `enrichSynthesizerResult`
-(`auto_tune_engine.dart`, used by the CLI). The CLI `synthesize` command and
-the HTTP API also compute fidelity inline instead of calling the shared
-helper. Closed by roadmap phase @ref phase_p1.
 
 ## Gap 5 — Layering leaks {#gap_layering}
 
@@ -134,13 +104,36 @@ them yet:
   `DartCallGraphSource` otherwise. The CLI is hard-wired to the objdump
   source — so the UI and the CLI can produce different call graphs for the
   same project.
-- A clean `dart pub get` without local sibling checkouts is blocked on a
-  hooks-dart → renode-dart git-ref conflict (tracked in `TODO.txt`).
+- **The headless path has no annotation layer.** The
+  [classifier](@ref gloss_classifier) binding-seed pass runs only from the
+  UI's project-open path (`_seedClassifierBindings` in
+  `emulator_ui/lib/presentation/screens/library/library_actions.dart`), and
+  the [container](@ref containers) images ship no Ghidra, no `GHIDRA_DIR`,
+  and no `MODULE_GHIDRA`. So the surface that runs unattended for dozens of
+  [rounds](@ref gloss_round) is the one reasoning with the least
+  information — no decompiled bodies, no classifier
+  [bindings](@ref gloss_binding), no frontier annotations. Detail in
+  @ref pre_synthesis; the open question is how Ghidra becomes available in
+  the container path (bake it into the image, install it into the volume, or
+  pre-extract on the host).
+- **Per-symbol hook candidates aren't filtered.**
+  `ArtifactDatabase.getArtifactsForSymbolByName(elfHash, symbol)` ignores
+  both arguments and returns `getAllArtifacts()`, so every symbol's
+  candidate list is the whole catalog, ranked only by score
+  (@ref pre_synthesis).
+- **[Auto-tune](@ref gloss_autotune) keeps no best-so-far anchor.** Overlays
+  are cumulative and mutated in place with no revert, so a session that
+  peaks mid-run and then regresses finishes holding its last result rather
+  than its best one. `RoundSnapshot` already records per-round metrics, so
+  the comparison data exists (@ref autotune_decisions).
 
 ## In short
 
-Six gaps stand between today's code and the
-[architecture](@ref architecture): no project
-controller, no artifact controller, a duplicated auto-tune loop, triplicated
-fidelity math, two layering leaks, and business logic in widgets. Every one
-has a scheduled phase in the @ref roadmap. This page shrinks as they land.
+Four gaps stand between today's code and the
+[architecture](@ref architecture): no project controller, no artifact
+controller, two layering leaks, and business logic in widgets. (The
+duplicated auto-tune loop and the triplicated fidelity math are closed —
+both surfaces now drive one engine and one enrichment path.) Every
+remaining gap has a scheduled phase in the @ref roadmap. This page shrinks
+as they land. The known debts below it are unscheduled, and the biggest of
+them is that the headless surface runs without the annotation layer.

@@ -25,9 +25,11 @@ dependencies:
     version: ^1.0.0
 
 dev_dependencies:
+  # Test-only: in-memory ArtifactDatabase for the auto-tune parity test.
+  drift: ^2.15.0
   flutter_test:
     sdk: flutter
-  iomt_lab_lints: 
+  iomt_lab_lints:
     hosted: https://nexus.medmakers.io/repository/pub
     version: ^1.0.0
 

@@ -34,6 +34,18 @@ read/write role — `HAL_I2C_Mem_Read` → i2c/read. You review and adjust the
 result in the Comms tab; assignments are stored per symbol on the
 [project](@ref gloss_project) (`commsAssignments`).
 
+Both surfaces run this step through one shared merge
+(`mergeCommsAssignments` in
+`emulator_orchestrator/lib/services/comms/comms_assignment_merge.dart`):
+entries already on the project win, symbols new to the call graph get the
+classifier's suggestion, symbols dropped from the graph are pruned. The UI
+re-runs it on every graph load; the CLI runs it at the start of every
+`synthesize` and `autotune`, in memory — `autotune --save-comms` persists
+the result back into the `.emu`. One caveat travels with the presence-wins
+rule: an assignment records no provenance, so a persisted classifier
+suggestion is indistinguishable from a deliberate reassignment and will
+outrank an improved classifier later.
+
 Name-pattern matching is deliberately simple, and it can be wrong in ways
 that matter — which is why Step 3's gate exists: `get_i2c` *looks* like an
 I2C read but is actually a zero-argument accessor that just returns a bus
@@ -42,12 +54,20 @@ handle.
 ## Step 2 — Configure and serve
 
 Per protocol you choose a UDP port, a device handler, and whether the
-protocol is virtualized at all. When a run starts with virtualization on,
-`CommsBusService`
-(`emulator_orchestrator/lib/orchestrator/comms/comms_bus_service.dart`)
-opens one UDP server per protocol. Built-in handlers: `ZeroDeviceHandler`
-(every read returns zeros — enough to get past polling loops) and
-`RandomDeviceHandler`.
+protocol is virtualized at all. Bus servers are **session-scoped**: every
+synthesis or auto-tune run brackets them through the shared
+`startCommsSession`
+(`emulator_orchestrator/lib/orchestrator/comms/comms_session.dart`), which
+opens one `CommsBusService` UDP server per virtualized protocol at run
+start and stops them when the run ends. Built-in handlers:
+`ZeroDeviceHandler` (every read returns zeros — enough to get past polling
+loops) and `RandomDeviceHandler`.
+
+The defaults are the same on both surfaces: when nothing is explicitly
+configured, a run virtualizes i2c/uart/spi with zero-fill servers on ports
+1234/1235/1236 — exactly what `resect-cli` does. In the UI, the Comms tab
+wins wholesale the moment ANY protocol's Virtualize toggle is on: the
+session then uses the tab's ports and handler kinds verbatim.
 
 ## Step 3 — Build the forwarding hooks, with the arg-count gate
 
@@ -73,7 +93,7 @@ run.
 ## The wire protocol
 
 One fixed-size 41-byte datagram each way, defined identically in the hook
-side (`hooks-dart/lib/resources/python/comms.py`) and the Dart side —
+side (`comms.py`, in the `resect_hooks` package) and the Dart side —
 Python struct format `'!cHHHH32s'`:
 
 | Field | Size | Meaning (request → / response ←) |
@@ -111,7 +131,7 @@ at `comms_config.dart:87` because there is no `spi_read`/`spi_write` catalog
 descriptor, no `spi_hooks.dart`, no `spi_remote.py`, and no `extractSpiParams`.
 **Planned:** reconcile the one-hot encoder with the sequential `Format` enum
 so UART parses, and build the SPI forwarder + remote module + glue extractor
-end to end. The wire pieces live in `hooks-dart`.
+end to end. The wire pieces live in `resect_hooks` (@ref workspace_layout).
 **Why:** the classifier already assigns UART and SPI roles, so firmware that
 talks over those buses is silently unserved — the requests either throw
 (UART) or are never forwarded at all (SPI).

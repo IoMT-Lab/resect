@@ -6,6 +6,8 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 
+import '../data/models/synthesis_manifest.dart' show ManifestDecision;
+import '../orchestrator/auto_tune_engine.dart' show enrichSynthesizerResult;
 import '../orchestrator/emulation_orchestrator.dart';
 import '../orchestrator/engine/call_graph_source.dart';
 import '../services/analysis/fidelity_calculator.dart';
@@ -216,9 +218,11 @@ class ApiServer {
 
       await traceSubscription.cancel();
 
-      final responseJson = result.toJson();
+      var responseJson = result.toJson();
 
-      // Compute fidelity metrics
+      // Enrich + fidelity through the shared path (same numbers as the
+      // UI, CLI, and auto-tune reports: hooked set = manifest decisions).
+      // Best-effort; don't fail the whole response.
       try {
         final callGraph = await orchestrator.generateCallGraph(elfPath);
         Set<String> subgraphSymbols = const {};
@@ -227,9 +231,20 @@ class ApiServer {
             callGraph, startFrom, endAt.first,
           ).union(executedSymbols);
         }
+        final enriched = enrichSynthesizerResult(
+          result: result,
+          callGraph: callGraph,
+          executedSymbols: executedSymbols,
+          subgraphSymbols: subgraphSymbols,
+        );
+        responseJson = enriched.toJson();
         final fidelity = FidelityCalculator.compute(
           callGraph: callGraph,
-          hookedSymbols: result.resolvedHooks.keys.toSet(),
+          hookedSymbols: {
+            for (final d
+                in enriched.manifest?.decisions ?? const <ManifestDecision>[])
+              d.symbol,
+          },
           traversedSymbols: executedSymbols,
           subgraphSymbols: subgraphSymbols,
         );

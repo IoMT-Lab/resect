@@ -173,8 +173,7 @@ class _RowControls extends StatelessWidget {
   final VoidCallback onEdit;
 
   @override
-  Widget build(BuildContext context) {
-    return Row(
+  Widget build(BuildContext context) => Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         _ActionButton(
@@ -202,7 +201,6 @@ class _RowControls extends StatelessWidget {
         ),
       ],
     );
-  }
 }
 
 class _ActionButton extends StatelessWidget {
@@ -221,8 +219,7 @@ class _ActionButton extends StatelessWidget {
   final Color selectedColor;
 
   @override
-  Widget build(BuildContext context) {
-    return Tooltip(
+  Widget build(BuildContext context) => Tooltip(
       message: label,
       child: IconButton(
         icon: Icon(icon),
@@ -237,7 +234,6 @@ class _ActionButton extends StatelessWidget {
         ),
       ),
     );
-  }
 }
 
 class _KindChip extends StatelessWidget {
@@ -429,8 +425,7 @@ class _RecommendationEditorDialogState
   }
 
   @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
+  Widget build(BuildContext context) => AlertDialog(
       title: const Text('Edit recommendation'),
       content: SizedBox(
         width: 380,
@@ -463,7 +458,6 @@ class _RecommendationEditorDialogState
         FilledButton(onPressed: _submit, child: const Text('Save')),
       ],
     );
-  }
 
   List<Widget> _kindSpecificFields() {
     final r = widget.original;

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:drift/drift.dart' show driftRuntimeOptions;
 import 'package:drift/native.dart';
 import 'package:emulator_orchestrator/data/database/artifact_database.dart';
@@ -6,16 +8,16 @@ import 'package:emulator_orchestrator/data/models/call_graph.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/models/hook_decision_state.dart';
 import 'package:emulator_orchestrator/data/models/recommendation.dart';
-import 'package:emulator_orchestrator/data/models/symbol_group.dart';
 import 'package:emulator_orchestrator/data/models/round_snapshot.dart';
 import 'package:emulator_orchestrator/data/models/symbol.dart' as cg_sym;
+import 'package:emulator_orchestrator/data/models/symbol_group.dart';
 import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart';
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
+import 'package:emulator_orchestrator/orchestrator/auto_tune_engine.dart';
 import 'package:emulator_orchestrator/services/analysis/coverage_frontier.dart';
 import 'package:emulator_orchestrator/services/llm/last_run_insight_service.dart';
 import 'package:emulator_orchestrator/services/llm/llm_client.dart';
 import 'package:emulator_orchestrator/services/llm/recommendation_service.dart';
-import 'package:emulator_orchestrator/orchestrator/auto_tune_engine.dart';
 import 'package:test/test.dart';
 
 /// Engine loop tests. They exercise the real [AutoTuneEngine] against a
@@ -445,6 +447,138 @@ void main() {
     expect(sink.phases, contains(AutoTunePhase.llmGenerating));
     expect(sink.phases, contains(AutoTunePhase.synthesizing));
   });
+
+  test('prompt history window holds the MOST RECENT N rounds', () async {
+    // 4 LLM rounds with window 2: by the round-4 call the history holds
+    // rounds 0..3 and the window must be [2, 3], not the oldest [0, 1].
+    final sink = _RecordingSink();
+    final synth = _ScriptedSynth([
+      _result(runId: 'r0', failedSymbol: 'A', triedArtifactId: 1),
+      _result(runId: 'r1', failedSymbol: 'B', triedArtifactId: 2),
+      _result(runId: 'r2', failedSymbol: 'C', triedArtifactId: 3),
+      _result(runId: 'r3', failedSymbol: 'D', triedArtifactId: 4),
+      _result(runId: 'r4', failedSymbol: 'E', triedArtifactId: 5),
+    ]);
+    final client = LlmClient(host: 'localhost:11435', model: 'gemma4:e4b');
+    final recommender = _ScriptedRecommender(
+      [
+        _recs([_pref('A', 6)]),
+        _recs([_pref('B', 6)]),
+        _recs([_pref('C', 6)]),
+        _recs([_pref('D', 6)]),
+      ],
+      llmClient: client,
+      insightService: LastRunInsightService(llmClient: client),
+      artifactDb: ArtifactDatabase.forTesting(NativeDatabase.memory()),
+    );
+    final engine = AutoTuneEngine(
+      runSynthesis: synth.call,
+      recommendationService: recommender,
+      artifactDb: await _db(),
+      reviewPolicy: const AcceptAllReviewPolicy(),
+      sink: sink,
+      now: () => DateTime.utc(2026),
+    );
+
+    final reason = await engine.run(
+      project: _project(),
+      elfHash: 'h',
+      callGraph: _callGraph(['A', 'B', 'C', 'D', 'E']),
+      config: const AutoTuneConfig(maxRounds: 4, snapshotWindowSize: 2),
+    );
+
+    expect(reason, AutoTuneStopReason.maxRounds);
+    expect(recommender.seenHistory, hasLength(4));
+    expect(recommender.seenHistory[0], [0]);
+    expect(recommender.seenHistory[1], [0, 1]);
+    expect(recommender.seenHistory[2], [1, 2]);
+    expect(recommender.seenHistory[3], [2, 3]);
+  });
+
+  test('a completer-backed review policy parks the loop until resolved',
+      () async {
+    final sink = _RecordingSink();
+    final synth = _ScriptedSynth([
+      _result(runId: 'r0', failedSymbol: 'A', triedArtifactId: 1),
+      _result(runId: 'r1', success: true, executed: ['A', 'B']),
+    ]);
+    final policy = _CompleterPolicy();
+    final engine = AutoTuneEngine(
+      runSynthesis: synth.call,
+      recommendationService: _scripted([
+        _recs([_pref('A', 4)]),
+      ]),
+      artifactDb: await _db(),
+      reviewPolicy: policy,
+      sink: sink,
+      now: () => DateTime.utc(2026),
+    );
+
+    final session = engine.run(
+      project: _project(),
+      elfHash: 'h',
+      callGraph: _callGraph(['A', 'B']),
+      config: const AutoTuneConfig(maxRounds: 1),
+    );
+
+    // Let the loop reach the review await, then verify it is parked:
+    // the baseline synthesis ran, round 1's has not.
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(policy.pending, isNotNull, reason: 'review must be pending');
+    expect(synth.callCount, 1);
+    expect(sink.phases, isNot(contains(AutoTunePhase.synthesizing)));
+
+    // Resolve the review → the loop resumes and completes the round.
+    policy.pending!.complete(AutoTuneReviewOutcome(decisions: [
+      for (final rec in policy.lastResult!.recommendations)
+        RecommendationDecision(original: rec, action: UserAction.accepted),
+    ]));
+    final reason = await session;
+
+    expect(reason, AutoTuneStopReason.maxRounds);
+    expect(synth.callCount, 2);
+    expect(sink.roundNumbers, [0, 1]);
+  });
+
+  test('cancel during a pending review ends the session as cancelled',
+      () async {
+    final sink = _RecordingSink();
+    final synth = _ScriptedSynth([
+      _result(runId: 'r0', failedSymbol: 'A', triedArtifactId: 1),
+    ]);
+    final policy = _CompleterPolicy();
+    final engine = AutoTuneEngine(
+      runSynthesis: synth.call,
+      recommendationService: _scripted([
+        _recs([_pref('A', 4)]),
+      ]),
+      artifactDb: await _db(),
+      reviewPolicy: policy,
+      sink: sink,
+      now: () => DateTime.utc(2026),
+    );
+
+    final session = engine.run(
+      project: _project(),
+      elfHash: 'h',
+      callGraph: _callGraph(['A']),
+      config: const AutoTuneConfig(maxRounds: 2),
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(policy.pending, isNotNull);
+
+    // The UI contract: engine.cancel() plus the policy unblocking its
+    // pending review (the engine never unblocks it itself).
+    engine.cancel();
+    policy.pending!
+        .complete(const AutoTuneReviewOutcome(decisions: [], cancelled: true));
+    final reason = await session;
+
+    expect(reason, AutoTuneStopReason.cancelled);
+    expect(sink.finishedReason, AutoTuneStopReason.cancelled);
+    expect(synth.callCount, 1, reason: 'no synthesis after cancel');
+  });
 }
 
 // -- Fakes -------------------------------------------------------------------
@@ -494,6 +628,10 @@ class _ScriptedRecommender extends RecommendationService {
   /// stagnation escalation is threaded.
   final List<RoundFeedback?> seenFeedback = [];
 
+  /// Round numbers of the history snapshots each call received — lets
+  /// tests assert the prompt window holds the most recent N rounds.
+  final List<List<int>> seenHistory = [];
+
   @override
   Future<RecommendationResult> recommend({
     required SynthesisManifest currentManifest,
@@ -512,6 +650,7 @@ class _ScriptedRecommender extends RecommendationService {
     void Function(String prompt)? onPromptComposed,
   }) async {
     seenFeedback.add(feedback);
+    seenHistory.add([for (final s in history) s.round]);
     final r = _results[_i++];
     onPromptComposed?.call('scripted prompt for run ${currentManifest.synthesizerRunId}');
     if (r.prose.isNotEmpty) onToken?.call(r.prose);
@@ -527,6 +666,25 @@ RecommendationService _scripted(List<RecommendationResult> results) {
     insightService: LastRunInsightService(llmClient: client),
     artifactDb: ArtifactDatabase.forTesting(NativeDatabase.memory()),
   );
+}
+
+/// Policy that parks each review on an externally-completed Completer —
+/// the shape of the UI's interactive policy.
+class _CompleterPolicy implements AutoTuneReviewPolicy {
+  Completer<AutoTuneReviewOutcome>? pending;
+  RecommendationResult? lastResult;
+
+  @override
+  Future<AutoTuneReviewOutcome> review(
+      RecommendationResult result, int round) {
+    lastResult = result;
+    pending = Completer<AutoTuneReviewOutcome>();
+    return pending!.future;
+  }
+
+  @override
+  Future<bool> onParseFailure(RecommendationResult result, int round) async =>
+      false;
 }
 
 /// Policy that rejects every recommendation.

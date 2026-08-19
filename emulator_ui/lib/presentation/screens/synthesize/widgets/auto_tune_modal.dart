@@ -4,6 +4,7 @@ import 'package:emulator_orchestrator/services/llm/recommendation_service.dart';
 import 'package:flutter/material.dart';
 
 import '../llm_synthesis_orchestrator.dart';
+import '../ui_auto_tune_sink.dart' show AutoTuneRoundLine;
 import 'recommendation_review_row.dart';
 
 /// Blocking modal dialog that hosts an active auto-tune session.
@@ -25,29 +26,19 @@ import 'recommendation_review_row.dart';
 class AutoTuneModal extends StatefulWidget {
   const AutoTuneModal({
     required this.orchestrator,
-    required this.sessionFuture,
     super.key,
   });
 
   final LlmSynthesisOrchestrator orchestrator;
 
-  /// Resolves when `runAutoTune` completes (any termination
-  /// reason). The modal closes itself once this future resolves
-  /// AND the user has clicked Close on the Done card.
-  final Future<void> sessionFuture;
-
   static Future<void> show({
     required BuildContext context,
     required LlmSynthesisOrchestrator orchestrator,
-    required Future<void> sessionFuture,
   }) =>
       showDialog<void>(
         context: context,
         barrierDismissible: false,
-        builder: (_) => AutoTuneModal(
-          orchestrator: orchestrator,
-          sessionFuture: sessionFuture,
-        ),
+        builder: (_) => AutoTuneModal(orchestrator: orchestrator),
       );
 
   @override
@@ -62,8 +53,7 @@ class _AutoTuneModalState extends State<AutoTuneModal> {
   final Map<int, Recommendation> _edits = {};
 
   @override
-  Widget build(BuildContext context) {
-    return Dialog(
+  Widget build(BuildContext context) => Dialog(
       child: SizedBox(
         width: 720,
         height: 600,
@@ -71,11 +61,16 @@ class _AutoTuneModalState extends State<AutoTuneModal> {
           animation: widget.orchestrator,
           builder: (context, _) {
             final state = widget.orchestrator.state;
+            final roundLines = widget.orchestrator.roundLines;
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _header(state),
                 const Divider(height: 1),
+                if (roundLines.isNotEmpty) ...[
+                  _RoundHistoryStrip(lines: roundLines),
+                  const Divider(height: 1),
+                ],
                 Expanded(child: _body(state)),
                 const Divider(height: 1),
                 _footer(state),
@@ -85,7 +80,6 @@ class _AutoTuneModalState extends State<AutoTuneModal> {
         ),
       ),
     );
-  }
 
   // -- Header ----------------------------------------------------------------
 
@@ -115,8 +109,7 @@ class _AutoTuneModalState extends State<AutoTuneModal> {
 
   // -- Body ------------------------------------------------------------------
 
-  Widget _body(AutoTuneState state) {
-    return Padding(
+  Widget _body(AutoTuneState state) => Padding(
       padding: const EdgeInsets.all(16),
       child: switch (state) {
         AutoTuneIdle() => const _IdleBody(),
@@ -169,12 +162,10 @@ class _AutoTuneModalState extends State<AutoTuneModal> {
         AutoTuneFinished() => _DoneBody(state: state),
       },
     );
-  }
 
   // -- Footer ----------------------------------------------------------------
 
-  Widget _footer(AutoTuneState state) {
-    return Padding(
+  Widget _footer(AutoTuneState state) => Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.end,
@@ -183,7 +174,6 @@ class _AutoTuneModalState extends State<AutoTuneModal> {
         ],
       ),
     );
-  }
 
   List<Widget> _footerButtons(AutoTuneState state) {
     switch (state) {
@@ -413,8 +403,7 @@ class _ReviewBody extends StatelessWidget {
   final VoidCallback onRejectAll;
 
   @override
-  Widget build(BuildContext context) {
-    return Column(
+  Widget build(BuildContext context) => Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (result.prose.isNotEmpty) ...[
@@ -462,7 +451,6 @@ class _ReviewBody extends StatelessWidget {
         ),
       ],
     );
-  }
 }
 
 class _ParseFailureBody extends StatelessWidget {
@@ -588,8 +576,7 @@ class _DoneBody extends StatelessWidget {
   final AutoTuneFinished state;
 
   @override
-  Widget build(BuildContext context) {
-    return Center(
+  Widget build(BuildContext context) => Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -616,7 +603,6 @@ class _DoneBody extends StatelessWidget {
         ],
       ),
     );
-  }
 
   String _reasonHeadline(AutoTuneFinishReason r) {
     switch (r) {
@@ -628,6 +614,8 @@ class _DoneBody extends StatelessWidget {
         return 'Session ended — every recommendation was rejected.';
       case AutoTuneFinishReason.noProgressOnSymbol:
         return 'Session ended — synthesis kept failing on the same symbol.';
+      case AutoTuneFinishReason.noCoverageProgress:
+        return 'Session ended — coverage stopped improving.';
       case AutoTuneFinishReason.cancelled:
         return 'Session cancelled.';
       case AutoTuneFinishReason.maxRounds:
@@ -656,6 +644,11 @@ class _DoneBody extends StatelessWidget {
       case AutoTuneFinishReason.noProgressOnSymbol:
         return 'Two consecutive synthesis runs failed at the same '
             'symbol — the orchestrator stopped to avoid wasted compute.';
+      case AutoTuneFinishReason.noCoverageProgress:
+        return 'Successive rounds reproduced the same executed-symbol '
+            'set (or every recommendation was already in effect) even '
+            'after escalated feedback, so the session stopped early '
+            'instead of burning rounds.';
       case AutoTuneFinishReason.cancelled:
         return 'The session was cancelled mid-run.';
       case AutoTuneFinishReason.maxRounds:
@@ -673,5 +666,44 @@ class _DoneBody extends StatelessWidget {
       case AutoTuneFinishReason.llmError:
         return 'A mid-loop LLM call errored. See debug logs.';
     }
+  }
+}
+
+/// Compact per-round session strip: one monospace line per completed
+/// round (outcome, overall fidelity, executed count/delta). The full
+/// story lives in the report files the session writes to
+/// `autotune_reports/<timestamp>/`.
+class _RoundHistoryStrip extends StatelessWidget {
+  const _RoundHistoryStrip({required this.lines});
+
+  final List<AutoTuneRoundLine> lines;
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = Theme.of(context).textTheme.bodySmall?.color;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 96),
+      child: SingleChildScrollView(
+        reverse: true,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final l in lines)
+              Text(
+                'R${l.round}  ${l.outcome}  '
+                'fid ${l.overallFidelity.toStringAsFixed(3)}  '
+                'exec ${l.executedCount}'
+                '${l.executedDelta != 0 ? ' (${l.executedDelta > 0 ? '+' : ''}${l.executedDelta})' : ''}',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                  color: muted,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 }

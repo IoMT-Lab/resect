@@ -217,7 +217,8 @@ class AutoTuneReportSink implements AutoTuneSink {
       final isHalt = manifest.failedSymbol == d.symbol;
       final sym = isHalt ? _red(d.symbol) : _hookColor(d.decisionKind, d.symbol);
       buf.writeln('   ${_hookGlyph(d.decisionKind)} $sym'
-          '  ${_dim(d.decisionKind.name)}${id != null ? _dim('  #$id') : ''}'
+          '  ${_dim(manifestDecisionKindShortLabel[d.decisionKind] ?? d.decisionKind.name)}'
+          '${id != null ? _dim('  #$id') : ''}'
           '${isHalt ? _red('  ← halt (candidates exhausted)') : ''}');
     }
     if (preseeded > 0) {
@@ -390,7 +391,9 @@ class AutoTuneReportSink implements AutoTuneSink {
     } else {
       for (final d in manifest.decisions) {
         final id = d.appliedHook.artifactId;
-        buf.writeln('- `${d.symbol}` ← ${d.decisionKind.name} '
+        final kindLabel =
+            manifestDecisionKindShortLabel[d.decisionKind] ?? d.decisionKind.name;
+        buf.writeln('- `${d.symbol}` ← $kindLabel '
             '(${d.decisionSource})${id != null ? ' applied=#$id' : ''}');
       }
     }

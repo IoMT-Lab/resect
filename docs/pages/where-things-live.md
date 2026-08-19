@@ -28,7 +28,7 @@ All paths are under `emulator_orchestrator/lib/` unless noted. The UI
 
 **Heads-up:** this is the most cross-cutting feature — it touches building the
 graph, computing coverage over it, *and* assembling the LLM's view of it. No
-single folder holds it all.
+single folder holds it all. The narrative is @ref pre_synthesis.
 
 | Concern | File |
 |---|---|
@@ -39,7 +39,8 @@ single folder holds it all.
 | Read/cache | `services/analysis/call_graph_service.dart` |
 | Coverage [frontier](@ref gloss_frontier) | `services/analysis/coverage_frontier.dart` |
 | [Fidelity](@ref gloss_fidelity) over the graph | `services/analysis/fidelity_calculator.dart` |
-| Annotate for the LLM (neighborhood, roles) | `services/llm/last_run_insight_service.dart` |
+| Annotate for the LLM (halt point, recent call sequence, frontier notes) | `services/llm/last_run_insight_service.dart` |
+| Reachable-set / coverage headroom | `FidelityCalculator.reachableFromEntries` |
 
 ## A single synthesis run
 
@@ -49,20 +50,25 @@ See @ref synthesis for the narrative.
 |---|---|
 | The loop | `orchestrator/workflows/synthesizer_workflow.dart` |
 | Group-override decision (pure) | `planGroupOverride` in the same file |
+| Where execution got to + the recent call trace | `orchestrator/engine/dart/dart_emulation_controller.dart` |
+| Termination reasons | `SynthesisTerminationReason` in `data/models/synthesis_manifest.dart` |
 | LLM fallback hook authoring | `services/llm/llm_hook_generator.dart` |
 | Build the [manifest](@ref gloss_manifest) | `orchestrator/manifest_builder.dart` |
 | Result / manifest models | `data/models/synthesizer_result.dart`, `synthesis_manifest.dart` |
 
 ## The auto-tune loop
 
-See @ref autotune.
+See @ref autotune for the machinery and @ref autotune_decisions for the
+decision.
 
 | Concern | File |
 |---|---|
 | The loop engine | `orchestrator/auto_tune_engine.dart` |
-| Stop / stagnation detectors | `orchestrator/auto_tune_progress.dart` |
+| Stop / stagnation detectors + no-op filter | `orchestrator/auto_tune_progress.dart` |
 | Headless report [sink](@ref gloss_sink) | `orchestrator/auto_tune_report_writer.dart` |
-| Ask the LLM for [recommendations](@ref gloss_recommendation) | `services/llm/recommendation_service.dart` |
+| Ask the LLM for [recommendations](@ref gloss_recommendation); build the response schema | `services/llm/recommendation_service.dart` |
+| Compose the round's evidence sections | `services/llm/last_run_insight_service.dart` |
+| Sampling profiles per task | `services/llm/llm_profiles.dart` |
 | Round-over-round metric delta | `services/analysis/fidelity_delta.dart` |
 | Apply recommendations to [overlays](@ref gloss_overlay) | `orchestrator/recommendation_overlay_applier.dart` |
 | Config / snapshot / recommendation models | `data/models/auto_tune_config.dart`, `round_snapshot.dart`, `recommendation.dart` |
@@ -124,6 +130,20 @@ See @ref model_projects.
 
 - **CLI:** `bin/cli.dart` — see @ref cli.
 - **HTTP API:** `bin/server.dart` + `api/api_server.dart`.
+
+## Packaging and the container stack
+
+Not under `emulator_orchestrator/` — these live at the repository root. See
+@ref containers.
+
+| Concern | File |
+|---|---|
+| The stack (services, volumes, profiles) | `compose.yml` (+ `.env` defaults) |
+| The one image (CLI + GUI) | `docker/Dockerfile` |
+| Container user + mode dispatch (cli / gui / vnc) | `docker/entrypoint.sh` |
+| Display env for native GUI / headless runs | `docker/gui.env`, `docker/non_gui.env` |
+| In-image config | `docker/resect.config` |
+| Install / build / run / stop / clean / uninstall wrappers | `scripts/*.sh` |
 
 Both construct the same objects and call the same code as the UI — if a feature
 works in one surface but not the other, that's a bug, not a design choice.

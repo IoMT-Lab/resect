@@ -29,7 +29,9 @@ Renode.
    engine inspects a function's cached signature, decompilation, and data
    symbols (from [Ghidra extraction](@ref gloss_ghidra_extraction)) and
    picks the catalog template that fits — for example, "returns a status
-   int and touches no globals → `return 0`."
+   int and touches no globals → `return 0`." The seven rules, and the
+   invariant each one attaches, are in @ref pre_synthesis. No decompilation,
+   no classification: the rules simply don't fire.
 3. **From the LLM.** `LlmHookGenerator` composes a
    [RAG](@ref gloss_rag)-augmented prompt (the function's decompiled C, its
    signature, relevant document chunks) and streams a purpose-written body
@@ -46,13 +48,13 @@ inlined, tagged with origin and (for purpose-written hooks) the target
 symbol. Details: @ref model_artifacts.
 
 @note **Deviation from the current code.**
-**Today:** three components each contain their own copy of the
-store-and-bind step: `SynthesizerWorkflow._tryLlmFallback` and the two
-`_generateAndSeedCustomHooks` methods (one in `AutoTuneEngine`, one in the
-UI's `LlmSynthesisOrchestrator`).
-**Planned:** @ref phase_p3 folds all three into
+**Today:** two components each contain their own copy of the
+store-and-bind step: `SynthesizerWorkflow._tryLlmFallback` and
+`AutoTuneEngine._generateAndSeedCustomHooks` (the UI's third copy died
+when the UI adopted the engine).
+**Planned:** @ref phase_p3 folds both into
 `ArtifactController.generateAndBind`.
-**Why:** the three copies must be kept identical by hand; the controller
+**Why:** the copies must be kept identical by hand; the controller
 makes the step exist once.
 
 ## Step 3 — Association: an overlay entry in the project

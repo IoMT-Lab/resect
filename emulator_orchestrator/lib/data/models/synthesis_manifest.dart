@@ -612,3 +612,17 @@ enum ManifestDecisionKind {
     throw FormatException('Unknown ManifestDecisionKind: $name');
   }
 }
+
+/// Short display label per decision kind, shared by every renderer
+/// (round-report markdown, CLI console, UI tags) so the surfaces can't
+/// drift on naming. Presentation beyond the label — color, glyph —
+/// stays per-surface.
+const manifestDecisionKindShortLabel = <ManifestDecisionKind, String>{
+  ManifestDecisionKind.forcedOverride: 'OVERRIDE',
+  ManifestDecisionKind.comms: 'COMMS',
+  ManifestDecisionKind.warmStart: 'WARM',
+  ManifestDecisionKind.binding: 'BINDING',
+  ManifestDecisionKind.iterationFallback: 'FALLBACK',
+  ManifestDecisionKind.llmOnDemand: 'LLM',
+  ManifestDecisionKind.groupOverride: 'GROUP',
+};

@@ -10,11 +10,22 @@ carrying the resolved hooks, the scoped Python globals, the call graph,
 and the manifest — which downstream tooling (including the in-app LLM
 advisor) reads back to recommend changes for the next run.
 
-The orchestrator runs entirely in-process — there is no Python backend.
-[`renode-dart`](https://github.com/IoMT-Lab/renode-dart),
-[`callgraph-dart`](https://github.com/IoMT-Lab/callgraph-dart), and
-[`hooks-dart`](https://github.com/IoMT-Lab/hooks-dart) are embedded as
-sibling Dart packages and launch a Renode portable subprocess directly.
+The orchestrator runs entirely in-process — there is no Python backend. The
+engine packages (`renode`, `resect_callgraph`, `resect_hooks`,
+`resect_signatures`) are hosted on the project's package repository and
+resolve as ordinary versioned dependencies. Renode itself runs as a
+**server** that Resect connects to over the network — a container in the
+compose stack, or a portable build you start in server mode.
+
+The quickest way to run any of it:
+
+```bash
+./scripts/install.sh    # once: pull the LLM models
+./scripts/run_cli.sh    # containerized CLI + Renode + Ollama
+./scripts/run_gui.sh    # containerized GUI on your own display (or run_vnc.sh)
+```
+
+See [Docker](#docker) below.
 
 What's optional, gated behind module flags:
 
@@ -77,14 +88,14 @@ aligned to them.
                   │                │               │                │
         ┌─────────▼─────────┐  ┌───▼──────────┐ ┌──▼─────────────┐ ┌▼──────────────┐
         │  Dart engine      │  │  Ollama      │ │  Ghidra        │ │  Renode       │
-        │  (in-process)     │  │  (optional)  │ │  (optional)    │ │  portable     │
-        │  • renode-dart    │  │              │ │                │ │  (1.16.x;     │
-        │  • callgraph-dart │  │  local HTTP  │ │  subprocess    │ │   patched     │
-        │  • hooks-dart     │  │  NDJSON      │ │  Java 21+      │ │   build for   │
-        │  • signatures     │  │  MODULE_LLM_ │ │  MODULE_GHIDRA │ │   scope arg)  │
+        │  (in-process)     │  │              │ │  (optional)    │ │  server       │
+        │  • renode         │  │  HTTP NDJSON │ │                │ │  (1.16.x      │
+        │  • resect_callgr. │  │  container   │ │  subprocess    │ │   patched,    │
+        │  • resect_hooks   │  │  or local    │ │  Java 21+      │ │   for the     │
+        │  • resect_signat. │  │  MODULE_LLM_ │ │  MODULE_GHIDRA │ │   scope arg)  │
         │       │           │  │  HOOKGEN     │ │                │ │               │
-        │       │           │  └──────────────┘ └────────────────┘ └───────────────┘
-        │       └──────────────────── subprocess ──────────────────────┘
+        │       │           │  └──────────────┘ └────────────────┘ └───────▲───────┘
+        │       └────────────── TCP (RENODE_HOST:RENODE_PORT) ─────────────┘
         └───────────────────┘
 ```
 
@@ -101,16 +112,20 @@ packages sharing one dependency resolution:
 ```
 resect/                              ← workspace root
 ├── pubspec.yaml                     ← workspace manifest (2 packages)
-├── pubspec_overrides.yaml           ← (optional, gitignored) routes
-│                                       hooks/renode/callgraph/signatures/
-│                                       lints to local sibling checkouts
-├── install.sh                       ← one-time setup
-├── run.sh                           ← launches the Flutter app
+├── pubspec_overrides.yaml           ← (optional, gitignored) routes an
+│                                       engine package to a local checkout
+├── compose.yml                      ← the container stack (init / normal profiles)
+├── .env                             ← compose defaults (display sockets, env file)
+├── docker/                          ← Dockerfile, entrypoint, env files, config
+├── scripts/                         ← build_/run_/stop_/remove_ wrappers
+├── workdir/                         ← bind-mounted into containers as /workdir
+├── install.sh                       ← one-time host setup
+├── run.sh                           ← launches the Flutter app on the host
 ├── resect.config                    ← paths/ports/prefs/module flags
 │                                       (gitignored; managed by Tools →
 │                                       System Configuration or install.sh)
-├── emulation_engine/                ← Renode portables + LFS-tracked
-│                                       legacy binary; no Python backend
+├── emulation_engine/                ← optional host-side Renode portables
+│                                       (unused by the container path)
 │
 ├── emulator_orchestrator/           ← pure Dart package (no Flutter)
 │   ├── bin/
@@ -134,7 +149,7 @@ resect/                              ← workspace root
 │           ├── emulation_orchestrator.dart
 │           ├── comms/               ← UDP forwarder + device handlers
 │           ├── engine/              ← engine abstraction + Dart impl
-│           │   └── dart/            ← wraps renode-dart in-process
+│           │   └── dart/            ← the renode client, in-process
 │           └── workflows/           ← emulator / analysis /
 │                                      emulation / synthesizer
 │
@@ -155,39 +170,38 @@ resect/                              ← workspace root
             └── widgets/
 ```
 
-### Sibling Dart packages
+### Engine packages
 
-Five siblings of resect are consumed as git-pinned dependencies (or
-locally-pinned for the unreleased one) in `emulator_orchestrator/pubspec.yaml`:
+Four engine packages are consumed as **hosted** dependencies from
+`https://nexus.medmakers.io/repository/pub`, declared with ordinary version
+constraints in `emulator_orchestrator/pubspec.yaml`:
 
-| Package | Role |
-|---|---|
-| [`renode-dart`](https://github.com/IoMT-Lab/renode-dart) | Wraps the Renode portable binary as a Dart subprocess; speaks Renode's control protocol. |
-| [`callgraph-dart`](https://github.com/IoMT-Lab/callgraph-dart) | Builds call graphs from ELF files via `arm-none-eabi-objdump` / `objdump`. |
-| [`hooks-dart`](https://github.com/IoMT-Lab/hooks-dart) | Typed hook builders (`returnHook`, `readHook`, `writeHook`, `incrementHook`, `i2cReadHook`, `i2cWriteHook`, `uartReadHook`, `uartWriteHook`) and the UDP wire format. |
-| `signatures` | Ghidra-backed function signature + ABI argument extraction. Consumed by the LLM hook generator's prompt composer. **Local pin only** — not yet published to a public remote; wire it in via `pubspec_overrides.yaml`. |
-| [`lints-dart`](https://github.com/IoMT-Lab/lints-dart) | Shared analysis_options. |
+| Package | Version | Role |
+|---|---|---|
+| `renode` | 1.1.0 | Renode client: monitor commands, state / function-call / unhandled-access events, hook installation. Connects to a Renode **server**; `RenodeProcess` (used only by the hook-quality harness) can also launch a local portable. |
+| `resect_callgraph` | ^1.0.0 | Builds call graphs from ELF files via `arm-none-eabi-objdump` / `objdump`. Direct calls only. |
+| `resect_hooks` | ^1.3.0 | Typed hook builders (`returnHook`, `readHook`, `writeHook`, `incrementHook`, `i2cReadHook`, `i2cWriteHook`, `uartReadHook`, `uartWriteHook`), the embedded Python modules, and the UDP wire format. |
+| `resect_signatures` | ^1.0.0 | Ghidra-backed function signatures, decompilation, and data symbols. Feeds the hook classifier and the LLM prompt composers. |
 
-For local development against any of them, drop a `pubspec_overrides.yaml`
-at the workspace root:
+`iomt_lab_lints` supplies the shared `analysis_options` as a dev dependency.
+
+A clean `dart pub get` needs no sibling checkouts. **Publishing a change to
+one of these packages requires a version bump** — the repository serves
+immutable versions, so re-pushing the same version silently changes nothing.
+
+For local co-development, drop a git-ignored `pubspec_overrides.yaml` at the
+workspace root:
 
 ```yaml
 dependency_overrides:
-  hooks:
+  resect_hooks:
     path: ../hooks-dart
-  renode:
-    path: ../renode-dart
-  callgraph:
-    path: ../callgraph-dart
-  signatures:
-    path: ../signatures
-  iomt_lab_lints:
-    path: ../lints-dart
 ```
 
-`run.sh` detects this and runs hooks-dart's `tool/gen_system_modules.dart
---check` on every launch so the embedded Python-module mirror never drifts
-from the canonical `.py` sources.
+Note that an override affects only your host build: the container images
+build from `pubspec.lock` and always resolve the hosted versions. `run.sh`
+detects the override and runs the embedded-modules drift check so the
+mirrored Python sources can't drift from the canonical `.py` files.
 
 ## Concepts
 
@@ -231,20 +245,21 @@ small list of attached documents.
 ### Hook catalog
 
 A registry of typed builders defined in
-`emulator_orchestrator/lib/data/services/hook_catalog.dart`, wired through
+`emulator_orchestrator/lib/services/hooks/hook_catalog.dart`, wired through
 to hooks-dart's [`simple_hooks.dart`](https://github.com/IoMT-Lab/hooks-dart/blob/main/lib/src/simple_hooks.dart).
-The default templates seeded into the artifact DB are the two legacy
-`return-N` bodies, two catalog `returnHook(N)` bodies, and `read` /
-`write` / `increment` variants (both `value=0` and `value=1` presets),
-ten templates total. Each carries an intrinsic-score floor — 0.0 for
-bare returns, 0.1 for stateful counters, 0.2 for read/write — that the
+The default templates seeded into the artifact DB are eight bodies:
+`return`, `read`, `write`, and `increment`, each in a `value=0` and a
+`value=1` preset. Each carries an intrinsic-score floor — 0.0 for bare
+returns, 0.1 for stateful counters, 0.2 for read/write — that the
 synthesizer falls back to when no per-symbol binding exists.
 
 ### Hook classifier (seven rules)
 
 Runs on project open via `HookBindingSeeder.seedBindingsForElf` over the
-firmware's Ghidra decompilation rows. Each rule that matches inserts a
-hook binding at a seeded fidelity:
+firmware's Ghidra decompilation rows — **from the GUI only**; the CLI never
+runs this pass, and the container images ship no Ghidra, so headless sessions
+have no classifier bindings (see `docs/pages/pre-synthesis.md`). Each rule
+that matches inserts a hook binding at a seeded fidelity:
 
 | Rule | Pattern | Hook chosen | Seeded fidelity |
 |---|---|---|---|
@@ -303,12 +318,12 @@ ask the LLM to write one. End-to-end:
    data types, data symbols, memory map, attached user docs, and hook
    bodies. The symbol's own decompilation is pinned at rank 0.
 2. **Prompt composition** in
-   [`LlmHookGenerator`](emulator_orchestrator/lib/data/services/llm_hook_generator.dart):
+   [`LlmHookGenerator`](emulator_orchestrator/lib/services/llm/llm_hook_generator.dart):
    the platform facts (ELF machine, `.repl` verbatim, firmware symbol
    list) + the retrieved chunks + a system prompt that documents the
    IronPython 2.7 + Renode hook conventions.
 3. **LLM call** via
-   [`LlmClient.generate`](emulator_orchestrator/lib/data/services/llm_client.dart)
+   [`LlmClient.generate`](emulator_orchestrator/lib/services/llm/llm_client.dart)
    against Ollama at `LLM_OLLAMA_HOST`. Model from `LLM_MODEL`, default
    `gemma4:e4b`.
 4. **Validation** via the
@@ -329,7 +344,7 @@ Two trigger paths:
 
 ### Hook test harness
 
-[`hook_test_harness.dart`](emulator_orchestrator/lib/data/services/hook_test_harness.dart)
+[`hook_test_harness.dart`](emulator_orchestrator/lib/services/quality/hook_test_harness.dart)
 spawns Renode on port 5099, loads a base64-embedded minimal Cortex-M4
 firmware (in `test_harness_assets.dart`), applies a candidate hook to
 `main`, runs `main()` ten times, and reads 10 uint32 results from
@@ -351,29 +366,42 @@ comms hooks + warm-start). Each iteration:
    accumulated hook set.
 2. Start emulation. Wait up to 30 s for either an unhandled-access
    pause (advance one symbol) or a 30 s clean run (declare success).
-3. On pause, sort layer-4 bindings + artifact-DB candidates by
+3. On pause: a failed **forced override** stops the run outright; a
+   faulting member of a recognized **object group** force-installs the
+   whole group's coherent hooks under one shared scope and re-runs.
+4. Otherwise sort layer-4 bindings + artifact-DB candidates by
    `COALESCE(binding.fidelity, intrinsicScore)`; apply the
    highest-scoring candidate that hasn't been tried; record the
    decision; go to next iteration.
-4. If a symbol exhausts every candidate AND `MODULE_LLM_HOOKGEN` is
-   on, the LLM generates a fresh hook (`llm_on_demand`).
-5. If candidates and the LLM both run out, the synthesizer reports the
+5. As soon as no *specialized* candidate remains (nothing scoring ≥ 0.5 —
+   i.e. no classifier binding or user replacement), the LLM authors a fresh
+   hook for the symbol (`llm_on_demand`), which is seeded at 0.5 and sorts
+   to the front on the retry. Generic templates are still tried, but only
+   after that.
+6. If candidates and the LLM both run out, the synthesizer reports the
    `failedSymbol`.
 
-Default iteration cap is 10. The cap is a defensive backstop, not the
-normal termination — successful runs exit on 30 s clean execution or
-on candidate exhaustion. (A redesign that replaces the global cap with
-per-symbol exhaustion is in TODO.txt.)
+Every exit records a **termination reason** — `cleanRun`,
+`symbolExhausted`, `forcedOverrideFailed`, `maxIterations`, `cancelled` — and
+only the two symbol-level reasons set `failedSymbol`. The iteration cap is
+500 headless and is a stopping condition of last resort: normal runs end on a
+30 s clean execution or on candidate exhaustion. Results also carry where
+execution actually got to (`finalExecutionSymbol`) and the last 16 function
+entries (`recentExecutionTrace`), which is what the auto-tune loop reasons
+over. Details: `docs/pages/synthesis.md`.
 
 ### Synthesis manifest
 
 Per-run JSON record at `<project>/manifests/<run_id>.json` (mirrored
 into the `.emu` file's `synthesis_result` field for warm-start
-carry-over). Schema-versioned — `manifest_version` is 1 today.
+carry-over). Schema-versioned — `manifest_version` is 2 today.
 
 Per-run fields: `elf_hash`, `elf_file_name`, `synthesizer_run_id`
 (ISO-8601 timestamp), `result {success, totalIterations,
-durationSeconds}`, `decisions[]`, `failed_symbol`.
+durationSeconds}`, `decisions[]`, `failed_symbol`, `last_pause_symbol`,
+`termination_reason`, `final_execution_symbol`, `recent_execution_trace`,
+plus the enrichment fields `metrics` (fidelity + hooked/intact/degraded
+counts) and `executed_symbols`.
 
 Per-decision fields: `symbol`, `applied_hook {artifact_id, body_hash,
 scope}`, `decision_kind` (one of `forced_override`, `comms`,
@@ -403,11 +431,41 @@ short enough that a 0.5B–1B model runs in seconds. Gated on
 shows the fidelity headline and replaces the recommendation panel
 with a one-line hint pointing at the module flag.
 
+### Auto-tune (closed loop)
+
+`AutoTuneEngine` runs synthesis repeatedly and lets the LLM tune the overlay
+between rounds: **recommend → review → filter no-ops → author → apply →
+re-synthesize → snapshot**. It is plain Dart with two injected seams — a
+*review policy* (accept-all headless; the GUI picks interactive or
+accept-all at session start) and a *sink* — so both surfaces run the same
+loop and write the same per-round report files; the GUI additionally feeds
+its modal from the same events.
+
+Each round the model gets a fixed-order evidence packet: where execution
+stopped and the recent call path into it, raw *and* reachable-set coverage
+(the headroom number answers "can this improve at all?"), what each nearby
+hook actually does and whether it took effect, the annotated coverage
+frontier, the real artifact catalog, and the last three rounds' trajectory.
+Its reply is forced into typed recommendations by a per-round JSON schema
+built from live catalog ids and call-graph symbols — narrowed further on
+escalation rounds (only stalled wrapper callers) and error-sink rounds (only
+symbols on the path into the handler) — then validated again at parse time
+and in the engine.
+
+Two detectors stop a session that has stopped earning its rounds: repeated
+failure at the same symbol with nothing new tried, and coverage stagnation
+(which escalates once, then finishes with `noCoverageProgress`). Headless
+sessions write `round_NN.md`, `round_NN_manifest.json`, `round_NN_trace.txt`
+(the exact prompt), and `summary.md`.
+
+Full detail: `docs/pages/autotune.md` (machinery) and
+`docs/pages/autotune-decisions.md` (the decision).
+
 ### Fidelity metrics
 
 Coverage + subgraph + intact / degraded / hooked counts, computed from
 the call graph and the executed-symbol trace by
-[`FidelityCalculator`](emulator_orchestrator/lib/data/services/fidelity_calculator.dart).
+[`FidelityCalculator`](emulator_orchestrator/lib/services/analysis/fidelity_calculator.dart).
 The pre-synthesis report uses **call-graph reachability** (forward BFS
 from `Reset_Handler` / `main`) to split "uncovered" symbols into
 *reachable-but-unbound* (synthesis can fault here) and *unused code*
@@ -473,19 +531,51 @@ the autosave preference, module flags, and per-module binary detection
 
 ## Requirements
 
+**Container path:** Docker with the Compose plugin. Nothing else — Renode,
+Ollama, the models, objdump, and Resect all come from images.
+
+**Host path:**
+
 | Dependency | Purpose |
 |---|---|
 | Flutter SDK (Dart >= 3.9) | GUI + Dart toolchain |
 | clang, cmake, ninja-build | Flutter Linux desktop build |
 | libgtk-3-dev, liblzma-dev, pkg-config | GTK runtime + build glue |
-| gcc-arm-none-eabi | `arm-none-eabi-objdump` for ARM call graphs |
-| git-lfs | Fetches the stock Renode portable |
-| Renode portable (patched) | Required for scope-arg support — patched build available from the project maintainers |
-| **Ollama (optional)** | `MODULE_LLM_HOOKGEN`. Linux install via the standard installer; pull at least one inference model and `nomic-embed-text` |
-| **Ghidra + Java 21+ (optional)** | `MODULE_GHIDRA`. Headless analysis for signatures + decompilation |
+| binutils-arm-none-eabi | `arm-none-eabi-objdump` for ARM call graphs |
+| A reachable Renode **server** (patched build) | Emulation. Resect connects to `RENODE_HOST:RENODE_PORT`; the patched build is required for the hook scope argument |
+| **Ollama (optional)** | `MODULE_LLM_HOOKGEN`. Pull at least one inference model and `nomic-embed-text` |
+| **Ghidra + Java 21+ (optional)** | `MODULE_GHIDRA`. Headless analysis for signatures + decompilation — without it the hook classifier has no bodies to read |
 
 Optional: VirtualBox + Vagrant for the CI/CD test harness; opt-in via
 `./install.sh --with-vagrant-test`.
+
+## Docker <a id="docker"></a>
+
+One compose file, one Resect image, three modes. The `normal` profile pairs
+the `resect` container (which carries both the compiled CLI and the Flutter
+app; the entrypoint's `cli` / `gui` / `vnc` argument picks one) with a Renode
+server and a healthchecked Ollama. The one-shot model pull (`gemma4:e4b` +
+`nomic-embed-text`) lives in the separate `init` profile — run it once via
+`install.sh` or the LLM features have no models. App state persists in the
+`resect-state` volume.
+
+```bash
+./scripts/install.sh     # FIRST RUN: creates ./workdir, pulls the LLM models
+./scripts/build.sh       # build the resect image locally (else it pulls)
+./scripts/run_cli.sh     # interactive CLI shell in /workdir
+./scripts/run_gui.sh     # GUI on your own display (Wayland/X11 passthrough)
+./scripts/run_vnc.sh     # GUI on a virtual display; VNC client → localhost:5900
+./scripts/stop.sh        # stop both profiles, keep volumes
+./scripts/clean.sh       # WIPES the resect-state volume contents (app data)
+./scripts/uninstall.sh   # down -v — DESTROYS the state + model volumes
+```
+
+The run scripts pass `HOST_UID`/`HOST_GID` through, so files written into
+`./workdir` (projects, manifests, auto-tune reports) stay owned by you —
+and `workdir/` is gitignored apart from the shipped example files. The
+in-image `resect.config` points Resect at the `renode` and `ollama` services;
+it deliberately contains no Ghidra, so headless runs have no decompilation —
+see `docs/pages/containers.md`.
 
 ## Install
 
@@ -494,14 +584,22 @@ Optional: VirtualBox + Vagrant for the CI/CD test harness; opt-in via
 ```bash
 git clone git@github.com:IoMT-Lab/resect.git
 cd resect
+
+# Containers (no host toolchain needed):
+./scripts/install.sh    # once — model pull
+./scripts/run_cli.sh
+
+# Or a native development install:
 ./install.sh                  # or: ./install.sh --with-vagrant-test
 ```
 
 `install.sh` provisions system packages, ensures Flutter is on PATH (or
-clones a stable SDK to `~/Development/flutter`), runs `git lfs pull` for
-the Renode portable, and writes `resect.config` with detected paths.
-Module installers (Ollama / Ghidra) are runnable from Tools → System
-Configuration after the GUI is up.
+clones a stable SDK to `~/Development/flutter`), resolves the Dart workspace
+against the hosted engine packages, and writes `resect.config` with detected
+paths. It does **not** provide Renode, Ollama, or Ghidra: point
+`RENODE_HOST`/`RENODE_PORT` at a Renode server (the compose stack has one),
+and install the other two from Tools → System Configuration once the GUI is
+up.
 
 ### Manual
 
@@ -510,7 +608,7 @@ Configuration after the GUI is up.
 sudo apt-get update
 sudo apt-get install -y \
   clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
-  gcc-arm-none-eabi git git-lfs curl
+  binutils-arm-none-eabi git curl
 
 # 2. Flutter SDK (git install — required for Linux desktop)
 git clone https://github.com/flutter/flutter.git -b stable ~/Development/flutter
@@ -519,14 +617,12 @@ source ~/.bashrc
 flutter precache
 flutter config --enable-linux-desktop
 
-# 3. Renode binary (LFS)
-cd resect/emulation_engine
-git lfs install && git lfs pull
-
-# 4. Patched Renode portable
-#    Drop the renode_1.16.1+...-portable directory into emulation_engine/
-#    and point RENODE_BIN / RENODE_PORTABLE at it via resect.config or
-#    Tools → System Configuration.
+# 3. A Renode server to connect to. Either use the compose stack's
+#    `renode` service, or start a patched portable yourself:
+#      renode -p --disable-gui --server-mode --server-mode-port 5000
+#    then set RENODE_HOST / RENODE_PORT in resect.config. (RENODE_BIN /
+#    RENODE_PORTABLE are only used by the hook-quality harness and the
+#    Vagrant export, which launch Renode themselves.)
 
 # 5. (Optional) Ollama for MODULE_LLM_HOOKGEN
 curl -fsSL https://ollama.com/install.sh | sh
@@ -551,20 +647,23 @@ dart analyze emulator_orchestrator
 ## Run
 
 ```bash
-./run.sh
+./run.sh                # host: Drift codegen if needed, then flutter run -d linux
+./scripts/run_gui.sh    # container: same app, on your own display
+./scripts/run_vnc.sh    # container: same app, over VNC on localhost:5900
 ```
 
 `run.sh` runs Drift codegen (`build_runner build`) if the generated files
-are missing, runs hooks-dart's embedded-modules drift safeguard when a
-local override is active, then launches `flutter run -d linux`. No
-Python server is involved. Exit Flutter normally with `q`.
+are missing, runs the embedded-modules drift safeguard when a local package
+override is active, then launches `flutter run -d linux`. No Python server is
+involved. Exit Flutter normally with `q`.
 
 ## CLI
 
-Headless commands for scripting. Run from the workspace root:
+Headless commands for scripting:
 
 ```bash
-dart run emulator_orchestrator:cli --help
+resect-cli --help                             # in the container
+dart run emulator_orchestrator:cli --help     # on the host
 ```
 
 Available commands:
@@ -574,6 +673,7 @@ Available commands:
 | `create` | Create a new `.emu` project file |
 | `callgraph` | Generate a call graph from an ELF |
 | `synthesize` | Run the automated hook synthesizer |
+| `autotune` | Run a closed-loop LLM auto-tune session with per-round reports |
 | `fidelity` | Compute fidelity metrics for a hook set |
 | `export` | Export an emulator to a standalone `.resc` script |
 
@@ -581,8 +681,17 @@ Each command has `--help` for its options. Global flags:
 
 | Flag | Purpose |
 |---|---|
-| `--engine-dir <path>` | Path to `emulation_engine/` (auto-detected if omitted) |
 | `--backend-url <url>` | Connect to an existing engine instance (skips auto-start) |
+| `--engine-dir <path>` | Path to `emulation_engine/`. Accepted, but unused on the emulation path — Renode is reached at `RENODE_HOST:RENODE_PORT` |
+
+A full auto-tune session, end to end:
+
+```bash
+resect-cli create --name aya --elf fw.elf --repl board.repl -o aya.emu
+resect-cli synthesize --elf fw.elf --repl board.repl --save-emulator aya.emu
+resect-cli autotune --emu aya.emu --max-rounds 10
+# then read autotune_reports/<timestamp>/summary.md
+```
 
 ## HTTP API
 
@@ -608,23 +717,27 @@ schemas.
 
 ## Development
 
-### Sibling-checkout workflow
+### Co-developing an engine package
 
-Clone the sibling packages next to resect (under the same parent
-directory by default):
+The engine packages resolve from the hosted repository, so a normal clone
+builds with no siblings present. To work on one, clone it next to resect and
+add a git-ignored `pubspec_overrides.yaml` at the workspace root as shown
+above:
 
 ```
 ~/Development/
 ├── resect/
-├── renode-dart/
-├── callgraph-dart/
-├── hooks-dart/
-├── signatures/
-└── lints-dart/
+├── renode-dart/       → package `renode`
+├── callgraph-dart/    → package `resect_callgraph`
+├── hooks-dart/        → package `resect_hooks`
+└── signatures-dart/   → package `resect_signatures`
 ```
 
-Then drop `pubspec_overrides.yaml` at the resect workspace root as shown
-above. The override file is gitignored.
+Two rules for shipping such a change: **bump the package version** before
+publishing (the repository serves immutable versions, so re-pushing the same
+number propagates nothing), then update the constraint in
+`emulator_orchestrator/pubspec.yaml` and relock. Container images build from
+`pubspec.lock` and ignore your override entirely.
 
 If you change `hooks-dart/lib/resources/python/*.py`, regenerate the
 embedded mirror with:
@@ -693,8 +806,13 @@ A handful of stand-alone scripts under `emulator_orchestrator/tool/`:
 | `~/.config/call_graph_viewer/projects/<project>/rag_index.db` | Per-project RAG index (`MODULE_LLM_HOOKGEN`) |
 | `~/.config/call_graph_viewer/projects/<project>/documents/` | User-attached documents that travel with the .emu |
 | `~/.config/call_graph_viewer/artifact_library/artifacts.db` | SQLite artifact DB (global, includes Ghidra tables when `MODULE_GHIDRA` is on) |
+| `~/.config/call_graph_viewer/projects/<project>/autotune_reports/<timestamp>/` | Per-round auto-tune reports: `round_NN.md`, `round_NN_manifest.json`, `round_NN_trace.txt` (the exact prompt sent), `summary.md` |
 | `<repo>/resect.config` | Local paths, ports, autosave preference, module flags (gitignored) |
 | `/tmp/renode_logs/renode.log` | Renode stdout/stderr capture |
+
+In a container, `$HOME/.config` is symlinked to `/static_home` — the
+`resect-state` volume — so the paths above persist across container runs, and
+`/workdir` is the `./workdir` bind mount the host can read.
 
 ## Technology stack
 
@@ -702,7 +820,7 @@ A handful of stand-alone scripts under `emulator_orchestrator/tool/`:
 |---|---|
 | GUI | Flutter 3.x (Linux desktop) |
 | State management | Riverpod 2.x |
-| Engine | renode-dart + callgraph-dart + hooks-dart + signatures (all in-process) wrapping a Renode portable subprocess |
+| Engine | `renode` + `resect_callgraph` + `resect_hooks` + `resect_signatures` (all in-process), driving a Renode server over TCP |
 | Hook templates | hooks-dart `simple_hooks.dart` builders + import inlining at the DB write boundary |
 | Comms forwarder | hooks-dart UDP wire format (binary protocol; one-hot selector for i2c/spi/uart) |
 | Artifact storage | Drift 2.x + SQLite3 |

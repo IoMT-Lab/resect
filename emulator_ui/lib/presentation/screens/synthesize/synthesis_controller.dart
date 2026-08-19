@@ -5,12 +5,14 @@ import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart';
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
 import 'package:emulator_orchestrator/data/models/trace_activity_event.dart';
-import 'package:emulator_orchestrator/services/analysis/fidelity_calculator.dart';
-import 'package:emulator_orchestrator/services/llm/llm_hook_generator.dart'
-    show PlatformFacts;
-import 'package:emulator_orchestrator/services/hooks/symbol_group_classifier.dart';
+import 'package:emulator_orchestrator/orchestrator/auto_tune_engine.dart'
+    show enrichSynthesizerResult;
 import 'package:emulator_orchestrator/orchestrator/events/orchestrator_events.dart';
 import 'package:emulator_orchestrator/orchestrator/events/synthesizer_events.dart';
+import 'package:emulator_orchestrator/services/analysis/fidelity_calculator.dart';
+import 'package:emulator_orchestrator/services/hooks/symbol_group_classifier.dart';
+import 'package:emulator_orchestrator/services/llm/llm_hook_generator.dart'
+    show PlatformFacts;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -18,6 +20,7 @@ import '../../../providers/app_providers.dart';
 import '../../../providers/autosave_provider.dart';
 import '../../../providers/comms_bus_provider.dart';
 import '../../../providers/comms_config_providers.dart';
+import '../../../providers/comms_session_scope.dart';
 
 /// Owns the synthesizer / emulation launch lifecycle.
 ///
@@ -35,14 +38,34 @@ class SynthesisController {
   StreamSubscription? _synthEventSub;
   StreamSubscription? _pauseSub;
 
+  /// Comms session owned by [runWithResolvedHooks] — that path starts
+  /// emulation and returns while the firmware keeps running, so its bus
+  /// servers must outlive the method. Released on reset/dispose/next run.
+  CommsSessionScope? _ownedCommsSession;
+
+  Future<CommsSessionScope> _acquireComms(Emulator emulator) =>
+      CommsSessionScope.acquire(
+        emulator: emulator,
+        tabConfigs: ref.read(commsProtocolConfigProvider),
+        bus: ref.read(commsBusServiceProvider),
+        catalog: ref.read(hookCatalogProvider),
+      );
+
   /// "Synthesize" path — clears visual state, (re)starts emulation, then runs
   /// the synthesizer loop. Throws on failure; callers show the error.
   ///
   /// [resolvedHooks] is normally empty for a fresh synthesis; pass previously
-  /// resolved hook code to warm-start.
+  /// resolved hook code to warm-start. [commsSession] lets a caller (the
+  /// auto-tune session) own the comms bracket across rounds; when null this
+  /// run acquires and releases its own. [persistResolvedHooks] controls the
+  /// post-run writeback of resolved hook code into the project — cold-start
+  /// auto-tune rounds pass false so independent rounds don't overwrite
+  /// `Emulator.hooks`.
   Future<void> startSynthesis(
     Emulator emulator, {
     Map<String, String> resolvedHooks = const {},
+    CommsSessionScope? commsSession,
+    bool persistResolvedHooks = true,
   }) async {
     final orchestrator = ref.read(emulationOrchestratorProvider);
     final elfPath = emulator.elfFilePath!;
@@ -68,75 +91,85 @@ class SynthesisController {
     _pauseSub?.cancel();
     _pauseSub = null;
 
-    final commsHooks = buildCommsHooks(
-      emulator: emulator,
-      configs: ref.read(commsProtocolConfigProvider),
-      catalog: ref.read(hookCatalogProvider),
-    );
+    // Comms bracket: same defaults as the CLI (i2c/uart/spi zero-fill)
+    // unless the Comms tab configured protocols. A plain run owns its
+    // scope for exactly the length of the synthesis.
+    await _ownedCommsSession?.release();
+    _ownedCommsSession = null;
+    final ownComms = commsSession == null;
+    final comms = commsSession ?? await _acquireComms(emulator);
+    final commsHooks = comms.hooks;
 
-    await orchestrator.restartEmulation(
-      elfPath: elfPath,
-      baseImagePath: baseImagePath,
-      startFrom: config.startFrom,
-      pauseOnUnhandled: true,
-      hookOverrides: hookOverrides,
-      hookOverrideScopes: hookOverrideScopes,
-      resolvedHooks: resolvedHooks,
-      commsHooks: commsHooks,
-      memoryMapPath: config.memoryMapPath,
-    );
-
-    final firmwareRecord = ref.read(artifactProcessingProvider).valueOrNull;
-    if (firmwareRecord == null) {
-      ref.read(synthesisProgressProvider.notifier).state = null;
-      throw StateError(
-        'Firmware not processed. Ensure the call graph has loaded.',
+    try {
+      await orchestrator.restartEmulation(
+        elfPath: elfPath,
+        baseImagePath: baseImagePath,
+        startFrom: config.startFrom,
+        pauseOnUnhandled: true,
+        hookOverrides: hookOverrides,
+        hookOverrideScopes: hookOverrideScopes,
+        resolvedHooks: resolvedHooks,
+        commsHooks: commsHooks,
+        memoryMapPath: config.memoryMapPath,
       );
+
+      final firmwareRecord = ref.read(artifactProcessingProvider).valueOrNull;
+      if (firmwareRecord == null) {
+        ref.read(synthesisProgressProvider.notifier).state = null;
+        throw StateError(
+          'Firmware not processed. Ensure the call graph has loaded.',
+        );
+      }
+      final elfHash = firmwareRecord.elfHash;
+
+      ref.read(synthesisProgressProvider.notifier).state = SynthesisProgress(
+        countdownStart: DateTime.now(),
+        status: 'Emulation running...',
+      );
+
+      _subscribeSynthesizerEvents(emulator,
+          persistResolvedHooks: persistResolvedHooks);
+
+      final hookPreferences = ref.read(hookPreferencesProvider);
+      final hookBindings = ref.read(hookBindingsProvider);
+      final llmGenerator = ref.read(llmHookGeneratorProvider);
+      final platform = await PlatformFacts.tryBuild(
+        replPath: baseImagePath,
+        archString: firmwareRecord.machine?.name,
+        firmwareSymbols:
+            emulator.cachedCallGraph?.symbols.keys ?? const <String>[],
+      );
+      // Object groups (peripheral member-function families), computed from the
+      // call graph. Comms symbols are excluded so grouping never touches the
+      // bus mechanism.
+      final symbolGroups =
+          SymbolGroupClassifier(catalog: ref.read(hookCatalogProvider))
+              .classify(
+        emulator.cachedCallGraph?.symbols.keys ?? const <String>[],
+        exclude: commsHooks.keys.toSet(),
+      );
+      await orchestrator.runSynthesizer(
+        elfPath: elfPath,
+        baseImagePath: baseImagePath,
+        elfHash: elfHash,
+        startFrom: config.startFrom,
+        endAt: config.endAt,
+        hookPreferences: hookPreferences,
+        hookOverrides: hookOverrides,
+        hookOverrideScopes: hookOverrideScopes,
+        resolvedHooks: resolvedHooks,
+        commsHooks: commsHooks,
+        hookBindings: hookBindings,
+        symbolGroups: symbolGroups,
+        groupOverrides: emulator.groupOverrides,
+        memoryMapPath: config.memoryMapPath,
+        llmGenerator: llmGenerator,
+        platform: platform,
+        maxIterations: ref.read(synthesisMaxIterationsProvider),
+      );
+    } finally {
+      if (ownComms) await comms.release();
     }
-    final elfHash = firmwareRecord.elfHash;
-
-    ref.read(synthesisProgressProvider.notifier).state = SynthesisProgress(
-      countdownStart: DateTime.now(),
-      status: 'Emulation running...',
-    );
-
-    _subscribeSynthesizerEvents(emulator);
-
-    final hookPreferences = ref.read(hookPreferencesProvider);
-    final hookBindings = ref.read(hookBindingsProvider);
-    final llmGenerator = ref.read(llmHookGeneratorProvider);
-    final platform = await PlatformFacts.tryBuild(
-      replPath: baseImagePath,
-      archString: firmwareRecord.machine?.name,
-      firmwareSymbols: emulator.cachedCallGraph?.symbols.keys ?? const <String>[],
-    );
-    // Object groups (peripheral member-function families), computed from the
-    // call graph. Comms symbols are excluded so grouping never touches the
-    // bus mechanism.
-    final symbolGroups =
-        SymbolGroupClassifier(catalog: ref.read(hookCatalogProvider)).classify(
-      emulator.cachedCallGraph?.symbols.keys ?? const <String>[],
-      exclude: commsHooks.keys.toSet(),
-    );
-    await orchestrator.runSynthesizer(
-      elfPath: elfPath,
-      baseImagePath: baseImagePath,
-      elfHash: elfHash,
-      startFrom: config.startFrom,
-      endAt: config.endAt,
-      hookPreferences: hookPreferences,
-      hookOverrides: hookOverrides,
-      hookOverrideScopes: hookOverrideScopes,
-      resolvedHooks: resolvedHooks,
-      commsHooks: commsHooks,
-      hookBindings: hookBindings,
-      symbolGroups: symbolGroups,
-      groupOverrides: emulator.groupOverrides,
-      memoryMapPath: config.memoryMapPath,
-      llmGenerator: llmGenerator,
-      platform: platform,
-      maxIterations: ref.read(synthesisMaxIterationsProvider),
-    );
   }
 
   /// "Run" path — execute with the emulator's existing resolved hooks (and
@@ -163,11 +196,12 @@ class SynthesisController {
     _subscribeTrace();
     _subscribePauseEvents();
 
-    final commsHooks = buildCommsHooks(
-      emulator: emulator,
-      configs: ref.read(commsProtocolConfigProvider),
-      catalog: ref.read(hookCatalogProvider),
-    );
+    // This path starts emulation and returns while the firmware keeps
+    // running, so the comms servers must outlive the method: the
+    // controller owns them until reset/dispose/the next run.
+    await _ownedCommsSession?.release();
+    _ownedCommsSession = await _acquireComms(emulator);
+    final commsHooks = _ownedCommsSession!.hooks;
 
     await orchestrator.restartEmulation(
       elfPath: elfPath,
@@ -200,6 +234,8 @@ class SynthesisController {
     final orchestrator = ref.read(emulationOrchestratorProvider);
     await orchestrator.resetEmulation();
     _cancelSubscriptions();
+    await _ownedCommsSession?.release();
+    _ownedCommsSession = null;
     ref.read(executedSymbolsProvider.notifier).state = {};
     ref.read(hookedSymbolsProvider.notifier).state = {};
     ref.read(synthesisProgressProvider.notifier).state = null;
@@ -258,7 +294,8 @@ class SynthesisController {
     });
   }
 
-  void _subscribeSynthesizerEvents(Emulator emulator) {
+  void _subscribeSynthesizerEvents(Emulator emulator,
+      {bool persistResolvedHooks = true}) {
     final orchestrator = ref.read(emulationOrchestratorProvider);
     _synthEventSub?.cancel();
     _synthEventSub = orchestrator.synthesizerWorkflow.events.listen((event) {
@@ -319,7 +356,7 @@ class SynthesisController {
               ? 'Complete — ${result.resolvedHooks.length} hooks'
               : 'Failed at ${result.failedSymbol}',
         );
-        if (result.resolvedHookCode.isNotEmpty) {
+        if (persistResolvedHooks && result.resolvedHookCode.isNotEmpty) {
           ref.read(currentEmulatorProvider.notifier).state = emulator.copyWith(
             hooks: result.resolvedHookCode,
             modifiedAt: DateTime.now(),
@@ -351,26 +388,23 @@ class SynthesisController {
     _pauseSub = null;
   }
 
-  void dispose() => _cancelSubscriptions();
+  void dispose() {
+    _cancelSubscriptions();
+    unawaited(_ownedCommsSession?.release() ?? Future.value());
+    _ownedCommsSession = null;
+  }
 
   /// Fold run-level fidelity metrics + executed-symbols into the
-  /// manifest carried by [result] (manifest v2 enrichment).
-  ///
-  /// The synthesizer builds a v2 manifest with `metrics`, `executedSymbols`,
-  /// and `timing` all null because the workflow doesn't have call-graph
-  /// access. The controller computes [FidelityResult] from the current
-  /// call graph + executed-symbols-provider state + the manifest's hooked
-  /// symbols, then folds the resulting [ManifestMetrics] into the manifest
-  /// via [SynthesisManifest.withMetrics]. Subsequent disk write +
-  /// `synthesisResultProvider` consumers see the enriched manifest.
+  /// manifest carried by [result], through the one shared enrichment
+  /// (`enrichSynthesizerResult`) so the UI, the CLI, and the auto-tune
+  /// engine all compute the same numbers.
   ///
   /// Returns [result] unchanged when the manifest is null (legacy test
   /// path) or the call graph isn't loaded — in either case the v2
   /// enrichment fields stay null and downstream code falls back to
   /// recomputing as needed.
   SynthesizerResult _enrichManifest(SynthesizerResult result) {
-    final manifest = result.manifest;
-    if (manifest == null) return result;
+    if (result.manifest == null) return result;
 
     final callGraph = ref.read(callgraphProvider).valueOrNull;
     if (callGraph == null) return result;
@@ -392,35 +426,11 @@ class SynthesisController {
       ).union(executedSymbols);
     }
 
-    final fidelity = FidelityCalculator.compute(
+    return enrichSynthesizerResult(
+      result: result,
       callGraph: callGraph,
-      hookedSymbols: result.resolvedHooks.keys.toSet(),
-      traversedSymbols: executedSymbols,
+      executedSymbols: executedSymbols,
       subgraphSymbols: subgraphSymbols,
-    );
-
-    final metrics = ManifestMetrics(
-      overallFidelity: fidelity.overallFidelity,
-      coverageFidelity: fidelity.coverageFidelity,
-      subgraphFidelity: fidelity.subgraphFidelity,
-      intactCount: fidelity.intactFunctions,
-      degradedCount: fidelity.degradedFunctions,
-      hookedCount: fidelity.hookedFunctions,
-    );
-
-    final enrichedManifest = manifest.withMetrics(
-      metrics: metrics,
-      executedSymbols: executedSymbols.toList()..sort(),
-    );
-
-    return SynthesizerResult(
-      success: result.success,
-      totalIterations: result.totalIterations,
-      resolvedHooks: result.resolvedHooks,
-      resolvedHookCode: result.resolvedHookCode,
-      failedSymbol: result.failedSymbol,
-      totalDuration: result.totalDuration,
-      manifest: enrichedManifest,
     );
   }
 

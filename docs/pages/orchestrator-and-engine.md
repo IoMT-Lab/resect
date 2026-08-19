@@ -13,16 +13,40 @@ all in `emulator_orchestrator/lib/orchestrator/engine/`:
 
 | Interface | Job |
 |---|---|
-| `EngineLifecycle` | Start and stop the emulator process. |
-| `EmulationController` | Load firmware; run, pause, resume, reset; define [hooks](@ref gloss_hook) and anchor them at [symbols](@ref gloss_symbol). |
+| `EngineLifecycle` | Bring the emulator session up and down. |
+| `EmulationController` | Load firmware; run, pause, resume, reset; define [hooks](@ref gloss_hook) and anchor them at [symbols](@ref gloss_symbol); report where execution got to. |
 | `CallGraphSource` | Produce the [call graph](@ref gloss_call_graph) for a firmware binary. |
 | `TraceSource` | Stream which functions execute while the firmware runs. |
 
 An *engine implementation* is anything that provides these four. Resect
-has one: `DartEngine` (`engine/dart/`), which drives the pinned portable
-[Renode](@ref gloss_renode) build. Every Renode monitor command — loading
+has one: `DartEngine` (`engine/dart/`), which drives
+[Renode](@ref gloss_renode). Every Renode monitor command — loading
 a platform, `AddHookAtSymbol`, reading the trace — happens inside the
 `engine/dart/` directory and nowhere else.
+
+## Renode is a server Resect connects to
+
+`EngineLifecycle.start()` does not spawn anything. `DartEngine.startProcess`
+reads `RENODE_HOST` and `RENODE_PORT` from `resect.config` (defaulting to
+`localhost:5000`) and connects a client to a Renode already running in
+**server mode**, retrying for 30 seconds. In the container stack that server
+is the `renode` service (@ref containers); on a host it's a portable Renode
+you started yourself:
+
+    renode -p --disable-gui --server-mode --server-mode-port 5000
+
+Two consequences. First, `--engine-dir` (and the `engineDir` parameter it
+feeds) is accepted but unused on the emulation path — the only components
+that launch a Renode *process* are the hook-quality harness and progress
+runner in `services/quality/`, plus the Vagrant export. Second, a run's
+failure to connect is a configuration problem, not a missing binary: check
+the host and port before hunting for `emulation_engine/`.
+
+The [engine](@ref gloss_engine)'s events are where the execution signals the
+LLM reasons over come from. `EmulationController` records the last function
+entered and a rolling window of recent entries from Renode's function-call
+events (`sysbus.cpu LogFunctionNames`), which the synthesizer snapshots into
+its result — see @ref synthesis and @ref autotune_decisions.
 
 That gives the layer its one rule: **only engine implementations talk to
 Renode.** The rest of the system programs against the four interfaces, so
@@ -115,8 +139,8 @@ mean the emulation engine defined above.
 ## In short
 
 The engine is four interfaces (`EngineLifecycle`, `EmulationController`,
-`CallGraphSource`, `TraceSource`) with one Renode-backed implementation,
-and only engine implementations talk to Renode. The orchestrator composes
-an engine with the emulation, analysis, and synthesis workflows, owns no
-persistent data, and works on inputs from — and returns results to — the
-two controllers.
+`CallGraphSource`, `TraceSource`) with one Renode-backed implementation that
+*connects to* a Renode server rather than launching one, and only engine
+implementations talk to Renode. The orchestrator composes an engine with the
+emulation, analysis, and synthesis workflows, owns no persistent data, and
+works on inputs from — and returns results to — the two controllers.

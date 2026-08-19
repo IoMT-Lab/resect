@@ -36,7 +36,7 @@ class _LastRunCardState extends ConsumerState<LastRunCard> {
   @override
   Widget build(BuildContext context) {
     final result = ref.watch(synthesisResultProvider);
-    final fidelity = ref.watch(fidelityResultProvider);
+    final metrics = ref.watch(manifestMetricsProvider);
     final emulator = ref.watch(currentEmulatorProvider);
     if (result == null) return const SizedBox.shrink();
 
@@ -81,7 +81,7 @@ class _LastRunCardState extends ConsumerState<LastRunCard> {
           const SizedBox(height: 14),
           _BigFidelity(
             success: result.success,
-            fidelityPct: fidelity?.overallFidelity,
+            fidelityPct: metrics?.overallFidelity,
             failedSymbol: result.failedSymbol,
           ),
           const SizedBox(height: 16),
@@ -357,15 +357,15 @@ class _RecommendationPanel extends StatelessWidget {
     );
   }
 
-  Widget _disabledBody() => Row(
+  Widget _disabledBody() => const Row(
         children: [
-          const Icon(
+          Icon(
             Icons.power_off,
             size: 18,
             color: AppTheme.textDisabled,
           ),
-          const SizedBox(width: 8),
-          const Expanded(
+          SizedBox(width: 8),
+          Expanded(
             child: Text(
               'LLM module is off — enable MODULE_LLM_HOOKGEN in '
               'system settings to get recommendations from your runs.',

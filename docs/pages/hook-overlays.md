@@ -85,7 +85,8 @@ and let **bindings** carry what the tools have learned.
 ## Who writes these maps
 
 - You, from the UI (metadata panel, Hook Database dialog).
-- The classifier seeding pass on project open (bindings only).
+- The classifier seeding pass on project open (bindings only, UI only — see
+  @ref pre_synthesis).
 - Accepted [auto-tune](@ref gloss_autotune) recommendations — applied
   through one shared function (`applyRecommendationsToOverlays` in
   `emulator_orchestrator/lib/orchestrator/recommendation_overlay_applier.dart`)

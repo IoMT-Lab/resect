@@ -11,11 +11,11 @@ Sizes: **S** = hours, **M** = a day or two, **L** = a week-scale change.
 
 Zero behavior change; existing tests must stay green untouched.
 
-- ☐ Route all four [fidelity](@ref gloss_fidelity)-enrichment call sites
+- ☑ Route all four [fidelity](@ref gloss_fidelity)-enrichment call sites
       (UI synthesis controller, UI loop, CLI `synthesize`, HTTP API)
       through the one shared helper (`enrichSynthesizerResult` /
-      `enrichManifestWithMetrics` in `auto_tune_engine.dart`). Closes
-      [Gap 4](@ref gap_fidelity).
+      `enrichManifestWithMetrics` in `auto_tune_engine.dart`). Closed
+      Gap 4; the UI report card now renders `manifest.metrics` too.
 - ☐ Move the `OptimizationTarget` enum into `auto_tune_config.dart`;
       drop the model → service import.
 - ☐ Stop `trace_activity_event.dart` importing the orchestrator layer
@@ -40,34 +40,40 @@ Build the [ArtifactController](@ref controller_artifacts):
 - ☐ Promote `ArtifactLibraryService` → `ArtifactController` under
       `emulator_orchestrator/lib/orchestrator/`; add the five-verb surface
       (generate, store, query, bind, share).
-- ☐ Fold the three duplicated generate-and-bind sites into
+- ☐ Fold the two remaining duplicated generate-and-bind sites into
       `generateAndBind` (the sites are listed in
-      [Gap 2](@ref gap_artifact_controller)).
+      [Gap 2](@ref gap_artifact_controller); the UI loop's third copy
+      died with phase P4).
 - ☐ Point `hook_database_dialog.dart` and `llm_hook_gen_dialog.dart` at
       the controller instead of raw `ArtifactDatabase`.
 - ☐ Unit tests for `generateAndBind` and the bind verbs.
 
-## Phase P4 — One auto-tune loop (M–L) {#phase_p4}
+## Phase P4 — One auto-tune loop (M–L) — DONE {#phase_p4}
 
-Close [Gap 3](@ref gap_two_loops); the target behavior is @ref autotune.
+Closed Gap 3; the behavior is @ref autotune.
 
-- ☐ Write `UiReviewPolicy` (interactive
-      [review policy](@ref gloss_review_policy); lift the Completer-based
-      pause/resume from `LlmSynthesisOrchestrator`).
-- ☐ Write `UiAutoTuneSink` mapping engine events to the auto-tune
+- ☑ Write `UiReviewPolicy` (interactive
+      [review policy](@ref gloss_review_policy); lifted the Completer-based
+      pause/resume from the old UI loop; also carries the accept-all mode
+      chosen at session start).
+- ☑ Write `UiAutoTuneSink` mapping engine events to the auto-tune
       modal's existing state types; persist
       [round snapshots](@ref gloss_round_snapshot) through the project.
-- ☐ Drive `AutoTuneEngine` from the Auto-tune button; pass
-      `seedBaseline` where the UI previously skipped the baseline.
-- ☐ Add modal copy for engine-only stop reasons (notably
+- ☑ Drive `AutoTuneEngine` from the Auto-tune button; pass
+      `seedBaseline` where the UI previously skipped the baseline. UI
+      sessions also run an `AutoTuneReportSink` (via `MultiSink`) so both
+      surfaces write the same report files.
+- ☑ Add modal copy for engine-only stop reasons (notably
       `noCoverageProgress`).
-- ☐ Delete `LlmSynthesisOrchestrator` and the UI-side
-      `RecommendationApplier`; migrate their tests to engine + policy
-      tests.
+- ☑ Delete the UI loop body and the UI-side `RecommendationApplier`;
+      tests migrated to engine + policy + sink tests.
+      (`LlmSynthesisOrchestrator` survives as a thin adapter — same name
+      and public surface, zero loop logic — so the modal and its tests
+      were untouched.)
 
-Known UX change to communicate: no-op recommendations get filtered, and
-sessions can now end early with `noCoverageProgress` instead of churning
-to `maxRounds`.
+UX changes shipped with it: no-op recommendations get filtered, sessions
+can end early with `noCoverageProgress`, cold-start rounds are the default
+(warm start is a knob), and comms virtualization defaults now match the CLI.
 
 ## Phase P5 — ProjectController (L, highest risk) {#phase_p5}
 

@@ -41,15 +41,21 @@ The directed graph of which functions call which, extracted from the
 firmware binary — via objdump by default, or from the cached
 [Ghidra extraction](@ref gloss_ghidra_extraction) when that module is
 enabled (UI only today; the CLI always uses objdump). The foundation for
-coverage math, the Call Graph tab, and hook targeting.
+coverage math, the Call Graph tab, and hook targeting. Note that the objdump
+graph carries **direct calls only** — calls through function pointers,
+vtables, or interrupt vectors are absent, so it under-approximates
+reachability. See @ref pre_synthesis.
 
 ## Classifier {#gloss_classifier}
 
 A deterministic rule engine (`HookClassifier`) that looks at a function's
 signature, decompilation, and data symbols and picks a suitable catalog
-hook template for it — no LLM involved. There is also a separate
-name-pattern *comms* classifier that assigns symbols to a
-[comms class](@ref gloss_comms_class). See @ref hook_lifecycle.
+hook template for it — no LLM involved; "no template fits" is its other
+answer, and the only trigger for LLM authoring. Two more components share
+the name: the *comms* classifier, which assigns symbols to a
+[comms class](@ref gloss_comms_class), and the *object-group* classifier
+(@ref symbol_groups). All three, and the seven rules, are in
+@ref pre_synthesis. See also @ref hook_lifecycle.
 
 ## Comms class {#gloss_comms_class}
 
@@ -78,7 +84,8 @@ the [CLI](@ref cli) drive the same one.
 ## Coverage {#gloss_coverage}
 
 How much of the firmware actually ran: the set of [executed symbols](@ref gloss_executed_symbols) measured against the [call graph](@ref gloss_call_graph). Summarized by coverage
-[fidelity](@ref gloss_fidelity).
+[fidelity](@ref gloss_fidelity). Reported two ways — raw `executed / total`,
+and [reachable-code coverage](@ref gloss_reachable_coverage).
 
 ## Device handler {#gloss_device_handler}
 
@@ -91,6 +98,25 @@ reads with zeros) and `RandomDeviceHandler`. See @ref comms_virtualization.
 Resect's rule that architecture changes are written into these docs before
 they are made in code; the docs are the source of truth and the code aligns
 to them. See @ref docs_first_policy.
+
+## Error sink {#gloss_error_sink}
+
+A function where landing means an upstream check already failed —
+`Error_Handler`, a `*Fault*` handler, `assert`, `abort`, `panic`, `_exit`.
+Recognized by name (`LastRunInsightService.looksLikeErrorSink`). Hooking a
+sink hides the failure without advancing coverage, so both the prompt framing
+and the response schema push the LLM at the call *before* it in the
+[recent call sequence](@ref gloss_recent_call_sequence). See
+@ref autotune_decisions.
+
+## Escalation round {#gloss_escalation_round}
+
+The [auto-tune](@ref gloss_autotune) round that follows a
+[stagnant](@ref gloss_stagnation) one: the prompt states that every leaf-level
+fix is already in effect and the response schema is narrowed to the stalled
+[frontier](@ref gloss_frontier) callers, so the model must propose a
+[wrapper skip](@ref gloss_wrapper_skip) instead of repeating itself. See
+@ref autotune_decisions.
 
 ## Engine {#gloss_engine}
 
@@ -150,6 +176,16 @@ The shared [scope](@ref gloss_scope) string given to every member of an
 Because the members share one scope, their scoped read/write hooks read and
 write the same Renode Python-globals namespace, so enabling the object sets
 state that its is-ready member reads back. See @ref symbol_groups.
+
+## Halt point {#gloss_halt_point}
+
+The one symbol a round's reasoning is centered on: where the firmware
+stopped. Resolved by a fixed cascade —
+`failedSymbol` (a real fault) → `finalExecutionSymbol` (the last function
+*entered*) → `lastPauseSymbol` (a fault already hooked past, hence stale) →
+the chronologically-last synthesizer decision. Shared by the recommender and
+the Last Run advisor so both center on the same symbol. See
+@ref autotune_decisions.
 
 ## Hook {#gloss_hook}
 
@@ -251,12 +287,34 @@ Resect retrieves the most relevant chunks of project documents and
 [Ghidra extraction](@ref gloss_ghidra_extraction) facts from a per-project
 index (`rag_index.db`) and puts them in the prompt.
 
+## Reachable-code coverage {#gloss_reachable_coverage}
+
+[Coverage](@ref gloss_coverage) measured against the set of functions
+reachable from what actually executed, rather than against the whole
+[call graph](@ref gloss_call_graph). Reported with its *headroom* — the count
+of reachable-but-unexecuted symbols — which is the "can this even improve?"
+signal. Under-counts, because the graph has direct calls only, so the raw
+`executed / total` number stays the cross-version baseline. See
+@ref autotune_decisions.
+
+## Recent call sequence {#gloss_recent_call_sequence}
+
+The last 16 function *entries* before a run ended, oldest→newest, with
+consecutive repeats collapsed (`` `sym` (×N) ``). Captured in a ring buffer
+on the emulation controller from Renode's function-entry events and cleared at
+the top of each synthesizer iteration, so it describes the final iteration.
+Where the [halt point](@ref gloss_halt_point) says *where* execution stopped,
+this says *how it got there*. See @ref autotune_decisions.
+
 ## Recommendation {#gloss_recommendation}
 
 One typed, machine-applicable change proposed by the LLM during
 [auto-tune](@ref gloss_autotune): set/clear an
 [override](@ref gloss_override), set a [preference](@ref gloss_preference),
-generate a custom hook, or adjust the iteration cap. See @ref autotune.
+generate a custom hook, adjust the iteration cap, or force/clear a whole
+[object group](@ref gloss_object_group). Each carries a one-sentence
+rationale, and the kinds plus their required fields are enforced by the
+response schema. See @ref autotune and @ref autotune_decisions.
 
 ## Renode {#gloss_renode}
 
@@ -322,6 +380,17 @@ is hit. See @ref synthesis.
 [synthesis](@ref gloss_synthesis). "Synthesizer run" and "synthesis run" are
 used interchangeably.
 
+## Termination reason {#gloss_termination_reason}
+
+The named stopping condition recorded on every
+[synthesis](@ref gloss_synthesis) result and [manifest](@ref gloss_manifest):
+`cleanRun`, `symbolExhausted`, `forcedOverrideFailed`, `maxIterations`, or
+`cancelled`. It exists so that `failedSymbol` can mean *only* "a real
+[symbol](@ref gloss_symbol) faulted and its candidates ran out" — hitting the
+iteration cap is control flow, not a fault, and leaves that field null. The
+[auto-tune](@ref gloss_autotune) loop's own endings are separate
+(`AutoTuneStopReason`). See @ref synthesis.
+
 ## Unhandled access {#gloss_unhandled_access}
 
 The fault that drives [synthesis](@ref gloss_synthesis): the firmware read
@@ -335,3 +404,18 @@ Re-using the resolved hook code from a previous successful run: the
 project's `hooks` map is pre-seeded into the next synthesis so it doesn't
 rediscover the same solutions. Weaker than [overrides](@ref gloss_override)
 and comms hooks, which take precedence. See @ref hook_overlays.
+
+In [auto-tune](@ref gloss_autotune), warm start is a per-session knob
+(`--warm-start` / a dialog switch, default off): on, each round is seeded
+with the previous round's resolved hooks; off (cold start), every round
+re-synthesizes from the overlay set alone, keeping rounds independent and
+comparable. See @ref autotune.
+
+## Wrapper skip {#gloss_wrapper_skip}
+
+Forcing an *executed* caller — typically an `*_Init`/`*Config` function with
+unreached callees — to return 0, so its whole body is skipped. The move of
+last resort when a busy-wait is inlined in the caller and there is no leaf
+function left to hook: it trades the coverage inside the wrapper for
+everything after it. Today it is always a blunt `return 0`, side effects
+included. See @ref autotune_decisions.

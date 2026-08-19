@@ -455,9 +455,13 @@ class AutoTuneEngine {
     final executed = manifest.executedSymbols?.toSet() ?? <String>{};
     final frontier =
         computeFrontier(executedSymbols: executed, callGraph: callGraph);
-    final windowed = history
-        .take(config.snapshotWindowSize.clamp(1, 100))
-        .toList(growable: false);
+    // The prompt window is the MOST RECENT N rounds (RecommendationService
+    // documents "last N rounds"); older rounds fall out of the evidence.
+    final windowSize = config.snapshotWindowSize.clamp(1, 100);
+    final windowed = history.length <= windowSize
+        ? List<RoundSnapshot>.unmodifiable(history)
+        : List<RoundSnapshot>.unmodifiable(
+            history.sublist(history.length - windowSize));
 
     final thinkingBuf = StringBuffer();
     final responseBuf = StringBuffer();
@@ -779,6 +783,60 @@ abstract class AutoTuneSink {
   /// round.
   void finished(AutoTuneStopReason reason,
       {required int finalRound, String? errorMessage});
+}
+
+/// Fans every [AutoTuneSink] notification out to [sinks], in order.
+///
+/// Lets one engine feed several consumers at once — e.g. the UI's state
+/// sink alongside an [AutoTuneReportSink] writing the report files — so
+/// neither has to know about the other.
+class MultiSink implements AutoTuneSink {
+  const MultiSink(this.sinks);
+
+  final List<AutoTuneSink> sinks;
+
+  @override
+  void phase(AutoTunePhase phase, {int round = 0, String? symbol}) {
+    for (final s in sinks) {
+      s.phase(phase, round: round, symbol: symbol);
+    }
+  }
+
+  @override
+  void thinking(String chunk) {
+    for (final s in sinks) {
+      s.thinking(chunk);
+    }
+  }
+
+  @override
+  void token(String token) {
+    for (final s in sinks) {
+      s.token(token);
+    }
+  }
+
+  @override
+  void llmExchange(AutoTuneLlmExchange exchange) {
+    for (final s in sinks) {
+      s.llmExchange(exchange);
+    }
+  }
+
+  @override
+  void round(AutoTuneRoundReport report) {
+    for (final s in sinks) {
+      s.round(report);
+    }
+  }
+
+  @override
+  void finished(AutoTuneStopReason reason,
+      {required int finalRound, String? errorMessage}) {
+    for (final s in sinks) {
+      s.finished(reason, finalRound: finalRound, errorMessage: errorMessage);
+    }
+  }
 }
 
 /// Loop phases the engine announces via [AutoTuneSink.phase]. The

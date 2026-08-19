@@ -1,6 +1,5 @@
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/models/hook_binding.dart';
-import 'package:emulator_orchestrator/data/models/last_run_insight.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app_providers.dart';

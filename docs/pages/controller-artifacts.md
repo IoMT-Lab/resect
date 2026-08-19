@@ -13,15 +13,14 @@ ancestor is `ArtifactLibraryService`
 which wraps the database and owns firmware registration and template
 seeding — but two dialogs (`hook_database_dialog.dart`,
 `llm_hook_gen_dialog.dart`) run their own SQL against `ArtifactDatabase`,
-and the generate-and-bind sequence is written out three times
+and the generate-and-bind sequence is written out twice
 (`AutoTuneEngine._generateAndSeedCustomHooks`,
-`LlmSynthesisOrchestrator._generateAndSeedCustomHooks`,
 `SynthesizerWorkflow._tryLlmFallback`).
 **Planned:** @ref phase_p3 promotes the service to `ArtifactController`
-with the surface below and folds the three duplicates into
+with the surface below and folds the duplicates into
 `generateAndBind`.
-**Why:** three copies of the same insert-and-bind logic have already
-drifted once and must be fixed in three places every time; and with
+**Why:** copies of the same insert-and-bind logic have already
+drifted once and must be fixed in every location every time; and with
 dialogs running raw SQL, nothing enforces dedup-on-insert or import
 inlining uniformly.
 

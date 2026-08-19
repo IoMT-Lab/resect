@@ -6,7 +6,8 @@ import 'package:emulator_orchestrator/data/models/call_graph.dart';
 import 'package:emulator_orchestrator/data/models/comms_assignment.dart';
 import 'package:emulator_orchestrator/data/models/emulation_state.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
-import 'package:emulator_orchestrator/data/models/fidelity_result.dart';
+import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart'
+    show ManifestMetrics;
 import 'package:emulator_orchestrator/data/models/firmware_record.dart';
 import 'package:emulator_orchestrator/data/models/hook_binding.dart';
 import 'package:emulator_orchestrator/data/models/hook_decision_state.dart';
@@ -16,16 +17,6 @@ import 'package:emulator_orchestrator/data/models/recent_emulator.dart';
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
 import 'package:emulator_orchestrator/data/models/trace_activity_event.dart';
 import 'package:emulator_orchestrator/data/repositories/emulator_repository.dart';
-import 'package:emulator_orchestrator/services/hooks/artifact_library_service.dart';
-import 'package:emulator_orchestrator/services/analysis/call_graph_service.dart';
-import 'package:emulator_orchestrator/services/analysis/fidelity_calculator.dart';
-import 'package:emulator_orchestrator/services/quality/hook_test_harness.dart';
-import 'package:emulator_orchestrator/services/llm/last_run_insight_service.dart';
-import 'package:emulator_orchestrator/services/llm/llm_client.dart';
-import 'package:emulator_orchestrator/services/llm/llm_hook_generator.dart';
-import 'package:emulator_orchestrator/services/rag/rag_index.dart';
-import 'package:emulator_orchestrator/services/llm/recommendation_service.dart';
-import 'package:emulator_orchestrator/services/external/signatures_service.dart';
 import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
 import 'package:emulator_orchestrator/orchestrator/engine/call_graph_source.dart';
 import 'package:emulator_orchestrator/orchestrator/engine/dart/dart_engine.dart';
@@ -34,6 +25,16 @@ import 'package:emulator_orchestrator/orchestrator/engine/paused_event.dart';
 import 'package:emulator_orchestrator/orchestrator/events/orchestrator_events.dart';
 import 'package:emulator_orchestrator/orchestrator/vagrant_test_event.dart';
 import 'package:emulator_orchestrator/orchestrator/workflows/synthesizer_workflow.dart';
+import 'package:emulator_orchestrator/services/analysis/call_graph_service.dart';
+import 'package:emulator_orchestrator/services/analysis/fidelity_calculator.dart';
+import 'package:emulator_orchestrator/services/external/signatures_service.dart';
+import 'package:emulator_orchestrator/services/hooks/artifact_library_service.dart';
+import 'package:emulator_orchestrator/services/llm/last_run_insight_service.dart';
+import 'package:emulator_orchestrator/services/llm/llm_client.dart';
+import 'package:emulator_orchestrator/services/llm/llm_hook_generator.dart';
+import 'package:emulator_orchestrator/services/llm/recommendation_service.dart';
+import 'package:emulator_orchestrator/services/quality/hook_test_harness.dart';
+import 'package:emulator_orchestrator/services/rag/rag_index.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'autosave_provider.dart';
@@ -276,40 +277,13 @@ final reachableSymbolsProvider = Provider<Set<String>>((ref) {
   );
 });
 
-/// Computed fidelity metric for the current synthesis result.
-///
-/// Automatically recomputes when the call graph or synthesis result changes.
-/// Returns null if either is unavailable.
-final fidelityResultProvider = Provider<FidelityResult?>((ref) {
-  final callgraphAsync = ref.watch(callgraphProvider);
-  final callGraph = callgraphAsync.valueOrNull;
-  final synthResult = ref.watch(synthesisResultProvider);
-  if (callGraph == null || synthResult == null) return null;
-  final executedSymbols = ref.watch(executedSymbolsProvider);
-
-  // Compute subgraph between start/stop if both are configured.
-  final emulator = ref.watch(currentEmulatorProvider);
-  Set<String> subgraphSymbols = const {};
-  final startFrom = emulator?.emulationConfig.startFrom;
-  final endAt = emulator?.emulationConfig.endAt;
-  if (startFrom != null && startFrom.isNotEmpty && endAt != null && endAt.isNotEmpty) {
-    // Use the first endAt symbol for the subgraph path.
-    // Union with executed symbols so runtime-discovered dependencies
-    // (function pointers, interrupts, etc.) are included.
-    subgraphSymbols = FidelityCalculator.subgraphBetween(
-      callGraph,
-      startFrom,
-      endAt.first,
-    ).union(executedSymbols);
-  }
-
-  return FidelityCalculator.compute(
-    callGraph: callGraph,
-    hookedSymbols: synthResult.resolvedHooks.keys.toSet(),
-    traversedSymbols: executedSymbols,
-    subgraphSymbols: subgraphSymbols,
-  );
-});
+/// The current synthesis result's manifest metrics — the ONE fidelity
+/// source every surface renders (the UI report card, the CLI output,
+/// and the auto-tune round reports all read the same enrichment; see
+/// `enrichSynthesizerResult`). Null until an enriched result exists.
+final manifestMetricsProvider = Provider<ManifestMetrics?>(
+  (ref) => ref.watch(synthesisResultProvider)?.manifest?.metrics,
+);
 
 // ============================================================================
 // EMULATOR MANAGEMENT PROVIDERS

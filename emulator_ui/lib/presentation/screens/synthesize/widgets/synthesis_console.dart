@@ -160,17 +160,19 @@ class _IdleView extends ConsumerWidget {
       );
 
   Future<void> _launchAutoTune(BuildContext context, WidgetRef ref) async {
-    final config = await AutoTuneConfigDialog.show(context);
-    if (config == null || !context.mounted) return;
+    final choice = await AutoTuneConfigDialog.show(context);
+    if (choice == null || !context.mounted) return;
     final container = ProviderScope.containerOf(context);
     final orchestrator = LlmSynthesisOrchestrator(container);
-    final sessionFuture = orchestrator.runAutoTune(config);
+    final sessionFuture = orchestrator.runAutoTune(
+      choice.config,
+      interactiveReview: choice.interactiveReview,
+    );
     // Surface the running session in the modal. The modal sits on top
     // of the Synthesize tab and blocks interaction until terminated.
     await AutoTuneModal.show(
       context: context,
       orchestrator: orchestrator,
-      sessionFuture: sessionFuture,
     );
     // Surface any uncaught error from the session.
     try {

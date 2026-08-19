@@ -8,17 +8,19 @@ import 'package:emulator_orchestrator/data/models/auto_tune_config.dart';
 import 'package:emulator_orchestrator/data/models/call_graph.dart';
 import 'package:emulator_orchestrator/data/models/comms_assignment.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
-import 'package:emulator_orchestrator/data/models/hook_decision_state.dart';
+import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart'
+    show ManifestDecision;
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
 import 'package:emulator_orchestrator/data/repositories/emulator_repository.dart';
 import 'package:emulator_orchestrator/orchestrator/auto_tune_engine.dart';
 import 'package:emulator_orchestrator/orchestrator/auto_tune_report_writer.dart';
 import 'package:emulator_orchestrator/orchestrator/comms/comms_bus_service.dart';
-import 'package:emulator_orchestrator/orchestrator/comms/comms_config.dart';
-import 'package:emulator_orchestrator/orchestrator/comms/device_handler.dart';
+import 'package:emulator_orchestrator/orchestrator/comms/comms_session.dart';
 import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
 import 'package:emulator_orchestrator/orchestrator/engine/dart/dart_engine.dart';
 import 'package:emulator_orchestrator/services/analysis/fidelity_calculator.dart';
+import 'package:emulator_orchestrator/services/comms/comms_assignment_merge.dart';
+import 'package:emulator_orchestrator/services/comms/comms_classifier.dart';
 import 'package:emulator_orchestrator/services/hooks/artifact_library_service.dart';
 import 'package:emulator_orchestrator/services/hooks/hook_catalog.dart';
 import 'package:emulator_orchestrator/services/hooks/symbol_group_classifier.dart';
@@ -235,6 +237,7 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
   final saveEmulatorPath = flags['save-emulator'];
   final emulatorName = flags['name'];
   final engineDir = flags['engine-dir'];
+  final commsClasses = _parseCommsFlag(flags['comms']);
 
   if (elfPath == null || elfPath.isEmpty) {
     stderr.writeln('Error: --elf is required');
@@ -256,6 +259,7 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
   }
 
   final orchestrator = _createOrchestrator();
+  final commsBus = CommsBusService();
 
   try {
     await orchestrator.engineLifecycle.start(engineDir: engineDir);
@@ -274,6 +278,23 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
     stderr.writeln('Generating call graph...');
     final callGraph = await orchestrator.generateCallGraph(elfPath);
     stderr.writeln('Found ${callGraph.totalFunctions} functions');
+
+    // The working project object. Synthesize starts from a bare Emulator, so
+    // the merge below degenerates to "classifier suggestion for every present
+    // symbol" — the same result the UI computes on a brand-new project.
+    var emulator = Emulator.create(
+      name: emulatorName ??
+          File(elfPath).uri.pathSegments.last.replaceAll('.elf', ''),
+      elfFilePath: elfPath,
+      baseImagePath: replPath,
+    );
+    final mergedComms = mergeCommsAssignments(
+      graph: callGraph,
+      existing: emulator.commsAssignments,
+      suggestions: const NamePatternCommsClassifier().classify(callGraph),
+    );
+    emulator = emulator.copyWith(commsAssignments: mergedComms);
+    stderr.writeln('Comms classification: ${mergedComms.length} assignments');
 
     final artifactService = ArtifactLibraryService(orchestrator.artifactDb);
     final symbolNames = callGraph.symbols.keys.toList();
@@ -300,8 +321,17 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
       }
     });
 
+    // Comms virtualization + bus servers — the shared stanza (see
+    // _startComms), driven by the assignments classified above.
+    final comms = await _startComms(
+      emulator: emulator,
+      commsClasses: commsClasses,
+      commsBus: commsBus,
+    );
+    final commsHooks = comms.hooks;
+
     final symbolGroups = SymbolGroupClassifier(catalog: HookCatalog.system())
-        .classify(callGraph.symbols.keys);
+        .classify(callGraph.symbols.keys, exclude: commsHooks.keys.toSet());
     if (symbolGroups.isNotEmpty) {
       stderr.writeln('Object groups: ${symbolGroups.length} '
           '(${symbolGroups.map((g) => g.scope).take(5).join(', ')}'
@@ -316,6 +346,7 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
       startFrom: startFrom,
       endAt: endAt,
       maxIterations: maxIterations,
+      commsHooks: commsHooks,
       symbolGroups: symbolGroups,
     );
 
@@ -332,18 +363,36 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
     }
     stderr.writeln('Duration: ${result.totalDuration.inSeconds}s');
 
-    final outputMap = result.toJson();
+    // Enrich through the one shared path (same numbers as the UI and
+    // the auto-tune reports: hooked set = manifest decisions), then keep
+    // the richer FidelityResult block in the JSON output from the same
+    // inputs.
+    Set<String> subgraphSymbols = const {};
+    if (callGraph.symbols.isNotEmpty &&
+        startFrom != null &&
+        endAt != null &&
+        endAt.isNotEmpty) {
+      subgraphSymbols = FidelityCalculator.subgraphBetween(
+        callGraph, startFrom, endAt.first,
+      ).union(executedSymbols);
+    }
+    final enriched = callGraph.symbols.isNotEmpty
+        ? enrichSynthesizerResult(
+            result: result,
+            callGraph: callGraph,
+            executedSymbols: executedSymbols,
+            subgraphSymbols: subgraphSymbols,
+          )
+        : result;
+    final outputMap = enriched.toJson();
     if (callGraph.symbols.isNotEmpty) {
-      Set<String> subgraphSymbols = const {};
-      if (startFrom != null && endAt != null && endAt.isNotEmpty) {
-        subgraphSymbols = FidelityCalculator.subgraphBetween(
-          callGraph, startFrom, endAt.first,
-        ).union(executedSymbols);
-      }
-
       final fidelity = FidelityCalculator.compute(
         callGraph: callGraph,
-        hookedSymbols: result.resolvedHooks.keys.toSet(),
+        hookedSymbols: {
+          for (final d in enriched.manifest?.decisions ??
+              const <ManifestDecision>[])
+            d.symbol,
+        },
         traversedSymbols: executedSymbols,
         subgraphSymbols: subgraphSymbols,
       );
@@ -360,17 +409,18 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
     }
 
     if (saveEmulatorPath != null && result.resolvedHookCode.isNotEmpty) {
-      final name = emulatorName ?? File(elfPath).uri.pathSegments.last.replaceAll('.elf', '');
-      final emulator = Emulator.create(
-        name: name,
-        elfFilePath: elfPath,
-        baseImagePath: replPath,
-      ).copyWith(hooks: result.resolvedHookCode);
-
-      await orchestrator.saveEmulator(emulator, savePath: saveEmulatorPath);
+      // Persist the working project: resolved hooks, the comms assignments
+      // classified above, and the call graph (so a follow-up `autotune --emu`
+      // reasons over these exact edges instead of regenerating).
+      final saved = emulator.copyWith(
+        hooks: result.resolvedHookCode,
+        cachedCallGraph: callGraph,
+      );
+      await orchestrator.saveEmulator(saved, savePath: saveEmulatorPath);
       stderr.writeln('Emulator saved to $saveEmulatorPath');
     }
   } finally {
+    await commsBus.dispose();
     try {
       await orchestrator.resetEmulation();
     } catch (_) {}
@@ -415,14 +465,16 @@ Future<void> _runAutotune(Map<String, String> flags) async {
   // Comms protocols to virtualize as a UNIT (default: all classified). An
   // interdependent bus like I2C can't be stubbed symbol-by-symbol — the
   // comms mapping applies coherent per-protocol hooks. `--comms none` opts out.
-  final commsFlag = (flags['comms'] ?? 'i2c,uart,spi').toLowerCase();
-  final commsClasses = commsFlag == 'none'
-      ? const <CommsClass>{}
-      : {
-          for (final c in commsFlag.split(','))
-            for (final v in CommsClass.values)
-              if (v.name == c.trim()) v,
-        };
+  final commsClasses = _parseCommsFlag(flags['comms']);
+  // --save-comms: persist the merged comms assignments back into the .emu.
+  // Off by default — autotune otherwise never writes the project file, and
+  // classification is deterministic so every run (and the UI) recomputes the
+  // same map.
+  final saveComms = flags.containsKey('save-comms');
+  // --warm-start: seed each round's synthesis with the previous round's
+  // resolved hook code. Off by default — cold-start rounds are independent,
+  // comparable experiments (the validated behavior).
+  final warmStart = flags.containsKey('warm-start');
   // Color: auto (TTY-detect, default) / always / never.
   final colorFlag = (flags['color'] ?? 'auto').toLowerCase();
   final bool? useColor = switch (colorFlag) {
@@ -440,7 +492,7 @@ Future<void> _runAutotune(Map<String, String> flags) async {
 
   // Load the project — carries elf, repl, cached call graph, and the
   // seeded overlays/bindings.
-  final emulator = await EmulatorRepository().loadEmulator(emuPath);
+  var emulator = await EmulatorRepository().loadEmulator(emuPath);
   final elfPath = emulator.elfFilePath;
   final replPath = emulator.baseImagePath;
   if (elfPath == null || replPath == null) {
@@ -498,6 +550,24 @@ Future<void> _runAutotune(Map<String, String> flags) async {
         await orchestrator.generateCallGraph(elfPath);
     stderr.writeln('Call graph: ${callGraph.totalFunctions} functions');
 
+    // Classify + merge comms assignments the way the UI does on every graph
+    // load: persisted entries win, new symbols get the classifier's
+    // suggestion, dropped symbols are pruned. This is what decides which
+    // functions are bus functions for the whole session (comms hooks below,
+    // and the engine's wrapper-skip exclusion).
+    final loadedComms = emulator.commsAssignments;
+    final mergedComms = mergeCommsAssignments(
+      graph: callGraph,
+      existing: loadedComms,
+      suggestions: const NamePatternCommsClassifier().classify(callGraph),
+    );
+    emulator = emulator.copyWith(commsAssignments: mergedComms);
+    stderr.writeln('Comms classification: ${mergedComms.length} assignments');
+    if (saveComms && !commsAssignmentsEqual(mergedComms, loadedComms)) {
+      await orchestrator.saveEmulator(emulator, savePath: emuPath);
+      stderr.writeln('Comms assignments saved to $emuPath');
+    }
+
     // Register the firmware → elfHash + default hooks + symbol rows.
     final artifactService = ArtifactLibraryService(orchestrator.artifactDb);
     final firmwareRecord = await artifactService.processElfFile(
@@ -525,28 +595,15 @@ Future<void> _runAutotune(Map<String, String> flags) async {
       ragIndex: ragIndex,
     );
 
-    // Comms virtualization — apply coherent per-protocol hooks for every
-    // classified symbol of each requested protocol, instead of stubbing the
-    // interdependent bus symbol-by-symbol (which can't work for I2C et al).
-    const commsPorts = {CommsClass.i2c: 1234, CommsClass.spi: 1235, CommsClass.uart: 1236};
-    final commsConfigs = <CommsClass, CommsProtocolConfig>{
-      for (final c in commsClasses)
-        c: CommsProtocolConfig(port: commsPorts[c] ?? 1234, virtualized: true),
-    };
-    final commsHooks = buildCommsHooks(
+    // Comms virtualization + bus servers — the shared stanza (see
+    // _startComms). Hooks come from the merged assignments above.
+    final comms = await _startComms(
       emulator: emulator,
-      configs: commsConfigs,
-      catalog: HookCatalog.system(),
+      commsClasses: commsClasses,
+      commsBus: commsBus,
     );
-    // Status map the decision-state builder + recommend prompt read.
-    final commsStatus = <CommsClass, CommsProtocolStatus>{
-      for (final e in commsConfigs.entries)
-        e.key: (virtualized: e.value.virtualized, port: e.value.port),
-    };
-    if (commsHooks.isNotEmpty) {
-      stderr.writeln('Comms virtualized: ${commsHooks.length} hooks across '
-          '${commsClasses.map((c) => c.name).join('/')}');
-    }
+    final commsHooks = comms.hooks;
+    final commsStatus = comms.status;
 
     // Object groups (peripheral member-function families), computed once
     // from the call graph. Comms symbols are excluded so grouping never
@@ -559,34 +616,19 @@ Future<void> _runAutotune(Map<String, String> flags) async {
           '${symbolGroups.length > 5 ? ', …' : ''})');
     }
 
-    // Start the comms-bus UDP server the forwarding hooks talk to. The
-    // i2c/uart read hooks send each read to localhost:<port> and BLOCK
-    // on the reply — without a server listening, the first real read in
-    // the firmware wedges Renode (and the whole synthesis loop) forever.
-    // ZeroDeviceHandler answers every read with zeros so execution
-    // proceeds. Mirrors the UI's CommsBusController.
-    for (final c in commsClasses) {
-      final port = commsPorts[c] ?? 1234;
-      try {
-        await commsBus.start(c, port, const ZeroDeviceHandler());
-        stderr.writeln('Comms bus: ${c.name} server on udp/$port '
-            '(zero-fill)');
-      } on PortInUseException catch (e) {
-        stderr.writeln('Comms bus: ${c.name} port $port unavailable ($e); '
-            'reads on this protocol will block — kill the stale server or '
-            'pick another port.');
-      }
-    }
-
     // One synthesis per round: reset + reload for a clean machine, run
     // the synthesizer with the round's overlays, then enrich the result
     // with metrics + executed symbols (the engine reads those back).
+    // Warm-start carry (--warm-start only): the previous round's
+    // resolved hook code, seeded into the next round's synthesis.
+    var carriedHooks = const <String, String>{};
     Future<SynthesizerResult?> runSynthesis(
         AutoTuneOverlays overlays, int round) async {
       // Fresh machine per round: `load` re-creates the Renode machine
       // (createMachine clears any prior state) and reloads firmware, so
       // each round is a clean synthesis process. NOT resetEmulation() —
-      // that stops the whole engine process.
+      // that stops the whole engine process. Warm start seeds hooks,
+      // never machine state.
       await orchestrator.emulationController.load(replPath, elfPath);
 
       // Collect executed symbols from the RAW trace stream, deduping
@@ -610,11 +652,13 @@ Future<void> _runAutotune(Map<String, String> flags) async {
           hookOverrides: overlays.hookOverrides,
           hookOverrideScopes: overlays.hookOverrideScopes,
           hookBindings: overlays.hookBindings,
+          resolvedHooks: warmStart ? carriedHooks : const {},
           commsHooks: commsHooks,
           symbolGroups: symbolGroups,
           groupOverrides: overlays.groupOverrides,
           llmGenerator: hookGenerator,
         );
+        if (warmStart) carriedHooks = result.resolvedHookCode;
         var subgraph = const <String>{};
         if (startFrom != null && endAt != null && endAt.isNotEmpty) {
           subgraph = FidelityCalculator.subgraphBetween(
@@ -676,6 +720,7 @@ Future<void> _runAutotune(Map<String, String> flags) async {
           maxRounds: maxRounds,
           maxRecommendationsPerRound: maxRecs,
           stagnantRoundLimit: stagnantLimit,
+          warmStart: warmStart,
         ),
         commsConfigs: commsStatus,
         iterationCap: maxIterations,
@@ -715,6 +760,36 @@ Future<void> _runAutotune(Map<String, String> flags) async {
     orchestrator.dispose();
   }
 }
+
+/// Parse the `--comms` flag: a csv of protocol names (default
+/// `i2c,uart,spi`), or `none` to opt out of comms virtualization.
+Set<CommsClass> _parseCommsFlag(String? raw) {
+  final commsFlag = (raw ?? 'i2c,uart,spi').toLowerCase();
+  return commsFlag == 'none'
+      ? const <CommsClass>{}
+      : {
+          for (final c in commsFlag.split(','))
+            for (final v in CommsClass.values)
+              if (v.name == c.trim()) v,
+        };
+}
+
+/// The comms stanza `synthesize` and `autotune` share — a thin wrapper
+/// over the orchestrator's [startCommsSession] with the CLI defaults
+/// (fixed ports, virtualized, zero-fill). The caller owns
+/// `commsBus.dispose()`.
+Future<CommsSessionResult> _startComms({
+  required Emulator emulator,
+  required Set<CommsClass> commsClasses,
+  required CommsBusService commsBus,
+}) =>
+    startCommsSession(
+      emulator: emulator,
+      configs: defaultCommsConfigs(commsClasses),
+      bus: commsBus,
+      catalog: HookCatalog.system(),
+      log: stderr.writeln,
+    );
 
 /// Export an emulator to a Renode .resc script.
 ///
@@ -993,7 +1068,7 @@ Required:
 
 Optional:
   --max-rounds <n>          LLM rounds after the baseline (default: ${AutoTuneConfig.defaultMaxRounds})
-  --max-iterations <n>      Synthesizer iteration cap per round (default: 10)
+  --max-iterations <n>      Synthesizer iteration cap per round (default: 500)
   --max-recs <n>            Max recommendations per round (default: ${AutoTuneConfig.defaultMaxRecommendationsPerRound})
   --stagnant-limit <n>      Consecutive stagnant rounds before stopping (default: ${AutoTuneConfig.defaultStagnantRoundLimit})
   --report-dir <path>       Report output dir
@@ -1001,6 +1076,11 @@ Optional:
   --start-from <symbol>     Override the project's start symbol
   --end-at <symbols>        Override the project's stop symbols (comma-separated)
   --comms <csv|none>        Protocols to virtualize as a unit (default: i2c,uart,spi)
+  --save-comms              Write the merged comms assignments back into the
+                            .emu (default: classify in-memory, file untouched)
+  --warm-start              Seed each round with the previous round's resolved
+                            hooks (default: off — each round is a clean,
+                            comparable synthesis from the overlay set)
   --model <tag>             Ollama model tag (default: resect.config LLM_MODEL)
   --host <host:port>        Ollama host (default: resect.config LLM_OLLAMA_HOST)
   --color <auto|always|never>  Colorize the console output (default: auto)
@@ -1020,9 +1100,11 @@ Required:
 Optional:
   --start-from <symbol>       Symbol to start execution from
   --end-at <symbols>          Comma-separated stop symbols (for subgraph fidelity)
-  --max-iterations <n>        Safety limit (default: 100)
+  --max-iterations <n>        Iteration cap (default: 500)
+  --comms <csv|none>          Protocols to virtualize as a unit (default: i2c,uart,spi)
   -o, --output <path>         Write JSON result to file instead of stdout
-  --save-emulator <path.emu>  Save emulator with resolved hooks
+  --save-emulator <path.emu>  Save emulator with resolved hooks, comms
+                              assignments, and the call graph
   --name <name>               Emulator name (for --save-emulator; default: ELF filename)
   --backend-url <url>         Connect to existing backend (skips auto-start)
   --engine-dir <path>         Path to emulation_engine directory''');

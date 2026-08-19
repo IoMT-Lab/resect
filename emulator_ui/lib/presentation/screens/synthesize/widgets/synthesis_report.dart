@@ -1,4 +1,3 @@
-import 'package:emulator_orchestrator/data/models/fidelity_result.dart';
 import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -19,8 +18,15 @@ class SynthesisReport extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final result = ref.watch(synthesisResultProvider);
-    final fidelity = ref.watch(fidelityResultProvider);
+    final metrics = ref.watch(manifestMetricsProvider);
+    final totalSymbols =
+        ref.watch(callgraphProvider).valueOrNull?.symbols.length;
     if (result == null) return const SizedBox.shrink();
+    final executedCount = result.manifest?.executedSymbols?.length;
+    final decisionsBySymbol = {
+      for (final d in result.manifest?.decisions ?? const <ManifestDecision>[])
+        d.symbol: d,
+    };
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -40,9 +46,10 @@ class SynthesisReport extends ConsumerWidget {
           ],
         ),
 
-        if (fidelity != null) ...[
+        if (metrics != null) ...[
           const SizedBox(height: 16),
-          _buildFidelityDisplay(fidelity),
+          _buildFidelityDisplay(metrics,
+              executedCount: executedCount, totalSymbols: totalSymbols),
         ],
 
         if (!result.success && result.failedSymbol != null) ...[
@@ -101,7 +108,14 @@ class SynthesisReport extends ConsumerWidget {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        _HookSourceTag.fromHookName(entry.value),
+                        // Prefer the manifest's structural provenance for
+                        // the tag; fall back to hook-name suffix parsing
+                        // only when no decision was recorded for the symbol.
+                        if (decisionsBySymbol[entry.key] != null)
+                          _DecisionKindTag(
+                              kind: decisionsBySymbol[entry.key]!.decisionKind)
+                        else
+                          _HookSourceTag.fromHookName(entry.value),
                         const SizedBox(width: 8),
                         const Icon(Icons.arrow_forward,
                             size: 10, color: AppTheme.textDisabled),
@@ -125,9 +139,15 @@ class SynthesisReport extends ConsumerWidget {
     );
   }
 
-  Widget _buildFidelityDisplay(FidelityResult fidelity) {
-    final pct = fidelity.overallFidelity;
+  Widget _buildFidelityDisplay(ManifestMetrics metrics,
+      {int? executedCount, int? totalSymbols}) {
+    final pct = metrics.overallFidelity;
     final color = fidelityColor(pct);
+    final coverage = (executedCount != null &&
+            totalSymbols != null &&
+            totalSymbols > 0)
+        ? executedCount / totalSymbols
+        : null;
 
     return Container(
       width: double.infinity,
@@ -177,40 +197,38 @@ class SynthesisReport extends ConsumerWidget {
               ),
             ),
           ),
-          if (fidelity.coverage != null ||
-              fidelity.coverageFidelity != null ||
-              fidelity.subgraphFidelity != null) ...[
+          if (coverage != null ||
+              metrics.coverageFidelity != null ||
+              metrics.subgraphFidelity != null) ...[
             const SizedBox(height: 12),
             Wrap(
               spacing: 24,
               runSpacing: 10,
               children: [
-                if (fidelity.coverage != null)
+                if (coverage != null)
                   _SecondaryMetric(
-                    value: fidelity.coverage!,
+                    value: coverage,
                     label: 'COVERAGE',
-                    detail:
-                        '${fidelity.traversedFunctions}/${fidelity.totalFunctions}',
+                    detail: '$executedCount/$totalSymbols',
                   ),
-                if (fidelity.coverageFidelity != null)
+                if (metrics.coverageFidelity != null)
                   _SecondaryMetric(
-                    value: fidelity.coverageFidelity!,
+                    value: metrics.coverageFidelity!,
                     label: 'COVERAGE FIDELITY',
                   ),
-                if (fidelity.subgraphFidelity != null)
+                if (metrics.subgraphFidelity != null)
                   _SecondaryMetric(
-                    value: fidelity.subgraphFidelity!,
+                    value: metrics.subgraphFidelity!,
                     label: 'SUBGRAPH FIDELITY',
-                    detail: '${fidelity.subgraphFunctions}',
                   ),
               ],
             ),
           ],
           const SizedBox(height: 10),
           Text(
-            '${fidelity.intactFunctions} intact · '
-            '${fidelity.degradedFunctions} degraded · '
-            '${fidelity.hookedFunctions} hooked',
+            '${metrics.intactCount} intact · '
+            '${metrics.degradedCount} degraded · '
+            '${metrics.hookedCount} hooked',
             style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
           ),
         ],
@@ -417,21 +435,16 @@ class _DecisionKindTag extends StatelessWidget {
     ManifestDecisionKind.binding: Color(0xFF81C784),
     ManifestDecisionKind.iterationFallback: Color(0xFF90A4AE),
     ManifestDecisionKind.llmOnDemand: Color(0xFFCE93D8),
-  };
-
-  static const _shortLabel = <ManifestDecisionKind, String>{
-    ManifestDecisionKind.forcedOverride: 'OVERRIDE',
-    ManifestDecisionKind.comms: 'COMMS',
-    ManifestDecisionKind.warmStart: 'WARM',
-    ManifestDecisionKind.binding: 'BINDING',
-    ManifestDecisionKind.iterationFallback: 'FALLBACK',
-    ManifestDecisionKind.llmOnDemand: 'LLM',
+    ManifestDecisionKind.groupOverride: Color(0xFFFFF176),
   };
 
   @override
   Widget build(BuildContext context) {
     final color = _palette[kind] ?? AppTheme.textMuted;
-    final label = _shortLabel[kind] ?? kind.jsonName.toUpperCase();
+    // Labels come from the shared map so the UI, the round-report
+    // markdown, and the CLI console can't drift on naming.
+    final label =
+        manifestDecisionKindShortLabel[kind] ?? kind.jsonName.toUpperCase();
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(

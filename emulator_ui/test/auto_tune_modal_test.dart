@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:emulator_orchestrator/data/models/recommendation.dart';
 import 'package:emulator_orchestrator/services/llm/recommendation_service.dart';
 import 'package:emulator_ui/presentation/screens/synthesize/llm_synthesis_orchestrator.dart';
@@ -14,17 +12,13 @@ import 'package:flutter_test/flutter_test.dart';
 Future<void> pumpModal(
   WidgetTester tester,
   LlmSynthesisOrchestrator orchestrator,
-  Future<void> sessionFuture,
 ) async {
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: orchestrator.container,
       child: MaterialApp(
         home: Scaffold(
-          body: AutoTuneModal(
-            orchestrator: orchestrator,
-            sessionFuture: sessionFuture,
-          ),
+          body: AutoTuneModal(orchestrator: orchestrator),
         ),
       ),
     ),
@@ -34,12 +28,10 @@ Future<void> pumpModal(
 void main() {
   late ProviderContainer container;
   late LlmSynthesisOrchestrator orchestrator;
-  late Completer<void> sessionCompleter;
 
   setUp(() {
     container = ProviderContainer();
     orchestrator = LlmSynthesisOrchestrator(container);
-    sessionCompleter = Completer<void>();
   });
 
   tearDown(() {
@@ -50,14 +42,14 @@ void main() {
   group('AutoTuneModal — state rendering', () {
     testWidgets('idle state shows the waiting text', (tester) async {
       orchestrator.setStateForTest(const AutoTuneIdle());
-      await pumpModal(tester, orchestrator, sessionCompleter.future);
+      await pumpModal(tester, orchestrator);
       expect(find.textContaining('Waiting for the auto-tune'), findsOneWidget);
     });
 
     testWidgets('baseline state shows progress + Cancel button',
         (tester) async {
       orchestrator.setStateForTest(const AutoTuneRunningBaseline());
-      await pumpModal(tester, orchestrator, sessionCompleter.future);
+      await pumpModal(tester, orchestrator);
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
       // 'baseline synthesis' appears in both header and body status text.
       expect(find.textContaining('baseline synthesis'), findsWidgets);
@@ -67,7 +59,7 @@ void main() {
     testWidgets('synthesizing state shows the round number', (tester) async {
       orchestrator
           .setStateForTest(const AutoTuneSynthesizing(round: 3));
-      await pumpModal(tester, orchestrator, sessionCompleter.future);
+      await pumpModal(tester, orchestrator);
       expect(find.textContaining('round 3'), findsWidgets);
       expect(find.text('Cancel'), findsOneWidget);
     });
@@ -79,7 +71,7 @@ void main() {
         thinkingText: '',
         responseText: '{"prose": "still thinking',
       ));
-      await pumpModal(tester, orchestrator, sessionCompleter.future);
+      await pumpModal(tester, orchestrator);
       expect(find.textContaining('still thinking'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
     });
@@ -91,7 +83,7 @@ void main() {
         thinkingText: '',
         responseText: '',
       ));
-      await pumpModal(tester, orchestrator, sessionCompleter.future);
+      await pumpModal(tester, orchestrator);
       // The single-pane fallback message kicks in when neither
       // thinking nor response have started.
       expect(find.textContaining('waiting for first tokens'),
@@ -108,7 +100,7 @@ void main() {
         thinkingText: 'weighing override vs preference for HSE…',
         responseText: '',
       ));
-      await pumpModal(tester, orchestrator, sessionCompleter.future);
+      await pumpModal(tester, orchestrator);
       expect(find.text('Reasoning'), findsOneWidget);
       expect(find.text('Response'), findsOneWidget);
       expect(
@@ -129,7 +121,7 @@ void main() {
         thinkingText: 'reasoning trace token by token',
         responseText: '{"prose":"final answer',
       ));
-      await pumpModal(tester, orchestrator, sessionCompleter.future);
+      await pumpModal(tester, orchestrator);
       expect(find.text('Reasoning'), findsOneWidget);
       expect(find.text('Response'), findsOneWidget);
       expect(find.textContaining('reasoning trace'), findsOneWidget);
@@ -146,7 +138,7 @@ void main() {
         thinkingText: 'considering the bitmask op',
         responseText: 'def hook(cpu):\n    pass',
       ));
-      await pumpModal(tester, orchestrator, sessionCompleter.future);
+      await pumpModal(tester, orchestrator);
       // Header names both the round and the symbol being authored.
       expect(
         find.textContaining(
@@ -165,9 +157,9 @@ void main() {
 
     testWidgets('reviewing state renders all recommendation rows',
         (tester) async {
-      orchestrator.setStateForTest(AutoTuneReviewing(
+      orchestrator.setStateForTest(const AutoTuneReviewing(
         round: 1,
-        result: const RecommendationResult(
+        result: RecommendationResult(
           prose: 'Try pinning two clock symbols.',
           recommendations: [
             SetForcedOverride(
@@ -185,7 +177,7 @@ void main() {
           parseFailure: false,
         ),
       ));
-      await pumpModal(tester, orchestrator, sessionCompleter.future);
+      await pumpModal(tester, orchestrator);
       expect(find.text('OVERRIDE'), findsOneWidget);
       expect(find.text('PREFER'), findsOneWidget);
       expect(find.textContaining('LL_RCC_HSE_IsReady'), findsOneWidget);
@@ -203,7 +195,7 @@ void main() {
         raw: '{"prose": "broken json',
         kind: RecommendationParseFailureKind.malformedJson,
       ));
-      await pumpModal(tester, orchestrator, sessionCompleter.future);
+      await pumpModal(tester, orchestrator);
       expect(find.textContaining('could not be parsed as JSON'),
           findsOneWidget);
       expect(find.textContaining('broken json'), findsOneWidget);
@@ -225,7 +217,7 @@ void main() {
           thinkingChunks: 1024,
         ),
       ));
-      await pumpModal(tester, orchestrator, sessionCompleter.future);
+      await pumpModal(tester, orchestrator);
       expect(
         find.textContaining('ran out of budget'),
         findsOneWidget,
@@ -260,7 +252,7 @@ void main() {
         raw: '',
         kind: RecommendationParseFailureKind.emptyResponse,
       ));
-      await pumpModal(tester, orchestrator, sessionCompleter.future);
+      await pumpModal(tester, orchestrator);
       expect(find.textContaining('ran out of budget'), findsOneWidget);
       expect(find.textContaining('Thinking chunks: ?'), findsOneWidget);
       expect(find.textContaining('Response tokens: ?'), findsOneWidget);
@@ -272,7 +264,7 @@ void main() {
         reason: AutoTuneFinishReason.llmEmpty,
         finalRound: 3,
       ));
-      await pumpModal(tester, orchestrator, sessionCompleter.future);
+      await pumpModal(tester, orchestrator);
       expect(find.textContaining('no further recommendations'),
           findsOneWidget);
       expect(find.textContaining('Final round: 3'), findsOneWidget);
@@ -286,7 +278,7 @@ void main() {
         finalRound: 2,
         errorMessage: 'connection refused: localhost:11434',
       ));
-      await pumpModal(tester, orchestrator, sessionCompleter.future);
+      await pumpModal(tester, orchestrator);
       // 'LLM call errored' appears in both the headline and the explanation.
       expect(find.textContaining('LLM call errored'), findsWidgets);
       // SelectableText splits the error text into multiple TextSpans
@@ -300,7 +292,7 @@ void main() {
   });
 
   group('AutoTuneModal — review interactions', () {
-    final twoRecs = const RecommendationResult(
+    const twoRecs = RecommendationResult(
       prose: 'two recs',
       recommendations: [
         SetForcedOverride(
@@ -321,7 +313,7 @@ void main() {
         (tester) async {
       orchestrator.setStateForTest(
           AutoTuneReviewing(round: 1, result: twoRecs));
-      await pumpModal(tester, orchestrator, sessionCompleter.future);
+      await pumpModal(tester, orchestrator);
 
       // Initial state: per-row defaults are "accepted"; the modal's
       // local state lazily creates entries on first interaction.
@@ -338,7 +330,7 @@ void main() {
         (tester) async {
       orchestrator.setStateForTest(
           AutoTuneReviewing(round: 1, result: twoRecs));
-      await pumpModal(tester, orchestrator, sessionCompleter.future);
+      await pumpModal(tester, orchestrator);
       await tester.tap(find.text('Reject all'));
       await tester.pump();
       // Rows still present; Apply and continue still available.
@@ -350,7 +342,7 @@ void main() {
         (tester) async {
       orchestrator.setStateForTest(
           AutoTuneReviewing(round: 1, result: twoRecs));
-      await pumpModal(tester, orchestrator, sessionCompleter.future);
+      await pumpModal(tester, orchestrator);
       await tester.tap(find.text('Apply and continue'));
       await tester.pump();
       // Without runAutoTune driving the next state, the modal stays

@@ -14,6 +14,7 @@ class AutoTuneConfig {
     this.snapshotWindowSize = defaultSnapshotWindowSize,
     this.maxRecommendationsPerRound = defaultMaxRecommendationsPerRound,
     this.stagnantRoundLimit = defaultStagnantRoundLimit,
+    this.warmStart = defaultWarmStart,
     this.optimizationTarget,
   });
 
@@ -48,6 +49,15 @@ class AutoTuneConfig {
   /// tried and didn't move coverage either.
   final int stagnantRoundLimit;
 
+  /// When true, each round's synthesis is seeded with the previous
+  /// round's resolved hook code (warm start): rounds accumulate, and
+  /// sessions converge faster at the cost of path-dependent results.
+  /// Default false: every round re-synthesizes from the overlay set on
+  /// a clean machine, so rounds are independent, comparable experiments.
+  /// The engine never reads this — each surface's `runSynthesis`
+  /// adapter closes over it.
+  final bool warmStart;
+
   /// Optional bias signal the LLM's recommendations should target.
   /// Surfaced as a dropdown in the config dialog; null means "no
   /// explicit target — improve everything you can."
@@ -58,6 +68,7 @@ class AutoTuneConfig {
   static const defaultSnapshotWindowSize = 3;
   static const defaultMaxRecommendationsPerRound = 10;
   static const defaultStagnantRoundLimit = 2;
+  static const defaultWarmStart = false;
 
   AutoTuneConfig copyWith({
     int? maxRounds,
@@ -65,6 +76,7 @@ class AutoTuneConfig {
     int? snapshotWindowSize,
     int? maxRecommendationsPerRound,
     int? stagnantRoundLimit,
+    bool? warmStart,
     OptimizationTarget? optimizationTarget,
     bool clearOptimizationTarget = false,
   }) =>
@@ -75,6 +87,7 @@ class AutoTuneConfig {
         maxRecommendationsPerRound:
             maxRecommendationsPerRound ?? this.maxRecommendationsPerRound,
         stagnantRoundLimit: stagnantRoundLimit ?? this.stagnantRoundLimit,
+        warmStart: warmStart ?? this.warmStart,
         optimizationTarget: clearOptimizationTarget
             ? null
             : (optimizationTarget ?? this.optimizationTarget),

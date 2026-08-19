@@ -142,7 +142,7 @@ class LlmHookGenerator {
   /// per-round trace. Reset at the start of each LLM-path call;
   /// false after a classifier short-circuit (no LLM ran).
   bool get lastWatchdogFired => _lastWatchdogFired;
-  bool _lastWatchdogFired = false;
+  var _lastWatchdogFired = false;
 
   /// How many chunks total to inject into the prompt's `## Project context`
   /// block. 10 × ~500 tokens ≈ 5 KB of text, well under Gemma's window.
