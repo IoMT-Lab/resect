@@ -28,7 +28,6 @@ enum GraphLayout {
   sugiyama,
   circular,
   grid,
-  executionOrder,
 }
 
 enum NodeStyle {
@@ -80,7 +79,7 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
   String? _draggedNode;
   Offset? _dragOffset;
   late AnimationController _animationController;
-  GraphLayout _currentLayout = GraphLayout.executionOrder;
+  GraphLayout _currentLayout = GraphLayout.hierarchical;
   NodeStyle _currentNodeStyle = NodeStyle.circle;
   final Map<String, Size> _nodeSizeCache = {};
   var _animationEnabled = false;
@@ -297,8 +296,6 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
         positions.addAll(_applyCircularLayout(callGraph, nodes));
       case GraphLayout.grid:
         positions.addAll(_applyGridLayout(nodes));
-      case GraphLayout.executionOrder:
-        positions.addAll(_applyExecutionOrderLayout(callGraph, nodes));
     }
     
     // Build edge list
@@ -1044,8 +1041,6 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
         positions = _applyCircularLayout(_cachedCallGraph!, nodes);
       case GraphLayout.grid:
         positions = _applyGridLayout(nodes);
-      case GraphLayout.executionOrder:
-        positions = _applyExecutionOrderLayout(_cachedCallGraph!, nodes);
     }
     
     setState(() {
@@ -1642,8 +1637,8 @@ class _GraphViewerWidgetState extends ConsumerState<GraphViewerWidget> with Tick
       case GraphLayout.hierarchical: return 'Hierarchical';
       case GraphLayout.sugiyama: return 'Sugiyama';
       case GraphLayout.circular: return 'Circular';
-      case GraphLayout.grid: return 'Grid';
-      case GraphLayout.executionOrder: return 'Execution Order';
+      case GraphLayout.grid:
+        return 'Grid';
     }
   }
 
