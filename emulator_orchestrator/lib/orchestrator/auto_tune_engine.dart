@@ -41,9 +41,10 @@ import 'recommendation_overlay_applier.dart';
 ///
 /// The engine owns the mutable overlay maps ([AutoTuneOverlays]), the
 /// round counter, the prior-round failure (for the no-progress guard),
-/// and the in-memory snapshot history it feeds back to the
-/// recommendation model. It never reads a provider or touches disk;
-/// persistence is the sink's job.
+/// the best-so-far anchor, and the in-memory snapshot history it feeds
+/// back to the recommendation model. It never reads a provider; the
+/// artifact database is its one store (authored hook bodies in, labels
+/// and census out) — persistence of session state is the sink's job.
 class AutoTuneEngine {
   AutoTuneEngine({
     required this.runSynthesis,

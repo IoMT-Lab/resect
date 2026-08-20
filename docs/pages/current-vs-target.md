@@ -10,8 +10,11 @@ code" notes at the exact spot where the design and the code differ; this
 page is the collected index of them.)
 
 All file paths are relative to the repository root. Line counts and
-locations were verified against the source when this page was written
-(July 2026).
+locations were last verified against the source in August 2026. The two
+newest landed behaviors this page tracks: cached call graphs are now bound
+to their firmware by SHA-256 stamp (commit 12478c1), and the auto-tune
+modal was replaced by an inline panel in the Synthesize tab (commit
+7eb8d98).
 
 ## Gap 1 — The project has no controller {#gap_project_controller}
 
@@ -20,7 +23,7 @@ UI instead of living in one controller:
 
 - Create/open/save/close are **free functions** in
   `emulator_ui/lib/presentation/screens/library/library_actions.dart`
-  (~657 lines), which also embed real policy — binding backfill and
+  (~685 lines), which also embed real policy — binding backfill and
   classifier seeding on open.
 - The open project is mirrored into roughly **eight "shadow" Riverpod
   providers** (`hookOverridesProvider`, `hookPreferencesProvider`,
@@ -121,11 +124,11 @@ them yet:
   both arguments and returns `getAllArtifacts()`, so every symbol's
   candidate list is the whole catalog, ranked only by score
   (@ref pre_synthesis).
-- **[Auto-tune](@ref gloss_autotune) keeps no best-so-far anchor.** Overlays
-  are cumulative and mutated in place with no revert, so a session that
-  peaks mid-run and then regresses finishes holding its last result rather
-  than its best one. `RoundSnapshot` already records per-round metrics, so
-  the comparison data exists (@ref autotune_decisions).
+- **Resolved (ea041a5): [auto-tune](@ref gloss_autotune) keeps no
+  best-so-far anchor.** The engine now tracks `bestExecuted` /
+  `bestOverlays` / `bestRound`, measures every applied round, reverts a
+  round whose executed count collapses below 50% of the session best, and
+  restores the final overlays to the best round's on finish.
 
 ## In short
 

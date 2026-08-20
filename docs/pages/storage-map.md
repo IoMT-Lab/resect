@@ -28,7 +28,7 @@ project directory:
 
 | Path | What | Written by |
 |---|---|---|
-| `<name>.emu` | The project itself — one JSON file. | Save/autosave via `EmulatorRepository`. |
+| `<name>.emu` | The project itself — one JSON file. The embedded call graph carries an `elfHash` SHA-256 stamp of its source ELF, checked at project open/save and at auto-tune start; a mismatched or unstamped graph is rejected (logged to stderr) and re-extracted. | Save/autosave via `EmulatorRepository`. |
 | `manifests/<run_id>.json` | One [manifest](@ref gloss_manifest) per synthesis run. | Both the UI and headless [auto-tune](@ref gloss_autotune). |
 | `autotune_reports/<timestamp>/` | Per-[round](@ref gloss_round) reports from an auto-tune session: `round_NN.md` (outcome, metrics, frontier, decisions, recommendations + rationales), `round_NN_manifest.json`, `round_NN_trace.txt` (the exact prompt sent, plus thinking and raw response), `summary.md`. Reading them: @ref autotune_decisions. | The report [sink](@ref gloss_sink) — **both** the CLI and UI sessions. |
 | `rag_index.db` | The per-project [RAG](@ref gloss_rag) index (chunked documents + embeddings). A second, separate SQLite file — *not* part of the artifact database. | `RagIndex` rebuilds. |
@@ -42,9 +42,12 @@ A key=value file at the repository root, shared by `install.sh`, `run.sh`,
 and the app's System Configuration dialog. It holds machine-local paths and
 toggles: the Flutter and engine directories, the Renode **server** host and
 port (`RENODE_HOST`/`RENODE_PORT`) plus the portable binary used by the
-hook-quality harness, objdump paths, module enables (`MODULE_GHIDRA`,
-`MODULE_LLM_HOOKGEN`), the Ollama host and model, and log locations. It's the
-reason scripts and app agree on where things are.
+hook-quality harness, objdump paths, module enables (`MODULE_LLM_HOOKGEN`,
+`MODULE_MEMORY_MAP`, `MODULE_GHIDRA`, `MODULE_COMMS_BUS`), the Ollama host
+and model, and log locations. It's the reason scripts and app agree on
+where things are. One caveat: `RENODE_HOST` is read by the app but absent
+from the System Configuration dialog's schema (and never seeded by
+`install.sh`) — changing it means editing this file by hand.
 
 In a container this file is baked into the image at `/resect.config` and
 selected by the `RESECT_CONFIG` environment variable — see
@@ -53,8 +56,9 @@ selected by the `RESECT_CONFIG` environment variable — see
 ## Managed tool installs: `~/.local/share/resect/`
 
 When you enable modules from the System Configuration dialog, their
-runtimes are installed here (Ghidra plus a managed JRE; Ollama uses its own
-installer). Nothing else of Resect's lives there.
+runtimes are installed here: Ghidra plus a managed JRE, and Ollama — the
+official release tarball extracted under `resect/ollama/`, run as a
+user-local daemon on port 11435. Nothing else of Resect's lives there.
 
 ## Scratch and logs: `/tmp`
 

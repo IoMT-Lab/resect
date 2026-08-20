@@ -12,10 +12,19 @@ packages) plus the container definitions and the launcher scripts:
     ├── emulator_orchestrator/   All business logic + the CLI + the HTTP API.
     │   ├── bin/cli.dart         The command-line interface.
     │   ├── bin/server.dart      Headless HTTP API server.
-    │   ├── lib/data/            Models, services, the artifact database,
-    │   │                        the .emu repository.
-    │   ├── lib/orchestrator/    EmulationOrchestrator, workflows (synthesis,
-    │   │                        auto-tune), the engine abstraction, comms.
+    │   ├── lib/api/             The headless HTTP API server.
+    │   ├── lib/config/          resect.config loading, its schema, module
+    │   │                        components.
+    │   ├── lib/core/            App paths and shared constants.
+    │   ├── lib/data/            database/, models/, repositories/ — the
+    │   │                        artifact database and the .emu repository.
+    │   ├── lib/orchestrator/    EmulationOrchestrator, workflows (analysis,
+    │   │                        emulation, emulator, synthesizer), the
+    │   │                        auto-tune engine + report writer (directly
+    │   │                        here, not a workflow), the engine
+    │   │                        abstraction, comms.
+    │   ├── lib/services/        Domain services: analysis, comms, external,
+    │   │                        hooks, llm, quality, rag.
     │   ├── test/                Unit + integration tests.
     │   └── tool/                Headless dev/verification scripts.
     ├── emulator_ui/             The Flutter desktop app — views only.
@@ -52,9 +61,9 @@ versioned dependencies in `emulator_orchestrator/pubspec.yaml`:
 
 | Package | Version | What it provides |
 |---|---|---|
-| `renode` | 1.1.0 | Drives [Renode](@ref gloss_renode): the client, monitor commands, state/function-call/unhandled-access events. The only path to the emulator. |
+| `renode` | 2.2.2 | Drives [Renode](@ref gloss_renode): the client, monitor commands, state/function-call/unhandled-access events. The only path to the emulator. |
 | `resect_callgraph` | ^1.0.0 | Extracts [call graphs](@ref gloss_call_graph) from ELFs via objdump; ELF machine detection. |
-| `resect_hooks` | ^1.3.0 | [Hook](@ref gloss_hook) building blocks: template builders, the embedded Python modules, and the comms wire protocol (see @ref comms_virtualization). |
+| `resect_hooks` | ^1.5.1 | [Hook](@ref gloss_hook) building blocks: template builders, the embedded Python modules, and the comms wire protocol (see @ref comms_virtualization). |
 | `resect_signatures` | ^1.0.0 | Runs Ghidra headlessly for [Ghidra extraction](@ref gloss_ghidra_extraction); the `FunctionSignature` / `DataSymbol` types. |
 
 A shared analyzer ruleset (`iomt_lab_lints`) comes in as a dev dependency.
@@ -75,6 +84,10 @@ local checkout:
     dependency_overrides:
       resect_hooks:
         path: ../hooks-dart
+
+(One caveat: `run.sh`'s override-drift check greps the overrides file for
+`hooks:`, which this `resect_hooks:` spelling does not match — the embedded
+Python module regeneration it triggers won't run for it.)
 
 Two consequences worth internalizing: an override only affects *your host*
 build — the container image builds from `pubspec.lock` and always gets the

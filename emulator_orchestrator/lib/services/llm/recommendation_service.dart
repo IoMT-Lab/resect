@@ -441,9 +441,9 @@ class RecommendationService {
     // symbol's decompilation chunk when the RAG index is wired.
     // Mirrors what [LlmHookGenerator] does for the new-hook flow.
     // Halt symbol comes from the shared cascade
-    // (failedSymbol → lastPauseSymbol → chronological-last
-    // decision) so this service and `LastRunInsightService` are
-    // in lockstep.
+    // (failedSymbol → finalExecutionSymbol → lastPauseSymbol →
+    // chronological-last decision) so this service and
+    // `LastRunInsightService` are in lockstep.
     final haltSymbol =
         LastRunInsightService.computeHaltSymbol(currentManifest);
     final retrieved = await _renderRetrievedContext(haltSymbol);

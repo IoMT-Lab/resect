@@ -46,23 +46,26 @@ read a sentence — subject, then verb. For each symbol:
    `[LL, RADIO, TIMER, Enable, Timer1]`; `IsEnabledTimer1` →
    `[…, Is, Enabled, Timer1]`.
 2. **Scan left-to-right for the first role verb** (`Enable`, `Disable`, `Set`,
-   `Get`, `Is…`, `Reset`, `Clear`, `Init`, `DeInit`). That verb *is* the
-   member's role. Scanning left-to-right means `Is` wins in `IsEnabled` (a
-   read), not `Enabled`.
+   `Get`, `Is…`, `Reset`, `Clear`, `Init`, `DeInit` — the is-family also
+   matches the bare adjectives `Ready`, `Active`, `Valid`, `Present`). That
+   verb *is* the member's role. Scanning left-to-right means `Is` wins in
+   `IsEnabled` (a read), not `Enabled`.
 3. **The object key is the tokens *before* the verb** (the subject). So
    `LL_RCC_LSI_Enable` and `LL_RCC_LSI_IsReady` both key to `LL_RCC_LSI`, and —
    crucially — `LL_RADIO_TIMER_EnableTimer1` and
-   `LL_RADIO_TIMER_IsEnabledTimer1` both key to `LL_RADIO_TIMER` regardless of
-   how long the name is. The boundary follows *meaning*, not underscore
-   position.
+   `LL_RADIO_TIMER_IsEnabledTimer1` both key to `LL_RADIO_TIMER_Timer1`
+   (the digit-bearing token after the verb is appended — see "Numbered
+   instances" below) regardless of how long the name is. The boundary
+   follows *meaning*, not underscore position.
 4. **Group by key.** Symbols with the same key are members of one object.
 
 Two guards keep groups meaningful, and answer the obvious objection — *"won't
 this lump together every `LL_` or `RCC_` function?"*:
 
 - A group needs **at least two members**.
-- The subject must have **at least two non-framework tokens** (a leading
-  `LL`/`HAL` doesn't count). So `LL_RCC_LSI` (→ `RCC`, `LSI`) is a valid object,
+- The subject must have **at least two non-framework tokens** (`LL`/`HAL`
+  tokens don't count, wherever they appear in the subject). So `LL_RCC_LSI`
+  (→ `RCC`, `LSI`) is a valid object,
   but a bare `LL_RCC` is not — it never becomes one giant "RCC" group.
 
 And a symbol with **no recognized verb has no derivable object, so it is simply
@@ -112,8 +115,11 @@ LLM-annotation step.)
 
 ## When the group is applied
 
-Group overrides are **deterministic and demand-driven** — no LLM, and nothing
-is hooked until it's needed. During a [synthesis](@ref gloss_synthesis) run, the
+In its default (untouched) state a group is **deterministic and
+demand-driven** — no LLM, and nothing is hooked until it's needed; a scope
+forced via `groupOverrides` instead pre-installs its member hooks at run
+start (see "The LLM can steer groups" below). In the default state, during
+a [synthesis](@ref gloss_synthesis) run, the
 first time *any* member of a group faults on an
 [unhandled access](@ref gloss_unhandled_access), the synthesizer force-installs
 the coherent hook for **every** member of that group at once, with the shared
@@ -121,8 +127,9 @@ scope, and re-runs. It skips any member you've already given a
 [forced override](@ref gloss_override) and any member that is
 comms-virtualized. Each group is applied at most once per run, and shows up in
 the [manifest](@ref gloss_manifest) as its own decision kind
-(`group_override:<scope>`) so you can tell it apart from an adjacency-driven
-fallback.
+(`group_override`), with the scope carried separately in the decision
+source (`group_override:<scope>`) — so you can tell it apart from an
+adjacency-driven fallback.
 
 This is a different relationship from the auto-tune loop's adjacency escalation
 (see @ref autotune), and it sits *beside* it: adjacency asks "what did this
@@ -144,8 +151,12 @@ state) and can act on a whole object with two recommendation kinds:
 These decisions are stored on the [project](@ref gloss_project) as
 `groupOverrides` (scope → forced/suppressed), so they persist across rounds and
 reopen with the `.emu`. A scope the LLM never touches keeps the default
-deterministic-on-fault behavior above. The `synthesize` path (no LLM) is
-unaffected — it only ever uses the on-fault default.
+deterministic-on-fault behavior above. And because the map lives on the
+project, a plain UI Synthesize run honors it too — forced scopes
+pre-install at run start and suppressed scopes never fire. Only the CLI
+`synthesize` command runs without the map (it never passes
+`groupOverrides`), so headless one-shot synthesis is always the on-fault
+default.
 
 ## Relationship to comms
 
@@ -159,8 +170,9 @@ bus path.
 ## In short
 
 An object group is a family of member functions sharing a name prefix (the
-group key), recognized by token-prefix matching with two guards (≥2 members,
+group key), recognized by a verb-anchored parse with two guards (≥2 members,
 ≥2 non-framework tokens). Members get coherent, shared-scope hooks
 (enable→write 1, disable→write 0, is-ready→read) so they behave as one small
 state machine. The whole group is force-installed the first time any member
-faults, deterministically, and never touches comms symbols.
+faults, deterministically — or proactively at run start when a group
+override forces it — and never touches comms symbols.

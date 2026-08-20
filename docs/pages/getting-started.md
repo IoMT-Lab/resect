@@ -81,8 +81,15 @@ choices:
   at a portable Renode you started yourself
   (`renode -p --disable-gui --server-mode --server-mode-port 5000`). Note
   that scoped hooks need the **patched** portable build this project pins —
-  see @ref workspace_layout.
-- **Ollama**, for everything with "LLM" in the name.
+  see @ref workspace_layout. One wrinkle: `RENODE_HOST` is honored at
+  runtime, but `install.sh` does not seed it and the System Configuration
+  dialog does not offer it (its schema carries `RENODE_PORT` but no host
+  key) — pointing it somewhere other than localhost means hand-editing
+  `resect.config`.
+- **Ollama**, for everything with "LLM" in the name. Detection is
+  HTTP-first: a reachable daemon at `LLM_OLLAMA_HOST` — the compose
+  service, or a remote host — is authoritative, with no local binary
+  required.
 - **Ghidra**, for [Ghidra extraction](@ref gloss_ghidra_extraction) — which
   is what gives the [classifier](@ref gloss_classifier) and the LLM prompts
   real function bodies to read (@ref pre_synthesis).

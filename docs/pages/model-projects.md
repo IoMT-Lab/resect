@@ -25,15 +25,20 @@ and portable — you can read one in a text editor.
 **Identity and inputs.** `id`, `name`, timestamps, `elfFilePath` (the
 firmware binary), `baseImagePath` (the Renode `.repl` platform
 description), and `emulationConfig` — where a run starts (`startFrom`),
-where it stops (`endAt`), and whether to pause on
-[unhandled accesses](@ref gloss_unhandled_access).
+where it stops (`endAt`), whether to pause on
+[unhandled accesses](@ref gloss_unhandled_access), and an optional
+memory-map file (`memoryMapPath`, JSON key `memory_map`).
 
 **The hook [overlays](@ref gloss_overlay).** The per-symbol hook decisions
 specific to this project: `hookOverrides` (symbol →
 artifact id, forced), `hookOverrideScopes` (symbol →
 [scope](@ref gloss_scope)), `hookPreferences` (symbol → artifact id,
-soft), and `hookBindings` (symbol → [binding](@ref gloss_binding)). What
-each map means and which wins is its own page: @ref hook_overlays.
+soft), `hookBindings` (symbol → [binding](@ref gloss_binding)), and
+`groupOverrides` ([group scope](@ref gloss_group_scope) →
+`GroupOverrideState`, JSON key `group_overrides`) — the per-group
+force/suppress decisions written by the auto-tune LLM's group actions
+(@ref symbol_groups). What each map means and which wins is its own page:
+@ref hook_overlays.
 
 **Warm-start hooks.** `hooks` — symbol → the resolved Python code from the
 last successful run, pre-seeded into the next one
@@ -47,13 +52,19 @@ last successful run, pre-seeded into the next one
 [manifest](@ref gloss_manifest)), `executedSymbols`, `lastRunInsight` (a
 cached LLM advisory), and `roundSnapshots` — the list of
 [round snapshots](@ref gloss_round_snapshot) from
-[auto-tune](@ref gloss_autotune) sessions, capped (default 100, oldest
-pruned first).
+[auto-tune](@ref gloss_autotune) sessions, capped by `roundSnapshotCap`
+(JSON key `round_snapshot_cap`; default 100, oldest pruned first).
 
 **UI state and caches.** `cachedCallGraph` (so reopening a project doesn't
-re-extract the [call graph](@ref gloss_call_graph)), `documents` (notes and
-datasheets attached to the project), and `uiState` (sidebar expansions,
-selected symbol — so the app reopens where you left off).
+re-extract the [call graph](@ref gloss_call_graph) — but reuse is
+conditional: the graph carries the SHA-256 of its source ELF in
+`CallGraph.elfHash` (`data/models/call_graph.dart`), `openEmulator` strips
+a graph whose stamp doesn't match the project's firmware,
+`callgraphProvider` reuses the cache only on a content-hash match, and an
+unstamped graph from a pre-stamp `.emu` always regenerates), `documents`
+(notes and datasheets attached to the project), `uiState` (sidebar
+expansions, selected symbol — so the app reopens where you left off), and
+`metadata` (an open-ended map reserved for future expansion).
 
 ## What is deliberately NOT in a `.emu`
 
@@ -73,7 +84,7 @@ disk picture, including exactly which path each of these uses, is in
 
 ## In short
 
-A project is one `.emu` JSON file: firmware + platform paths, the four
+A project is one `.emu` JSON file: firmware + platform paths, the five
 overlay maps, comms assignments, results, and history. It references hook
 bodies by id but never contains them. It's the unit you save, reopen, share,
 and export.

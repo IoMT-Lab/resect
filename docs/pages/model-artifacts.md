@@ -40,9 +40,12 @@ The `Artifacts` table is the heart of the model. Each row is one reusable
 | `targetSymbolName` | Non-null means "this is a replacement written for one specific function," e.g. an LLM-authored model of `bmp180_read_temp`. Null means it's a generic template. |
 | `intrinsicScore` | The [intrinsic score](@ref gloss_intrinsic_score): a 0.0–1.0 suitability floor used to rank candidates when no project [binding](@ref gloss_binding) exists. |
 
-Bodies are deduplicated on insert (`findArtifactByBody`), and any
-`import`-style references are inlined at write time so a stored body is
-always self-contained.
+Deduplication of bodies is the caller's job (`findArtifactByBody`), and
+only two of the five insert sites do it today — the synthesizer's LLM
+fallback (`synthesizer_workflow.dart`) and the binding seeder
+(`hook_binding_seeder.dart`); the auto-tune engine and the two dialog
+insert paths add rows unconditionally. Any `import`-style references are
+inlined at write time so a stored body is always self-contained.
 
 ## The firmware facts
 

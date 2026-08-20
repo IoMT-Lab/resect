@@ -5,9 +5,8 @@ devices — a sensor on I2C, a radio on SPI, a console on UART — and needs
 answers, not just return codes.
 [Comms virtualization](@ref gloss_comms_virtualization) forwards that bus
 traffic out of the emulator to a virtual device on the host. This page
-covers the pieces: classification, configuration, the forwarding hooks, the
-wire protocol, and the signature gate that keeps the wrong functions from
-being hooked.
+covers the pieces: classification, configuration, the forwarding hooks and
+the gates that decide which symbols get one, and the wire protocol.
 
 ## The idea
 
@@ -25,6 +24,11 @@ firmware's buffer. The firmware believes it read a real device.
                     CommsBusService (Dart, in Resect)
                             ▼
                     DeviceHandler (e.g. ZeroDeviceHandler)
+
+The hook side finds those UDP servers via the `RENODE_COMMS_HOST`
+environment variable (default `localhost`; the compose stack sets it to
+`resect` on the Renode service so the in-container hook reaches back
+across the network).
 
 ## Step 1 — Classify and assign
 
@@ -47,9 +51,10 @@ suggestion is indistinguishable from a deliberate reassignment and will
 outrank an improved classifier later.
 
 Name-pattern matching is deliberately simple, and it can be wrong in ways
-that matter — which is why Step 3's gate exists: `get_i2c` *looks* like an
-I2C read but is actually a zero-argument accessor that just returns a bus
-handle.
+that matter: `get_i2c` *looks* like an I2C read but is actually a
+zero-argument accessor that just returns a bus handle. Nothing downstream
+catches that — Step 3's gates check identity, not signatures — so the
+Comms tab review is where a misassignment gets fixed.
 
 ## Step 2 — Configure and serve
 
@@ -64,31 +69,35 @@ start and stops them when the run ends. Built-in handlers:
 loops) and `RandomDeviceHandler`.
 
 The defaults are the same on both surfaces: when nothing is explicitly
-configured, a run virtualizes i2c/uart/spi with zero-fill servers on ports
-1234/1235/1236 — exactly what `resect-cli` does. In the UI, the Comms tab
+configured, a run virtualizes all three protocols with zero-fill servers on
+ports i2c:1234, spi:1235, uart:1236 — exactly what `resect-cli` does. In the UI, the Comms tab
 wins wholesale the moment ANY protocol's Virtualize toggle is on: the
 session then uses the tab's ports and handler kinds verbatim.
 
-## Step 3 — Build the forwarding hooks, with the arg-count gate
+## Step 3 — Build the forwarding hooks
 
 `buildCommsHooks`
 (`emulator_orchestrator/lib/orchestrator/comms/comms_config.dart`) turns
-each assignment into a catalog forwarder (`i2c_read`, `uart_read`, …).
-The hook's argument extractor assumes the target follows a known ABI shape
-— for the I2C read forwarder, the HAL convention where the transfer size is
-the 6th argument (on ARM, that's a stack slot: registers r0–r3 carry the
-first four arguments, the rest spill to the stack). Attach that extractor
-to a function with fewer arguments and it reads stack *leftovers* —
-garbage that becomes a bogus request.
+each assignment into a catalog forwarder (`i2c_read`, `uart_read`, …). Its
+gates are identity checks on the assignment, in order:
 
-So `buildCommsHooks` gates on the function's real parameter count, looked
-up from the cached [Ghidra](@ref gloss_ghidra_extraction) signature: an
-i2c read/write forwarder requires at least 6 parameters, a uart forwarder
-at least 3. A function below the threshold (like the 0-argument `get_i2c`)
-is left native — it runs its real body harmlessly. Unknown signatures
-fail *open* (the hook is attached anyway), so this check only protects
-firmware whose [Ghidra extraction](@ref gloss_ghidra_extraction) has been
-run.
+- the symbol must be **classified** (unclassified entries are skipped);
+- its protocol must be **virtualized** in the session's config;
+- it must have a read/write **role** — a symbol with a known protocol but
+  no role gets the catalog's default return-0 hook instead of a forwarder
+  (on by default, so half-classified helpers like `HAL_I2C_StateGet` don't
+  hang a virtualized protocol);
+- a **catalog descriptor** must exist for `<protocol>_<role>` (this is
+  what currently drops SPI — see the deviation note below).
+
+Nothing checks the function's signature. The hook's argument extractor
+assumes the target follows a known ABI shape — for the I2C read forwarder,
+the HAL convention where the transfer size is the 6th argument (on ARM,
+that's a stack slot: registers r0–r3 carry the first four arguments, the
+rest spill to the stack). Attach that extractor to a function with fewer
+arguments and it reads stack *leftovers* — garbage that becomes a bogus
+request. That is the cost of a wrong assignment, and why the Comms tab
+review in Step 1 matters.
 
 ## The wire protocol
 
@@ -98,7 +107,7 @@ Python struct format `'!cHHHH32s'`:
 
 | Field | Size | Meaning (request → / response ←) |
 |---|---|---|
-| flags | 1 | → bit 6 = initial request; protocol one-hot: bit 3 = i2c, bit 4 = spi, bit 5 = uart; bit 2 = stop bit; bits 0–1 = handler id |
+| flags | 1 | → bit 6 = initial request; protocol one-hot: bit 3 = i2c, bit 4 = spi, bit 5 = uart; bit 2 = stop bit; bits 0–1 = hardware identifier (HID), distinguishing multiple buses of one protocol |
 | u16 #1 | 2 | → unused / ← return value |
 | u16 #2 | 2 | device/register address |
 | u16 #3 | 2 | write-data length |
@@ -108,7 +117,7 @@ Python struct format `'!cHHHH32s'`:
 The payload is fixed at 32 bytes. A single transfer larger than that is
 outside the protocol's current definition — the request's read-size field
 is 16-bit and can *ask* for more than the response can carry. Known
-protocol edge, tracked in `TODO.txt`; don't build on reads > 32 bytes.
+protocol edge; don't build on reads > 32 bytes.
 
 ## Per-bus status
 
@@ -119,19 +128,22 @@ the way through today.
 |---|---|---|---|
 | I2C | yes | yes | works end to end |
 | UART | yes | yes | broken (see below) |
-| SPI | yes | no | not built |
+| SPI | yes | shipped upstream, not cataloged | not wired |
 
 @note **Deviation from the current code.**
 **Today:** UART has a catalog forwarder and a Python remote module, but its
 request packets don't parse: `comms.py` sends the protocol flag one-hot
 (`uart = 0b100`), while the Dart side reads bits 3–5 as a sequential value
 where `uart = 3`, so a UART request hits `Format.fromValue(4)` and throws
-before any handler runs. SPI is dropped entirely — `buildCommsHooks` skips it
-at `comms_config.dart:87` because there is no `spi_read`/`spi_write` catalog
-descriptor, no `spi_hooks.dart`, no `spi_remote.py`, and no `extractSpiParams`.
+before any handler runs. SPI's engine pieces now exist — `resect_hooks`
+1.5.1 ships `spiReadHook`/`spiWriteHook`, `spi_remote.py`, and the
+`extractSpiParams_Simplex`/`_Duplex` glue extractors — but the Dart hook
+catalog (`hook_catalog.dart`) still describes only `i2c_*`/`uart_*`, so
+`buildCommsHooks` skips SPI at its descriptor gate
+(`comms_config.dart:87`).
 **Planned:** reconcile the one-hot encoder with the sequential `Format` enum
-so UART parses, and build the SPI forwarder + remote module + glue extractor
-end to end. The wire pieces live in `resect_hooks` (@ref workspace_layout).
+so UART parses, and add the `spi_read`/`spi_write` catalog descriptors to
+wire the shipped SPI forwarders through.
 **Why:** the classifier already assigns UART and SPI roles, so firmware that
 talks over those buses is silently unserved — the requests either throw
 (UART) or are never forwarded at all (SPI).
@@ -144,7 +156,8 @@ a symbol beats its comms assignment (see @ref hook_overlays).
 
 ## In short
 
-Classify bus symbols (then fix the classifier's guesses), serve a UDP
-device handler per protocol, and attach forwarding hooks — but only to
-functions whose real signatures match the extractor's ABI assumptions.
-Requests and responses are single 41-byte datagrams with a 32-byte payload.
+Classify bus symbols (then fix the classifier's guesses — no later gate
+checks signatures for you), serve a UDP device handler per protocol, and
+attach forwarding hooks to every classified, virtualized symbol whose role
+has a catalog descriptor. Requests and responses are single 41-byte
+datagrams with a 32-byte payload.

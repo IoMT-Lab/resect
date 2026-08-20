@@ -70,7 +70,7 @@ The verb that connects model #1 to model #2 — carefully:
     Future<HookBinding> generateAndBind({symbol, intent, elfHash, provenance})
     Future<Map<String, HookBinding>> seedClassifierBindings(elfHash)
 
-`generateAndBind` consolidates the three near-identical copies of the same
+`generateAndBind` consolidates the two near-identical copies of the same
 sequence — generate a hook, store it as a `user` artifact, seed a
 [binding](@ref gloss_binding) at fidelity 0.5 — that exist today (listed
 in [Gap 2](@ref gap_artifact_controller)). `seedClassifierBindings` wraps the
@@ -114,4 +114,4 @@ and the auto-tune engine's custom-hook step both become one-line calls to
 One plain-Dart class, five verbs — generate, store, query, bind, share —
 promoted from the existing `ArtifactLibraryService`. It is the only writer
 of hook rows, it returns bindings instead of persisting them, and it
-replaces three duplicated generate-and-bind implementations with one.
+replaces two duplicated generate-and-bind implementations with one.

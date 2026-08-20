@@ -15,7 +15,7 @@ all in `emulator_orchestrator/lib/orchestrator/engine/`:
 |---|---|
 | `EngineLifecycle` | Bring the emulator session up and down. |
 | `EmulationController` | Load firmware; run, pause, resume, reset; define [hooks](@ref gloss_hook) and anchor them at [symbols](@ref gloss_symbol); report where execution got to. |
-| `CallGraphSource` | Produce the [call graph](@ref gloss_call_graph) for a firmware binary. |
+| `CallGraphSource` | Produce the [call graph](@ref gloss_call_graph) for a firmware binary. Comes with an identity obligation: both implementations stamp the graph with the source ELF's SHA-256 (`CallGraph.elfHash`), and consumers validate that stamp via `services/analysis/call_graph_guard.dart` before trusting a cached graph. |
 | `TraceSource` | Stream which functions execute while the firmware runs. |
 
 An *engine implementation* is anything that provides these four. Resect

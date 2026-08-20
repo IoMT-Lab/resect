@@ -98,7 +98,14 @@ hard-wired to objdump (see [known debts](@ref known_debts)).
 The finished graph is cached on the [project](@ref gloss_project) as
 `cachedCallGraph`, and every later stage — coverage math, the
 [frontier](@ref gloss_frontier), the LLM's symbol enum — reads that one
-copy, so the whole session reasons over identical edges.
+copy, so the whole session reasons over identical edges. Reads of the
+cache are gated on a content-hash match: every graph is stamped with its
+source ELF's SHA-256, and `services/analysis/call_graph_guard.dart`
+(`sha256OfFile` / `callGraphMatchesElf` / `ensureCallGraphForElf`)
+validates the stamp against the firmware actually in use. The CLI's
+`autotune`, the UI session resolver (`resolveSessionCallGraph`),
+`callgraphProvider`, and `openEmulator` all go through it; a mismatched or
+unstamped graph is logged and regenerated rather than trusted.
 
 ## Step 3 — Ghidra extraction (the annotation layer)
 
@@ -131,7 +138,9 @@ over the same symbol list and answer different questions.
 
 ### The comms classifier: "is this symbol part of a bus?"
 
-`CommsClassifier` (`services/comms/comms_classifier.dart`) tokenizes each
+`CommsClassifier` (`services/comms/comms_classifier.dart`) is the abstract
+interface; the implementation both surfaces instantiate is
+`NamePatternCommsClassifier` (same file). It tokenizes each
 symbol name and assigns a [comms class](@ref gloss_comms_class) — `i2c`,
 `spi`, `uart`, `unclassified` — plus a read/write role. Its output feeds
 @ref comms_virtualization, which hooks a whole protocol coherently instead
@@ -274,8 +283,8 @@ help: `_kLlmEngageMinScore = 0.5`. As soon as no *specialized* candidate
 (score ≥ 0.5 — a classifier binding or a user-authored replacement)
 remains untried for a symbol, the synthesizer invokes the
 [LLM fallback](@ref gloss_llm_fallback) rather than grinding through
-generics. This matters because the candidate list is the whole database
-(~17 rows) — waiting for literal exhaustion meant a hard symbol burned the
+generics. This matters because the candidate list is the whole database —
+waiting for literal exhaustion meant a hard symbol burned the
 whole iteration budget before the LLM was ever asked. Generics remain in
 the list as a last resort *after* the LLM attempt.
 

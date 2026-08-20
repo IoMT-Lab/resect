@@ -46,13 +46,16 @@ The three objects, one at a time:
 
 Both the Flutter UI and the CLI drive **the same three objects**. There is
 no UI-only business logic and no CLI-only business logic; if the two ever
-behave differently, that is a bug (and historically it was a real one — see
-@ref current_vs_target).
+behave differently, that is a bug — and two such divergences are live
+today: the UI can select `GhidraCallGraphSource` by configuration while
+the CLI is objdump-only, and the classifier binding-seeding pass runs only
+from the UI's project-open path (`HookBindingSeeder`'s single call site in
+`library_actions.dart`). See @ref current_vs_target.
 
 @note **Deviation from the current code.**
 **Today:** neither controller exists as a single class. The artifact
 duties are spread across `ArtifactLibraryService`, two large dialogs, and
-three duplicated generate-and-bind sites; the project duties are spread
+two duplicated generate-and-bind sites; the project duties are spread
 across `library_actions.dart`, `AutosaveController`, eight mirrored
 Riverpod providers, and an `EmulatorWorkflow` inside the orchestrator.
 **Planned:** the ArtifactController is built in @ref phase_p3; the

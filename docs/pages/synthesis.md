@@ -106,10 +106,10 @@ the real time bound on a run.
   paused), and `recentExecutionTrace` (the last 16 function entries,
   oldest→newest).
 - A [manifest](@ref gloss_manifest) — the durable per-symbol record of every
-  decision and attempt, written to `manifests/<run_id>.json` in the project
-  directory, then enriched with [fidelity](@ref gloss_fidelity) metrics and
-  [executed symbols](@ref gloss_executed_symbols) collected from the trace
-  stream.
+  decision and attempt, enriched with [fidelity](@ref gloss_fidelity)
+  metrics and [executed symbols](@ref gloss_executed_symbols) collected
+  from the trace stream, then written to `manifests/<run_id>.json` in the
+  project directory.
 
 Those three signals exist for the loop above this one: they are the evidence
 @ref autotune_decisions hands the LLM to answer "where did it stop, and
@@ -119,15 +119,11 @@ The Synthesize tab shows the run live (console, trace rail, report); the CLI
 `synthesize` command prints the result as JSON. Both drive this same
 workflow — see @ref cli.
 
-@note **Deviation from the current code.**
-**Today:** folding fidelity metrics into a finished result is implemented
-four times — in the UI's `SynthesisController`, the UI's auto-tune loop, the
-CLI `synthesize` command, and the HTTP API — instead of all four calling the
-shared helper (`enrichSynthesizerResult` in `auto_tune_engine.dart`, which
-only the CLI's `autotune` command uses).
-**Planned:** @ref phase_p1 routes all four through the shared helper.
-**Why:** four copies of the same metric math can disagree, and a fix to one
-silently misses the other three.
+This used to be a deviation — folding fidelity metrics into a finished
+result was implemented four times over. Resolved: the UI's
+`SynthesisController`, the CLI's `synthesize` and `autotune` commands, and
+the HTTP API all call the one shared helper (`enrichSynthesizerResult` in
+`auto_tune_engine.dart`), so every surface computes the same numbers.
 
 ## Success is not the finish line
 

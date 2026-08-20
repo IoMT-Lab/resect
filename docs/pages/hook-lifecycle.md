@@ -98,8 +98,11 @@ peripheral backs, so the firmware faults there.
    the output buffer and returns 0 (**birth**).
 2. The body is stored as artifact #42, origin `user`, target symbol
    `bmp180_read_temp` (**storage**).
-3. A binding `{artifactId: 42, fidelity: 0.5, provenance: "llm:synthesizer"}`
-   is saved into the project (**association**).
+3. A binding `{artifactId: 42, fidelity: 0.5, provenance: "llm:<modelTag>"}`
+   — the tag of the model that authored it — is seeded into the run's
+   local copy of the bindings, not saved into the project: across runs it
+   is the artifact's 0.5 intrinsic score that carries the ranking
+   (**association**).
 4. On the next run the synthesizer ranks #42 top for that symbol
    (**selection**).
 5. `AddHookAtSymbol` installs it; the firmware gets past the sensor read

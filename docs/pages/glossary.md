@@ -22,8 +22,9 @@ bodies, registered firmware, and cached [Ghidra extraction](@ref gloss_ghidra_ex
 
 The closed loop that runs [synthesis](@ref gloss_synthesis) repeatedly,
 asking an LLM for [recommendations](@ref gloss_recommendation) between
-[rounds](@ref gloss_round) and applying the accepted ones, until fidelity
-stops improving or a limit is hit. See @ref autotune.
+[rounds](@ref gloss_round) and applying the accepted ones, until coverage
+(the [executed-symbol](@ref gloss_executed_symbols) set) stops improving
+or a limit is hit. See @ref autotune.
 
 ## Binding (HookBinding) {#gloss_binding}
 
@@ -41,7 +42,10 @@ The directed graph of which functions call which, extracted from the
 firmware binary — via objdump by default, or from the cached
 [Ghidra extraction](@ref gloss_ghidra_extraction) when that module is
 enabled (UI only today; the CLI always uses objdump). The foundation for
-coverage math, the Call Graph tab, and hook targeting. Note that the objdump
+coverage math, the Call Graph tab, and hook targeting. Every graph carries
+an identity stamp — the SHA-256 of its source ELF (`elfHash`) — and
+consumers validate that stamp against the firmware actually in use (via
+`call_graph_guard.dart`) instead of trusting the path. Note that the objdump
 graph carries **direct calls only** — calls through function pointers,
 vtables, or interrupt vectors are absent, so it under-approximates
 reachability. See @ref pre_synthesis.
@@ -234,8 +238,11 @@ no behavior beyond (de)serialization. Resect has exactly two — the
 ## Object group {#gloss_object_group}
 
 A family of firmware [symbols](@ref gloss_symbol) that are member functions of
-the same peripheral "object," recognized by a shared name prefix — e.g.
-`LL_RCC_LSI_Enable` / `_Disable` / `_IsReady`. Members get coherent hooks that
+the same peripheral "object," recognized by a verb-anchored parse of each
+name (the tokens before the first role verb are the object) — e.g.
+`LL_RCC_LSI_Enable` / `_Disable` / `_IsReady`. A coincidental shared prefix
+never forms a group: a name with no recognized verb is dropped, not
+guessed at. Members get coherent hooks that
 share a [group scope](@ref gloss_group_scope), and are hooked together when any
 one of them faults. Non-comms symbols only. See @ref symbol_groups.
 
@@ -249,10 +256,12 @@ long-lived object of the architecture, alongside the two
 
 ## Overlay {#gloss_overlay}
 
-Collective name for the per-project, per-symbol hook-selection maps stored
+Collective name for the per-project hook-selection maps stored
 on the [project](@ref gloss_project): [overrides](@ref gloss_override),
-[preferences](@ref gloss_preference), override scopes, and
-[bindings](@ref gloss_binding). See @ref hook_overlays.
+[preferences](@ref gloss_preference), override scopes,
+[bindings](@ref gloss_binding), and the per-group `groupOverrides`
+(force/suppress an [object group](@ref gloss_object_group)). See
+@ref hook_overlays.
 
 ## Override {#gloss_override}
 
@@ -277,8 +286,10 @@ saved as a single `.emu` JSON file. In code the class is
 ## Provenance {#gloss_provenance}
 
 The string on a [binding](@ref gloss_binding) recording who created it:
-`classifier:rule<N>`, `llm:...`, `harness+judge`, or `user`. Lets you judge
-how much to trust the binding's fidelity estimate.
+`classifier:rule-<N>-<name>` (the seeder, naming the rule that fired),
+`llm:<modelTag>` (the synthesizer's LLM fallback), `llm:auto-tune-r<N>`
+(an auto-tune custom-hook round), or `user`. Lets you judge how much to
+trust the binding's fidelity estimate.
 
 ## RAG {#gloss_rag}
 
@@ -327,7 +338,8 @@ installs [hooks](@ref gloss_hook) with its `AddHookAtSymbol` command.
 The [auto-tune](@ref gloss_autotune) engine's pluggable answer to the
 question of who approves the LLM's
 [recommendations](@ref gloss_recommendation). The CLI uses accept-all; the
-UI presents them for human review. See @ref autotune.
+UI presents them for human review, with an accept-all mode of its own
+chosen at session start. See @ref autotune.
 
 ## Round {#gloss_round}
 
@@ -351,7 +363,10 @@ to anchor it (needed when a bare symbol name is ambiguous). Stored alongside
 
 The [auto-tune](@ref gloss_autotune) engine's pluggable answer to "where do
 progress and results go?" The CLI's sink writes per-round report files; the
-UI's sink feeds the auto-tune modal. See @ref autotune.
+UI's sink feeds the inline `AutoTunePanel` in the Synthesize tab — and a UI
+session composes both through `MultiSink` (`UiAutoTuneSink` +
+`AutoTuneReportSink`), so it writes the same per-round report files the CLI
+does. See @ref autotune.
 
 ## Stagnation {#gloss_stagnation}
 

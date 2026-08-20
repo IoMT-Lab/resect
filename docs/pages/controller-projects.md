@@ -12,8 +12,9 @@ save, and close are free functions in
 open project is mirrored into eight separate Riverpod providers kept in
 sync by `AutosaveController`
 (`emulator_ui/lib/providers/autosave_provider.dart`); there are two
-restore paths that must agree; and the CLI edits the `Emulator` object's
-fields directly. The closest ancestor is `EmulatorWorkflow`
+restore paths that must agree; and the CLI builds its own project edits
+by reassigning the (immutable) `Emulator` via `copyWith` — no typed
+mutations, no controller. The closest ancestor is `EmulatorWorkflow`
 (`emulator_orchestrator/lib/orchestrator/workflows/emulator_workflow.dart`),
 which already wraps `EmulatorRepository` and tracks dirty state.
 **Planned:** @ref phase_p2 removes the duplicate restore path;
@@ -39,7 +40,10 @@ operation, shared by both.
     save() / saveAs(path)
     close()
 
-`open()` is the **single restore path**. It loads the `.emu`, backfills
+`open()` is the **single restore path**. It loads the `.emu`, strips a
+cached [call graph](@ref gloss_call_graph) whose SHA-256 stamp doesn't
+match the project's firmware — the load-time check `openEmulator` already
+performs today (`library_actions.dart`) — backfills
 [bindings](@ref gloss_binding) for user-authored replacement artifacts,
 runs the [classifier](@ref gloss_classifier) seeding pass for symbols that
 have no binding yet (both via @ref controller_artifacts), sets the one
@@ -93,10 +97,14 @@ Two implementation rules matter enough to write down:
 
 ## Autosave
 
-Autosave becomes a debounced call to `save()` on change events, with two
-preserved behaviors: it only runs when the user has autosave enabled, and
-it **skips projects that have never been saved** (no path yet) — a
-never-saved scratch project must not write files until you choose a path.
+Autosave becomes a debounced call to `save()` on change events, with three
+preserved behaviors: it only runs when the user has autosave enabled; it
+**skips projects that have never been saved** (no path yet) — a
+never-saved scratch project must not write files until you choose a path;
+and it **refuses to persist a call graph that doesn't belong to the ELF
+being saved**, dropping an already-poisoned one so a save actively cleans
+the project (today: `AutosaveController.gatherState` in
+`autosave_provider.dart`).
 
 ## How the CLI drives it
 

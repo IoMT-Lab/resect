@@ -36,7 +36,8 @@ single folder holds it all. The narrative is @ref pre_synthesis.
 | Build it (objdump) | `orchestrator/engine/dart/dart_call_graph_source.dart` |
 | Build it (Ghidra) | `orchestrator/engine/dart/ghidra_call_graph_source.dart` |
 | Generate + lay out | `orchestrator/workflows/analysis_workflow.dart` |
-| Read/cache | `services/analysis/call_graph_service.dart` |
+| Read/invalidate the Ghidra call-graph DB cache | `services/analysis/call_graph_service.dart` |
+| Identity/trust (SHA-256 stamp + validation; consumed by the CLI's `autotune`, UI providers, `openEmulator`, the session resolver) | `services/analysis/call_graph_guard.dart` |
 | Coverage [frontier](@ref gloss_frontier) | `services/analysis/coverage_frontier.dart` |
 | [Fidelity](@ref gloss_fidelity) over the graph | `services/analysis/fidelity_calculator.dart` |
 | Annotate for the LLM (halt point, recent call sequence, frontier notes) | `services/llm/last_run_insight_service.dart` |
@@ -70,6 +71,8 @@ decision.
 | Compose the round's evidence sections | `services/llm/last_run_insight_service.dart` |
 | Sampling profiles per task | `services/llm/llm_profiles.dart` |
 | Round-over-round metric delta | `services/analysis/fidelity_delta.dart` |
+| Rehydrate a persisted session from its `autotune_reports/` directory | `services/analysis/autotune_session_loader.dart` |
+| Census of the artifacts feeding a run | `services/analysis/artifact_census.dart` |
 | Apply recommendations to [overlays](@ref gloss_overlay) | `orchestrator/recommendation_overlay_applier.dart` |
 | Config / snapshot / recommendation models | `data/models/auto_tune_config.dart`, `round_snapshot.dart`, `recommendation.dart` |
 
@@ -85,7 +88,7 @@ See @ref hook_lifecycle and @ref symbol_groups.
 | Bulk binding seeding | `services/hooks/hook_binding_seeder.dart` |
 | Scope inference | `services/hooks/scope_suggester.dart` |
 | The DB-backed pool | `services/hooks/artifact_library_service.dart` + `data/database/artifact_database.dart` |
-| Hook-quality subsystem (unwired) | `services/quality/*` |
+| Hook-quality subsystem (wired into two live dialogs — the LLM hook-gen dialog runs `HookScorer`/`LlmJudge`/`HookProgressRunner`/`HookStaticAnalyzer`, and the Hook DB dialog's Test button runs `HookTestHarness` — but not into the synthesis/auto-tune loops) | `services/quality/*` |
 
 ## Comms virtualization
 
@@ -94,6 +97,7 @@ See @ref comms_virtualization.
 | Concern | File |
 |---|---|
 | Symbol classifier | `services/comms/comms_classifier.dart` |
+| Merge fresh suggestions into persisted assignments (shared by both surfaces) | `services/comms/comms_assignment_merge.dart` |
 | UDP bus + handlers + hook build | `orchestrator/comms/` |
 
 ## Running firmware (the engine)

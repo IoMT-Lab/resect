@@ -31,7 +31,7 @@ and history last:
 |---|---|---|
 | 1 | **Run outcome** | Where execution stopped, and how it got there |
 | 2 | **Current run metrics** | Whether improvement is even possible |
-| 3 | **Decisions applied during this run** | What the synthesizer did, chronologically |
+| 3 | **Decisions applied during this run** | What the synthesizer did, latest first (comms pre-seeds collapsed to a count) |
 | 4 | **Call-graph neighborhood** | The callers/callees around the stop point |
 | 5 | **Current project overlay** | Which hook each nearby symbol resolves to, and whether it took effect |
 | 6 | **Configuration drift** | Hooks added/removed since the run (when any) |
@@ -40,14 +40,14 @@ and history last:
 | 9 | **Object groups** | Peripherals in play this round, as units |
 | 10 | **Retrieved context** | [RAG](@ref gloss_rag): the stop symbol's decompilation + similar hooks |
 | 11 | **Auto-tune round history** | The last 3 rounds' metrics, deltas, and what was tried |
-| 12 | **Feedback from last round** | The escalation instruction, after a stagnant round |
+| 12 | **Feedback from last round** | The escalation instruction, plus what was refused, reverted, or skipped |
 | 13 | **Optimization target** | The user's bias, when set |
 | 14 | **Your task** | Job framing + playbook + the JSON contract |
 
 ### Section 1: where execution stopped
 
-This section is the newest and the most load-bearing. Four lines, each
-answering a different question:
+This section is the newest and the most load-bearing. Up to seven lines,
+each answering a different question:
 
     ## Run outcome
     - ELF: aya_ppg.elf
@@ -209,24 +209,48 @@ session that took the reference firmware from 25 to 136 executed symbols:
    case where re-touching an in-effect hook is not a wasted round. And if
    the stall symbol is an error/fault handler, do not hook it: read the
    recent call sequence and force the call *before* it to succeed.
-1. **Leaf polls.** Trust the frontier annotations over name guessing.
-   Ready/active flags → `Return 1`; busy flags → `Return 0`; clock getters
-   → a realistic Hz value (returning 1 breaks baud and prescaler math);
-   tick counters → the incrementing template so time advances. Promote the
-   ones marked NOT applied; skip the ones marked already in effect.
-2. **[Wrapper-skip](@ref gloss_wrapper_skip).** If the leaves are already forced and coverage still
-   won't move, the spin is *inlined* inside an executed caller — an
-   `*_Init`/`*Config` function with unreached callees. Force that caller to
-   `Return 0` and skip its body: the code after it is worth more than the
-   code inside it.
-3. **Hands off.** Comms-virtualized symbols are covered as a bus, never
-   individually. Void register-writers gain nothing from a forced return.
-4. **Boundary only.** Target executed symbols or their direct unreached
-   callees. A forced override on code execution never reaches does nothing.
+
+Then an unnumbered **principle** every step is an instance of: a hook
+*stands in* for the function it replaces — pick the behavior its callers
+would observe from the original (flags read as states, counters and time
+advance between calls, status returns use the callee's own convention) —
+and every round is *measured*: a round that makes coverage collapse is
+reverted wholesale and remembered.
+
+1. **Spin rule.** If the recent call sequence shows the *same* function
+   repeated (`(×N)`) and that function is not already hooked, the firmware
+   is parked in a wait loop polling it. Force that function first — it
+   beats every other move when it applies; the loop exits on the answer
+   the hook gives, chosen per step 2.
+2. **Value choice.** Decide what a function *returns* before picking its
+   artifact. Ready/active checks → `Return 1`; busy → `Return 0`;
+   `Get*`/`Read*` names return a *value*, never a success code —
+   time/tick/count readers get the incrementing template so time advances,
+   clock getters a realistic Hz value, and anything unclear a
+   `generate_custom_hook` rather than a guessed constant. Frontier
+   annotations come from decompiled bodies and outrank the name. Promote
+   the ones marked NOT applied; skip the ones marked already in effect
+   (except the step-0 stall point).
+3. **[Wrapper-skip](@ref gloss_wrapper_skip) — an experiment, paid for by
+   revert.** When steps 1-2 are exhausted and coverage still won't move,
+   the spin may be *inlined* inside an executed frontier caller. Skipping
+   that caller with `Return 0` deletes its whole body — everything beneath
+   it, including working hooks, stops happening — so prefer the caller the
+   halt evidence places the stall inside, and batch only skips that are
+   individually defensible: the round is measured, and a coverage collapse
+   reverts it wholesale.
+
+Two cautions close the playbook, unnumbered because they are re-emitted on
+escalation rounds too: **hands off** (comms-virtualized symbols are covered
+as a bus, never individually; void register-writers gain nothing from a
+forced return) and **boundary only** (target executed symbols or their
+direct unreached callees — a forced override on code execution never
+reaches does nothing).
 
 Plus a batching instruction: emit up to `maxRecommendationsPerRound` (10)
-edits, every one with its own defensible rationale — classify the whole
-frontier in a round rather than one flag per round.
+edits, every one with its own defensible rationale and never more than one
+recommendation for the same symbol — classify the whole frontier in a
+round rather than one flag per round.
 
 ## Making bad answers unrepresentable
 
@@ -246,7 +270,10 @@ a fresh Ollama constrained-decoding schema
   are the halt symbol, the frontier and its unreached callees (job 2), the
   halt symbol's callers and callees, and every symbol in the overlay or the
   manifest. Intersecting with the call graph is what makes a control-flow
-  sentinel or a hallucinated name unrepresentable. Comms symbols are
+  sentinel or a hallucinated name unrepresentable. `kProtectedSymbols` —
+  the entry points `main`, `Reset_Handler`, `_start` — are subtracted from
+  every variant of the enum (normal, escalation, and error-sink), so an
+  entry-point override is unrepresentable at the decoder. Comms symbols are
   excluded (the halt symbol is always retained); if exclusion would empty
   the set, the pre-exclusion set is kept, because an empty enum
   unconstrains the field entirely.
@@ -257,7 +284,14 @@ a fresh Ollama constrained-decoding schema
     answer impossible. At temperature 0 the model had reproduced its prior
     recommendations token-for-token straight through an imperative
     do-not-repeat instruction; constrained decoding is the lever prose
-    wasn't.
+    wasn't. The escalation framing *augments* the playbook rather than
+    replacing it — the hands-off and boundary-only cautions are re-emitted,
+    and the old batch-kill instruction is replaced with "start with one
+    skip, batch more only when each is individually defensible" (the
+    batch-kill version produced the observed self-destruction). Each
+    stalled-caller candidate is annotated with its cost: whether it ran
+    cleanly this round, and which working hooks live beneath it that a
+    Return-0 skip would disable.
   - *Error-sink round* — when execution ended in a handler, the enum is
     the symbols on the recent call path into the sink, excluding the sink
     itself. The failing call is on that path by construction.
@@ -270,13 +304,21 @@ a restricted enum. So two more layers stand behind it:
 
 1. **Parse-time validation.** `_parseOutput` drops any
    symbol-targeting recommendation whose target isn't a call-graph symbol,
-   and logs the drop. A batch where the model emitted entries but *none*
-   survived decoding is reported as a parse failure, not as an empty
-   answer — reporting it as empty used to end live sessions while the model
-   was actively (if invalidly) recommending.
+   and also drops any override, preference, or generate targeting a
+   protected entry point (`clear_forced_override` is exempt — removing an
+   override is always safe), logging each drop. A batch where the model
+   emitted entries but *none* survived decoding is reported as a parse
+   failure, not as an empty answer — reporting it as empty used to end
+   live sessions while the model was actively (if invalidly) recommending.
 2. **Engine-side validation.** `AutoTuneEngine` re-checks
    `generate_custom_hook` targets against the call graph before authoring,
-   so a leaked name can't seed a bogus artifact and binding.
+   so a leaked name can't seed a bogus artifact and binding. It also hard-
+   refuses any forced override that still names a protected entry point,
+   attaches advisory warnings to risky-looking moves (a constant on a
+   time/counter reader, a Return-0 skip of a cleanly-executed caller with
+   working hooks beneath it), and measures every round against the
+   session's best — a round whose executed count collapses below half the
+   best is reverted wholesale (see @ref autotune).
 
 ## Sampling: a decision, not a derivation
 
@@ -292,12 +334,17 @@ round time.
 
 ## From reply to next run
 
-    recommend → review → filter no-ops → author → apply → re-synthesize → snapshot → check
-                  │            │            │        │
-                  │            │            │        └ overlays mutate in place
-                  │            │            └ generate_custom_hook bodies written + bound
-                  │            └ already-in-effect edits dropped
-                  └ accept-all (CLI) or human Accept/Reject/Edit (UI)
+    recommend → review → dedupe → refuse/warn → filter no-ops → author → apply
+        → re-synthesize → report + snapshot → measure/revert → check
+
+      review         accept-all (CLI) or human Accept/Reject/Edit (UI)
+      dedupe         identical entries within one reply collapsed
+      refuse/warn    entry-point overrides refused; risky moves warned
+      filter no-ops  already-in-effect edits dropped
+      author         generate_custom_hook bodies written + bound
+      apply          overlays mutate in place (pre-round state kept)
+      measure/revert executed count below half the session best →
+                     the whole round's changes rolled back
 
 The **no-op filter** (`filterNoOpRecommendations` in
 `orchestrator/auto_tune_progress.dart`) is what stops the loop burning a
@@ -309,7 +356,9 @@ differs. A scope change is *not* a no-op. Preferences are no-ops when
 already selected; a clear is a no-op when there's nothing to clear;
 authoring and cap changes are never filtered. Skipped entries are reported
 in the round file *and* fed into the next round's feedback as
-"do not repeat these."
+"do not repeat these" — alongside anything the engine refused (entry-point
+overrides) and, after a reverted round, the reverted moves with their
+measured outcome ("executed fell 39 → 15").
 
 If every accepted recommendation is filtered, the engine doesn't
 re-synthesize at all — it counts the round as stagnant and escalates,
@@ -343,9 +392,9 @@ Every ending is a named `AutoTuneStopReason`. Read them as three families:
 
 ## Reading a session afterwards
 
-A headless session writes everything it did to
-`autotune_reports/<timestamp>/` (see @ref storage_map). Read it in this
-order:
+Every session — UI or headless, the report sink runs on both surfaces —
+writes everything it did to `autotune_reports/<timestamp>/` (see
+@ref storage_map). Read it in this order:
 
 1. **`summary.md`** — the per-round trajectory. Coverage and fidelity per
    round, and the stop reason. The shape of the trajectory tells you which
@@ -363,23 +412,20 @@ order:
    every attempt, the [termination reason](@ref gloss_termination_reason),
    the final execution symbol, and the recent call sequence.
 
-@note **Deviation from the current code.**
-**Today:** the loop keeps no best-so-far anchor. Overlays are cumulative
-and mutated in place with no revert, so a session that peaks mid-run and
-then regresses ends holding the *last* result, not the best one — observed
-live: coverage peaked at 143 executed symbols in round 5 and the session
-finished at 107. `RoundSnapshot` already records each round's metrics and
-executed set, so the data to compare against exists.
-**Planned:** track the best round and refuse to carry forward a round that
-regresses (unscheduled; tracked in `TODO.txt`).
-**Why:** the loop currently optimizes the last round rather than the
-session, which makes long sessions strictly riskier than short ones — the
-opposite of the intent.
+This used to be a deviation — the loop kept no best-so-far anchor, so a
+session that peaked mid-run ended holding the *last* result, not the best
+one (observed live: coverage peaked at 143 executed symbols in round 5 and
+the session finished at 107). Resolved: the engine now tracks the best
+round's executed count and overlays, reverts any round that collapses below
+half of it, and restores the best round's overlays on every non-error exit
+(see @ref autotune).
 
 @note **Deviation from the current code.**
-**Today:** the wrapper-skip in playbook step 2 is always a blunt
+**Today:** the wrapper-skip in playbook step 3 is always a blunt
 `Return 0` on the caller: its body, and every side effect in it,
-disappears. The
+disappears — though a bad skip is now *measured*: a round whose coverage
+collapses is rolled back wholesale by the revert mechanism, so the cost is
+one round, not the session. The
 [classifier](@ref gloss_classifier)'s template-vs-author decision (which
 *does* read the decompiled body) never runs on the auto-tune path, and
 `AutoTuneEngine._generateAndSeedCustomHooks` calls the hook generator
@@ -400,10 +446,14 @@ whether an error sink swallowed it — then improvability (raw coverage plus
 reachable-set headroom), then what each nearby hook actually does and
 whether it took effect, then the annotated frontier, the catalog, and the
 round history. Job 1 fires on a real fault and asks for authorship; job 2
-fires on low coverage and follows a five-step playbook. What the model may
+fires on low coverage and follows the playbook — stall point first, spin
+rule, value choice, wrapper-skip as a measured experiment, two standing
+cautions. What the model may
 answer is constrained by a per-round schema built from live catalog ids and
 call-graph symbols, narrowed further on escalation and error-sink rounds,
 and backstopped by parse-time and engine-side validation because the
-decoder's enforcement is soft. Accepted edits are filtered for no-ops,
-applied to the overlays, and re-synthesized; two pure detectors decide when
-the session has stopped earning its rounds.
+decoder's enforcement is soft. Accepted edits are deduped, filtered for
+no-ops, applied to the overlays, and re-synthesized; every round is
+measured against the session's best (a collapse is reverted wholesale),
+and two pure detectors decide when the session has stopped earning its
+rounds.

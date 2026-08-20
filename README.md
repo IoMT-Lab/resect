@@ -30,7 +30,8 @@ See [Docker](#docker) below.
 What's optional, gated behind module flags:
 
 - **`MODULE_LLM_HOOKGEN`** — RAG-grounded LLM hook generation + the Last Run
-  recommendation panel. Backed by a local Ollama install.
+  recommendation panel. Backed by any reachable Ollama daemon (the compose
+  service, a remote host, or a local install) — detection is HTTP-first.
 - **`MODULE_GHIDRA`** — Ghidra-driven decompilation and ABI signature
   extraction that grounds the classifier and the LLM prompts.
 - **`MODULE_COMMS_BUS`** — UDP-virtualized I²C / SPI / UART buses.
@@ -117,7 +118,9 @@ resect/                              ← workspace root
 ├── compose.yml                      ← the container stack (init / normal profiles)
 ├── .env                             ← compose defaults (display sockets, env file)
 ├── docker/                          ← Dockerfile, entrypoint, env files, config
-├── scripts/                         ← build_/run_/stop_/remove_ wrappers
+├── scripts/                         ← build.sh, clean.sh, install.sh,
+│                                       run_cli.sh, run_gui.sh, run_vnc.sh,
+│                                       stop.sh, uninstall.sh
 ├── workdir/                         ← bind-mounted into containers as /workdir
 ├── install.sh                       ← one-time host setup
 ├── run.sh                           ← launches the Flutter app on the host
@@ -133,20 +136,27 @@ resect/                              ← workspace root
 │   │   └── server.dart              ← HTTP API server entry
 │   └── lib/
 │       ├── api/                     ← shelf_router HTTP routes
-│       ├── config/                  ← Component / module gates
+│       ├── config/                  ← Component / module gates, config schema
+│       ├── core/                    ← app paths, shared constants
 │       ├── data/
 │       │   ├── database/            ← Drift/SQLite artifact store
 │       │   ├── models/              ← Emulator, CallGraph, HookBinding,
 │       │   │                          HookDecisionState, SynthesisManifest,
 │       │   │                          LastRunInsight, …
-│       │   ├── repositories/        ← .emu file persistence
-│       │   └── services/            ← HookCatalog, HookClassifier,
-│       │                              HookBindingSeeder, HookTestHarness,
-│       │                              LlmClient, LlmHookGenerator,
-│       │                              LastRunInsightService, RagIndex,
-│       │                              SignaturesService, FidelityCalculator
+│       │   └── repositories/        ← .emu file persistence
+│       ├── services/                ← domain services by area:
+│       │   ├── analysis/            ← FidelityCalculator, call-graph guard
+│       │   ├── comms/               ← comms classification + merge
+│       │   ├── external/            ← installers (Ollama, Ghidra)
+│       │   ├── hooks/               ← HookCatalog, HookBindingSeeder,
+│       │   │                          HookTestHarness, artifact library
+│       │   ├── llm/                 ← LlmClient, LlmHookGenerator,
+│       │   │                          LastRunInsightService
+│       │   ├── quality/             ← hook-quality harness
+│       │   └── rag/                 ← RagIndex
 │       └── orchestrator/
 │           ├── emulation_orchestrator.dart
+│           ├── auto_tune_engine.dart / auto_tune_report_writer.dart
 │           ├── comms/               ← UDP forwarder + device handlers
 │           ├── engine/              ← engine abstraction + Dart impl
 │           │   └── dart/            ← the renode client, in-process
@@ -178,9 +188,9 @@ constraints in `emulator_orchestrator/pubspec.yaml`:
 
 | Package | Version | Role |
 |---|---|---|
-| `renode` | 1.1.0 | Renode client: monitor commands, state / function-call / unhandled-access events, hook installation. Connects to a Renode **server**; `RenodeProcess` (used only by the hook-quality harness) can also launch a local portable. |
+| `renode` | 2.2.2 | Renode client: monitor commands, state / function-call / unhandled-access events, hook installation. Connects to a Renode **server**; `RenodeProcess` (used only by the hook-quality harness) can also launch a local portable. |
 | `resect_callgraph` | ^1.0.0 | Builds call graphs from ELF files via `arm-none-eabi-objdump` / `objdump`. Direct calls only. |
-| `resect_hooks` | ^1.3.0 | Typed hook builders (`returnHook`, `readHook`, `writeHook`, `incrementHook`, `i2cReadHook`, `i2cWriteHook`, `uartReadHook`, `uartWriteHook`), the embedded Python modules, and the UDP wire format. |
+| `resect_hooks` | ^1.5.1 | Typed hook builders (`returnHook`, `readHook`, `writeHook`, `incrementHook`, `i2cReadHook`, `i2cWriteHook`, `uartReadHook`, `uartWriteHook`, `spiReadHook`, `spiWriteHook`), the embedded Python modules, and the UDP wire format. |
 | `resect_signatures` | ^1.0.0 | Ghidra-backed function signatures, decompilation, and data symbols. Feeds the hook classifier and the LLM prompt composers. |
 
 `iomt_lab_lints` supplies the shared `analysis_options` as a dev dependency.
@@ -200,8 +210,9 @@ dependency_overrides:
 
 Note that an override affects only your host build: the container images
 build from `pubspec.lock` and always resolve the hosted versions. `run.sh`
-detects the override and runs the embedded-modules drift check so the
-mirrored Python sources can't drift from the canonical `.py` files.
+has an embedded-modules drift check that keeps the mirrored Python sources
+in sync with the canonical `.py` files, but it greps the overrides file for
+`hooks:` — the `resect_hooks:` spelling above does not trip it.
 
 ## Concepts
 
@@ -240,7 +251,10 @@ emulation config (start/end symbols, pauseOnUnhandled), per-symbol forced
 overrides + scopes, comms classification + per-protocol config,
 fidelity-scored hook bindings (`hook_bindings`), cached call graph, last
 synthesis result, the last-run LLM advisory (`last_run_insight`), and a
-small list of attached documents.
+small list of attached documents. The cached call graph is bound to its
+firmware by an `elfHash` SHA-256 stamp, validated at project open/save and
+at auto-tune start — a mismatched or unstamped graph is rejected (logged)
+and re-extracted.
 
 ### Hook catalog
 
@@ -304,8 +318,7 @@ or external by leaving the in-process server off and binding your own
 listener). Toggling Virtualize on stages bus hooks (read / write /
 return0 fill-in for role-less symbols) that forward each transaction
 over UDP. The external-listener pattern is what enables driving a real
-sensor over an FT232H — see `emulation_engine/run_client.py` for a
-starting point.
+sensor over an FT232H.
 
 ### LLM hook generation + RAG (`MODULE_LLM_HOOKGEN`)
 
@@ -405,7 +418,8 @@ counts) and `executed_symbols`.
 
 Per-decision fields: `symbol`, `applied_hook {artifact_id, body_hash,
 scope}`, `decision_kind` (one of `forced_override`, `comms`,
-`warm_start`, `binding`, `iteration_fallback`, `llm_on_demand`),
+`warm_start`, `binding`, `iteration_fallback`, `llm_on_demand`,
+`group_override`),
 `decision_source` (provenance string), `fidelity_at_decision`,
 `iteration_index`, `previous_attempts[]`, optional `llm_invocation`
 telemetry.
@@ -439,7 +453,16 @@ re-synthesize → snapshot**. It is plain Dart with two injected seams — a
 *review policy* (accept-all headless; the GUI picks interactive or
 accept-all at session start) and a *sink* — so both surfaces run the same
 loop and write the same per-round report files; the GUI additionally feeds
-its modal from the same events.
+its inline auto-tune panel (`auto_tune_panel.dart`) from the same events.
+
+Sessions are **cold-start by default**: every round re-synthesizes from
+the overlay set, so rounds stay independent and comparable. The
+warm/cold-start knob (`--warm-start` on the CLI, a switch in the GUI's
+session config) instead seeds each round with the previous round's
+resolved hooks. Rounds are also **measured and reverted**: a round whose
+executed-symbol coverage collapses below half the session's best is
+reverted wholesale, and the session ends holding the best round's
+overlays.
 
 Each round the model gets a fixed-order evidence packet: where execution
 stopped and the recent call path into it, raw *and* reachable-set coverage
@@ -499,7 +522,7 @@ four off.
 
 | Module | configKey | What it enables | External deps |
 |---|---|---|---|
-| LLM Hook Generation | `MODULE_LLM_HOOKGEN` | RAG indexing, LLM-driven hook generation (user-triggered + synthesizer iteration-fallback), the Last Run advisory panel | Ollama running locally + an inference model (default `gemma4:e4b`) + `nomic-embed-text` for embeddings |
+| LLM Hook Generation | `MODULE_LLM_HOOKGEN` | RAG indexing, LLM-driven hook generation (user-triggered + synthesizer iteration-fallback), the Last Run advisory panel | A reachable Ollama daemon (`LLM_OLLAMA_HOST` — the compose service, a remote host, or a local install) + an inference model (default `gemma4:e4b`) + `nomic-embed-text` for embeddings |
 | Ghidra Analysis | `MODULE_GHIDRA` | Ghidra-headless decompilation, function signatures, ABI argument tables, enriched call-graph extraction. Feeds both the classifier and the LLM prompt composer. | Ghidra install + Java 21+ |
 | Communication Bus Virtualization | `MODULE_COMMS_BUS` | The Comms tab; UDP-virtualized I²C / SPI / UART hooks and the in-process UDP forwarder | None (built-in) |
 | Memory Map Initialization | `MODULE_MEMORY_MAP` | Apply a memory-map snapshot (constants + regions) before emulation starts | Planned — UI slot exists, runtime is partial |
@@ -521,13 +544,14 @@ verifies Java).
 | **LIBRARY** | Recent projects, new project dialog, open/save/close. Attached-documents card with add/open/remove. RAG index status card (chunks indexed, last built, source drift detection) when `MODULE_LLM_HOOKGEN` is on. |
 | **CALL GRAPH** | Force-directed graph viewer, symbols list with search, metadata sidebar with function instructions, FORCE OVERRIDE dropdown + SCOPE field, PREFERRED HOOK dropdown, calls/called-by navigation. **Refresh / Regenerate** two-mode button: Refresh reuses the cached Ghidra call graph; hold Shift to flip to Regenerate, which invalidates the cache and re-extracts from scratch. |
 | **COMMS** | Class selector (i2c/spi/uart/unclassified) with per-class counts. Two-pane main: collapsible call-graph tree on the left (per-class), Python interface config + staged-hooks readout on the right. Virtualize toggle, fill-in-return0 checkbox. (Gated on `MODULE_COMMS_BUS`.) |
-| **SYNTHESIZE** | **Pre-synthesis review** card on the idle view: stats (Ready / Hook candidates / Needs discovery) over a coverage bar with two-tone amber (high vs low-fidelity bindings), reachable-grey, and dead-code-grey tail. Saved-hook tags inline. Run config below (Start From, Stop At, Memory Map, Pause on unhandled). Run Synthesis button + live event stream. After a run, a visually distinct **Last Run card** with the fidelity headline, iter / duration, and (with `MODULE_LLM_HOOKGEN` on) a streaming LLM recommendation panel. |
+| **SYNTHESIZE** | **Pre-synthesis review** card on the idle view: stats (Ready / Hook candidates / Needs discovery) over a coverage bar with two-tone amber (high vs low-fidelity bindings), reachable-grey, and dead-code-grey tail. Saved-hook tags inline. Run config below (Start From, Stop At, Memory Map, Pause on unhandled). Run Synthesis button + live event stream. Auto-tune runs in an **inline auto-tune panel** with a per-round trajectory chart, session view, and optional per-round recommendation review. After a run, a visually distinct **Last Run card** with the fidelity headline, iter / duration, and (with `MODULE_LLM_HOOKGEN` on) a streaming LLM recommendation panel. |
 | **PUBLISH** | Export the current resolved-hooks set to a standalone Renode `.resc` script. |
 
 Tools → System Configuration edits `resect.config` for paths (Flutter
-SDK, objdump variants, engine dir, Renode binary), the HTTP API port,
-the autosave preference, module flags, and per-module binary detection
-+ install.
+SDK, objdump variants, engine dir, Renode binary/portable), the Renode
+port and log path, the Ollama host and model, the Ghidra directory,
+module flags, and per-module binary detection + install. The autosave
+preference lives in the separate Preferences dialog.
 
 ## Requirements
 
@@ -543,7 +567,7 @@ Ollama, the models, objdump, and Resect all come from images.
 | libgtk-3-dev, liblzma-dev, pkg-config | GTK runtime + build glue |
 | binutils-arm-none-eabi | `arm-none-eabi-objdump` for ARM call graphs |
 | A reachable Renode **server** (patched build) | Emulation. Resect connects to `RENODE_HOST:RENODE_PORT`; the patched build is required for the hook scope argument |
-| **Ollama (optional)** | `MODULE_LLM_HOOKGEN`. Pull at least one inference model and `nomic-embed-text` |
+| **Ollama (optional)** | `MODULE_LLM_HOOKGEN`. Any reachable daemon at `LLM_OLLAMA_HOST` counts (no local install required); pull at least one inference model and `nomic-embed-text` |
 | **Ghidra + Java 21+ (optional)** | `MODULE_GHIDRA`. Headless analysis for signatures + decompilation — without it the hook classifier has no bodies to read |
 
 Optional: VirtualBox + Vagrant for the CI/CD test harness; opt-in via
@@ -681,7 +705,6 @@ Each command has `--help` for its options. Global flags:
 
 | Flag | Purpose |
 |---|---|
-| `--backend-url <url>` | Connect to an existing engine instance (skips auto-start) |
 | `--engine-dir <path>` | Path to `emulation_engine/`. Accepted, but unused on the emulation path — Renode is reached at `RENODE_HOST:RENODE_PORT` |
 
 A full auto-tune session, end to end:
@@ -705,7 +728,7 @@ dart run emulator_orchestrator:server --port 8080
 | POST | `/emulator` | Create a new emulator |
 | GET | `/emulator` | Get the current loaded emulator |
 | POST | `/callgraph` | Generate a call graph from an ELF |
-| POST | `/synthesizer/run` | Run synthesis (`maxIterations` default 10) |
+| POST | `/synthesizer/run` | Run synthesis (`maxIterations` default 500) |
 | GET | `/synthesizer/events` | SSE stream of synthesis progress |
 | POST | `/emulation/start` | Start emulation |
 | POST | `/emulation/stop` | Reset emulation |
@@ -801,7 +824,7 @@ A handful of stand-alone scripts under `emulator_orchestrator/tool/`:
 
 | Path | Contents |
 |---|---|
-| `~/.config/call_graph_viewer/projects/<project>.emu` | Saved `.emu` project file |
+| `~/.config/call_graph_viewer/projects/<project>.emu` | Saved `.emu` project file. Its cached call graph carries an `elfHash` SHA-256 stamp binding it to the firmware, validated at open/save/auto-tune — mismatches are logged and the graph regenerated |
 | `~/.config/call_graph_viewer/projects/<project>/manifests/<run_id>.json` | Per-run synthesis manifest (when the project lives in a project subdirectory) |
 | `~/.config/call_graph_viewer/projects/<project>/rag_index.db` | Per-project RAG index (`MODULE_LLM_HOOKGEN`) |
 | `~/.config/call_graph_viewer/projects/<project>/documents/` | User-attached documents that travel with the .emu |

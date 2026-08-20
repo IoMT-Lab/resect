@@ -45,6 +45,14 @@ accept-all [review policy](@ref gloss_review_policy)).
 
     resect-cli autotune --emu aya.emu --max-rounds 10 --comms i2c,uart
 
+The call graph a `.emu` carries is stamped with the SHA-256 of its source
+ELF (`elfHash`). On start, `autotune --emu` validates that stamp against
+the firmware actually being emulated; on mismatch it logs the rejection to
+stderr and re-extracts the graph
+(`services/analysis/call_graph_guard.dart`), so the LLM never reasons over
+another firmware's symbols. Unstamped graphs from older `.emu` files can't
+be validated, so they regenerate once — the fresh graph comes back stamped.
+
 Writes per-[round](@ref gloss_round) reports and a `summary.md` (locations in
 @ref storage_map; how to read them in @ref autotune_decisions). The flags
 that change behavior rather than paths:
@@ -74,9 +82,10 @@ comparisons without running an emulation.
 
 ## Global options
 
-`--backend-url <url>` attaches to an already-running engine instead of
-starting one. `--engine-dir <path>` still exists and is still accepted, but
-the emulation path no longer uses it: Resect connects to a **Renode server**
+`--backend-url <url>` still appears in the usage strings, but no command
+reads it — it is vestigial. `--engine-dir <path>` still exists and is still
+accepted, but the emulation path no longer uses it: Resect connects to a
+**Renode server**
 at `RENODE_HOST:RENODE_PORT` from `resect.config` (@ref orchestrator_engine).
 The engine directory only matters to the Vagrant export and the hook-quality
 harness, which do launch a portable Renode themselves.
@@ -96,9 +105,9 @@ surfaces.
 ## The headless API server
 
 For programmatic use beyond the CLI there is also an HTTP server
-(`dart run emulator_orchestrator:server`) exposing project CRUD, call graphs,
-synthesizer runs (with server-sent events), and fidelity — same orchestrator
-underneath.
+(`dart run emulator_orchestrator:server`) exposing project create/list (no
+update or delete), call graphs, synthesizer runs (with server-sent events),
+emulation start/stop, and fidelity — same orchestrator underneath.
 
 ## A typical headless loop
 

@@ -15,9 +15,13 @@ The loop is implemented once, in `AutoTuneEngine`
 (`emulator_orchestrator/lib/orchestrator/auto_tune_engine.dart`) — plain
 Dart, no Flutter, no Riverpod. It owns the mutable
 [overlay](@ref gloss_overlay) maps for the session, the round counter, the
-previous round's failure, and the in-memory snapshot history it feeds back
-to the model. It never reads a provider and never touches disk; persistence
-is the [sink's](@ref gloss_sink) job.
+previous round's failure, the best-so-far anchor (the highest executed
+count seen, the overlays that produced it, and which round it was — every
+non-error exit restores the best round's overlays), and the in-memory
+snapshot history it feeds back to the model. It never reads a provider;
+the artifact database is its one store (authored hook bodies go in,
+artifact labels and the per-round census come out) — persistence of
+session state is the [sink's](@ref gloss_sink) job.
 
 Both surfaces drive it. The CLI wires it directly; the UI's Auto-tune
 button drives the same engine through a thin adapter
@@ -45,22 +49,43 @@ repeat work; the CLI always synthesizes its own). Then each
    recommendation's fate (see "Two seams" below). An empty recommendation
    list ends the session as converged (`llmEmpty`); a rejection of
    everything ends it as `userRejectedAll`.
-3. **Filter no-ops.** Accepted recommendations that are already in effect
+3. **Dedupe.** Identical recommendations within one reply are collapsed
+   before anything else — the model sometimes emits the same entry several
+   times, and duplicates would burn budget slots and misreport as distinct
+   moves.
+4. **Refuse and warn.** One hard guard: a forced override on an entry
+   point (`main`, `Reset_Handler`, `_start`) is refused outright — skipping
+   an entry point deletes the program, so `kProtectedSymbols` is enforced
+   here regardless of what the decoder let through. A round where *every*
+   recommendation was refused counts as stagnant and escalates with the
+   refusals named. Everything else that merely looks risky — a constant
+   forced onto a time/counter reader, a Return-0 skip of a caller that
+   executed cleanly with working hooks beneath it — draws an advisory
+   warning on the round instead of a refusal; the measure-and-revert step
+   below is the enforcement.
+5. **Filter no-ops.** Accepted recommendations that are already in effect
    are dropped. A round where *everything* was a no-op doesn't re-synthesize
    at all — it counts as stagnant and escalates, because unchanged overlays
    would produce identical evidence.
-4. **Author.** Accepted generate-custom-hook recommendations produce new
+6. **Author.** Accepted generate-custom-hook recommendations produce new
    artifacts and [bindings](@ref gloss_binding) — after a re-check that the
-   target is a real call-graph symbol. (One of the three duplicated
+   target is a real call-graph symbol. (One of the two duplicated
    generate-and-bind sites that @ref controller_artifacts consolidates.)
-5. **Apply.** The surviving recommendations mutate the overlays through the
+7. **Apply.** The surviving recommendations mutate the overlays through the
    one shared applier (`applyRecommendationsToOverlays`).
-6. **Re-run synthesis** with the updated overlays; enrich the result with
+8. **Re-run synthesis** with the updated overlays; enrich the result with
    fidelity metrics and executed symbols.
-7. **Snapshot.** Persist a [round snapshot](@ref gloss_round_snapshot) —
-   overlays, metrics, executed symbols, recommendations, decisions — onto
-   the project, and emit the round report to the sink.
-8. **Check the stopping conditions** (below), then loop.
+9. **Measure — and revert a collapse.** The engine tracks the session's
+   best round (executed count plus the overlays that produced it). A round
+   whose executed count falls below half the session best is rolled back
+   wholesale — overlays restored to their pre-round state — and counted as
+   stagnant, with the reverted moves and the measurement fed into the next
+   prompt so the model doesn't repeat them.
+10. **Snapshot.** Persist a [round snapshot](@ref gloss_round_snapshot) —
+    overlays, metrics, executed symbols, recommendations, decisions, plus
+    the round's reverted flag and warnings — onto the project, and emit the
+    round report to the sink.
+11. **Check the stopping conditions** (below), then loop.
 
 ## The stopping conditions
 
@@ -76,7 +101,12 @@ identical evidence:
   first stagnant round escalates — the engine computes the coverage
   [frontier](@ref gloss_frontier) and feeds the stalled caller functions
   into the next prompt as the only permitted targets (an
-  [escalation round](@ref gloss_escalation_round)). Reaching
+  [escalation round](@ref gloss_escalation_round)). The candidates are
+  filtered (entry points, already-forced symbols, and comms-covered symbols
+  excluded) and ranked by how likely they contain the stall — callers on
+  the recent call path that carry no hooks first, callers whose subtree
+  carries working overrides last (skipping one forfeits those hooks) —
+  then capped at 8. Reaching
   `stagnantRoundLimit` consecutive stagnant rounds means escalation was
   tried and didn't move coverage either, and the session stops with
   `noCoverageProgress`.
@@ -125,7 +155,13 @@ are injected interfaces:
   same artifact trail a CLI session does. The UI additionally fans the same
   events (via `MultiSink`) into a `UiAutoTuneSink` that feeds the inline panel's
   state, persists each round's snapshot onto the project, and appends a
-  compact per-round line to the panel's session strip.
+  compact per-round line to the panel's session strip. The Synthesize tab
+  renders the session inline from that state — the auto-tune panel, a
+  metric trajectory chart, and per-round compact reports — and a finished
+  session is rehydrated from disk on project reopen
+  (`services/analysis/autotune_session_loader.dart` reads the newest report
+  directory's round manifests and rejoins them with the project's
+  snapshots).
 
 Same engine, same rounds, same stopping conditions — different policy and
 sink. That's the whole difference between `resect-cli autotune` and clicking
@@ -149,23 +185,30 @@ container invocation are in @ref cli and @ref containers.
 ## Reading a session afterwards
 
 Ask three questions, in order: What was the coverage trajectory across
-rounds (`summary.md` — its table also carries each round's synthesis time
-and first stop, with cumulative selection / generation / advisor time
-below)? Which recommendations were applied each round, and did the round
+rounds (`summary.md` — its table marks each round `BEST` / `REVERTED` and
+also carries the round's synthesis time and first stop; below it come a
+"session finished holding round N's overlays (best: X executed)" line,
+cumulative selection / generation / advisor time, an artifact-census
+section, and a Files index of every round's report files)? Which
+recommendations were applied each round, and did the round
 after them improve (`round_NN.md` — ordered as the round's story: what
 changed going in and why, what happened (stop log + time split), results,
 why it stopped where it did, hooks in effect with human-readable artifact
 labels, frontier, and an artifact census)? Why did it stop —
 `maxRounds` means the session used its round budget, `noCoverageProgress`
-means it ran out of moves that changed anything. @ref autotune_decisions has
+means it ran out of moves that changed anything — coverage stayed frozen,
+every recommendation was refused as destructive, or rounds kept being
+reverted. @ref autotune_decisions has
 the longer version, including which file to open when a recommendation looks
 wrong.
 
 ## In short
 
-One plain-Dart engine: recommend → review → filter → author → apply →
-re-synthesize → snapshot, with a no-progress detector, a stagnation detector
-that escalates once before giving up, and named stop reasons. The CLI and
+One plain-Dart engine: recommend → review → dedupe → refuse/warn → filter →
+author → apply → re-synthesize → snapshot → measure (a round that collapses
+coverage is reverted wholesale), with a no-progress detector, a stagnation
+detector that escalates once before giving up, a best-so-far anchor whose
+overlays every non-error exit restores, and named stop reasons. The CLI and
 the UI differ only in which review policy and sink they inject — both write
 the same report files, and both default to cold-start rounds. The decision
 at the center of each round is @ref autotune_decisions.

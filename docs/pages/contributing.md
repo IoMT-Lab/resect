@@ -80,14 +80,19 @@ don't own them). Put a new service in the folder that matches its job:
 - **`llm/`** — talking to the model and building prompts: the LLM client,
   profiles, hook generator, the recommender, and the last-run advisor.
 - **`rag/`** — the retrieval index and chunker.
-- **`analysis/`** — pure computation over the call graph:
+- **`analysis/`** — analysis over the call graph and run history:
   [fidelity](@ref gloss_fidelity), the coverage [frontier](@ref gloss_frontier),
-  round-over-round deltas, call-graph reads.
+  round-over-round deltas, call-graph reads. Mostly pure computation, with
+  three I/O-touching exceptions: `call_graph_guard` hashes ELF bytes,
+  `autotune_session_loader` reads report directories, and
+  `artifact_census` reads the database.
 - **`quality/`** — the hook-quality subsystem (scorer, test harness,
-  progress runner, static analyzer, judge). Wired into `tool/` and tests
-  today, not the live loops.
-- **`comms/`** — the comms symbol classifier (the rest of comms lives in
-  `orchestrator/comms/`).
+  progress runner, static analyzer, judge). Wired into `tool/`, tests, and
+  two live dialogs (the LLM hook-gen dialog and the Hook DB dialog's Test
+  button) — not the synthesis/auto-tune loops.
+- **`comms/`** — the comms symbol classifier and the shared
+  assignment merge both surfaces use (`comms_assignment_merge.dart`);
+  the rest of comms lives in `orchestrator/comms/`.
 - **`external/`** — external-tool integration and installers (Ghidra
   signatures, Ghidra/Ollama installers).
 
@@ -126,9 +131,11 @@ The docs are the architecture's source of truth
 ## Commits and PRs
 
 Write commit messages that stand on their own — plain sentences about what
-changed and why, no internal jargon. Branch from `main`, open a PR;
-sibling-package changes need their pins updated to pushed commits before a
-clean build passes (see [known debts](@ref known_debts)).
+changed and why, no internal jargon. Branch from `main`, open a PR. The
+engine packages resolve as hosted version pins, so shipping a
+sibling-package change means bumping its version and publishing it to the
+hosted repository before Resect's pin can pick it up (see the dev-setup
+notes above).
 
 ## In short
 

@@ -25,8 +25,8 @@ same code, wired to host-local paths.
 | Service | Image | Job |
 |---|---|---|
 | `resect` | `nexus.medmakers.io/docker/resect` | **One image carrying both surfaces**: the [CLI](@ref cli) as `resect-cli` and the Flutter app as `resect`. The entrypoint's mode argument (`cli` / `gui` / `vnc`) picks which runs. |
-| `renode` | `nexus.medmakers.io/docker/renode` | The Renode **server** the Resect container connects to. |
-| `ollama` | `ollama/ollama` | Inference + embeddings over HTTP, healthchecked before Resect starts. |
+| `renode` | `nexus.medmakers.io/docker/renode` | The Renode **server** the Resect container connects to. Compose sets `RENODE_COMMS_HOST: "resect"` on it — the in-Renode comms hook reads that to find the UDP bus servers (default `localhost` otherwise). |
+| `ollama` | `ollama/ollama` | Inference + embeddings over HTTP, healthchecked before Resect starts. Runs CPU-only — the compose file grants it no GPU devices; GPU passthrough is a planned opt-in overlay. |
 | `ollama-init` | `ollama/ollama` | Pulls `gemma4:e4b` (override with `RESECT_LLM_MODEL`) and `nomic-embed-text`, then exits. **`init` profile — runs only via `install.sh`.** |
 | `cache-cleaner` | `busybox` | Deletes the contents of the `resect-state` volume. Only reachable via `clean.sh`. |
 
@@ -92,8 +92,13 @@ host is not private.
 
     $ ./scripts/install.sh      # once — model pull into the ollama-models volume
     $ ./scripts/run_cli.sh
-    Starting container as user: evan (UID: 1000, GID: 1000)
+    Starting container as user: ubuntu (UID: 1000, GID: 1000)
     Resect CLI available as 'resect-cli'
+
+(The name is the container's, not yours: the entrypoint reuses whatever
+account already holds your UID inside the image — `ubuntu` on
+`ubuntu:24.04` — or creates `appuser`. The UID/GID are what matter for
+ownership.)
 
     # inside the container, in /workdir (a bind mount of ./workdir)
     $ resect-cli create --name aya --elf example/aya_ppg.elf \
@@ -104,12 +109,13 @@ Put firmware in `./workdir` on the host and it appears under `/workdir`;
 [reports and manifests](@ref storage_map) the run writes there appear back
 on the host, owned by you. (`workdir/` is gitignored apart from the
 shipped example files, so run artifacts no longer clutter `git status`.)
-To run one command and exit instead of getting a shell, append it after
-the mode:
+The `cli` mode always gives you a shell — the entrypoint discards anything
+after the mode argument. To run one command non-interactively, bypass the
+entrypoint instead (this skips the ownership setup, so the command runs as
+root):
 
-    docker compose --profile normal run --rm \
-        -e HOST_UID=$(id -u) -e HOST_GID=$(id -g) \
-        resect cli    # then run resect-cli ... in the shell it opens
+    docker compose --profile normal run --rm --entrypoint "" \
+        resect resect-cli autotune --emu example/aya.emu
 
 ## Configuration inside the container
 
@@ -117,12 +123,14 @@ The image ships one `resect.config` (`docker/resect.config`) at
 `/resect.config`, pointed to by the `RESECT_CONFIG` environment variable:
 
     ARM_OBJDUMP="/usr/bin/arm-none-eabi-objdump"
-    X86_OBJDUMP="/usr/bin/objdump"
-    LLM_OLLAMA_HOST="ollama:11434"
     LLM_MODEL=""
+    LLM_OLLAMA_HOST="ollama:11434"
+    MODULE_COMMS_BUS="1"
+    MODULE_LLM_HOOKGEN="1"
     RENODE_HOST="renode"
     RENODE_PORT="5678"
     SETUP_DONE="1"
+    X86_OBJDUMP="/usr/bin/objdump"
 
 Read that list as a statement of what the container path *is*:
 
@@ -141,10 +149,12 @@ Read that list as a statement of what the container path *is*:
   signatures, no decompiled bodies, no `HookClassifier` bindings, no
   decompilation in [RAG](@ref gloss_rag) retrieval — the annotation layer
   described in @ref pre_synthesis is absent, and with it the frontier
-  annotations @ref autotune_decisions relies on. The LLM stack itself is
-  *not* gated: the CLI wires the recommender and the hook generator
-  unconditionally, so auto-tune runs — it just reasons from names rather
-  than from bodies.
+  annotations @ref autotune_decisions relies on. The LLM stack, by
+  contrast, is explicitly on: `MODULE_LLM_HOOKGEN=1` (and the CLI wires
+  the recommender and the hook generator unconditionally anyway), so
+  auto-tune runs — it just reasons from names rather than from bodies.
+  `MODULE_COMMS_BUS=1` likewise switches on comms virtualization
+  (@ref comms_virtualization) in the image.
 
 ## Where container state lives {#containers_state}
 

@@ -11,11 +11,13 @@ Sizes: **S** = hours, **M** = a day or two, **L** = a week-scale change.
 
 Zero behavior change; existing tests must stay green untouched.
 
-- ☑ Route all four [fidelity](@ref gloss_fidelity)-enrichment call sites
-      (UI synthesis controller, UI loop, CLI `synthesize`, HTTP API)
+- ☑ Route all [fidelity](@ref gloss_fidelity)-enrichment call sites
       through the one shared helper (`enrichSynthesizerResult` /
       `enrichManifestWithMetrics` in `auto_tune_engine.dart`). Closed
       Gap 4; the UI report card now renders `manifest.metrics` too.
+      (The UI-loop call site was deleted with phase P4; the live sites
+      are `synthesis_controller.dart`, the CLI's `synthesize` and
+      `autotune`, and `api_server.dart`.)
 - ☐ Move the `OptimizationTarget` enum into `auto_tune_config.dart`;
       drop the model → service import.
 - ☐ Stop `trace_activity_event.dart` importing the orchestrator layer
@@ -57,19 +59,20 @@ Closed Gap 3; the behavior is @ref autotune.
       pause/resume from the old UI loop; also carries the accept-all mode
       chosen at session start).
 - ☑ Write `UiAutoTuneSink` mapping engine events to the auto-tune
-      modal's existing state types; persist
+      session view's state types; persist
       [round snapshots](@ref gloss_round_snapshot) through the project.
 - ☑ Drive `AutoTuneEngine` from the Auto-tune button; pass
       `seedBaseline` where the UI previously skipped the baseline. UI
       sessions also run an `AutoTuneReportSink` (via `MultiSink`) so both
       surfaces write the same report files.
-- ☑ Add modal copy for engine-only stop reasons (notably
+- ☑ Add session-view copy for engine-only stop reasons (notably
       `noCoverageProgress`).
 - ☑ Delete the UI loop body and the UI-side `RecommendationApplier`;
       tests migrated to engine + policy + sink tests.
       (`LlmSynthesisOrchestrator` survives as a thin adapter — same name
-      and public surface, zero loop logic — so the modal and its tests
-      were untouched.)
+      and public surface, zero loop logic — so the session UI and its
+      tests, today `auto_tune_panel_test.dart` /
+      `auto_tune_session_view_test.dart`, were untouched.)
 
 UX changes shipped with it: no-op recommendations get filtered, sessions
 can end early with `noCoverageProgress`, cold-start rounds are the default
@@ -104,11 +107,24 @@ behind a controller), `graph_viewer_widget` (call-graph regeneration flow),
 `comms_screen` (extract the tree-building algorithm), and the remaining
 logic in the two big dialogs.
 
+## Landed outside the phases
+
+- ☑ Cached [call graphs](@ref gloss_call_graph) are bound to their
+      firmware by SHA-256 stamp (`CallGraph.elfHash`, validated through
+      `call_graph_guard.dart`); a mismatched or unstamped cache is logged
+      and regenerated (commit 12478c1).
+- ☑ The blocking auto-tune modal was replaced by an inline panel in the
+      Synthesize tab (`AutoTunePanel` / `AutoTuneSessionView`), so trace
+      activity and results stay visible while a session runs
+      (commit 7eb8d98).
+
 ## Deliberately out of scope
 
 Recorded in [known debts](@ref known_debts): the four `package:renode`
-imports in data services, the unwired `GhidraCallGraphSource`, and the
-hooks→renode pin conflict blocking clean builds. Also deferred: the
+imports in data services, and `GhidraCallGraphSource` being wired unevenly
+(the UI selects it by configuration; the CLI is objdump-only). The
+hooks→renode pin conflict is resolved — the engine packages resolve as
+hosted locked versions with no active override. Also deferred: the
 escalation-authoring improvement to auto-tune (tracked in `TODO.txt`).
 
 ## In short
