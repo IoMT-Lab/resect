@@ -1,9 +1,11 @@
 import 'dart:io';
-import 'package:resect_callgraph/resect_callgraph.dart' show Machine, getMachineForElf;
-import 'package:crypto/crypto.dart';
+
 import 'package:path/path.dart' as p;
+import 'package:resect_callgraph/resect_callgraph.dart' show Machine, getMachineForElf;
+
 import '../../data/database/artifact_database.dart';
 import '../../data/models/firmware_record.dart';
+import '../analysis/call_graph_guard.dart';
 import 'hook_catalog.dart';
 
 /// Service for managing the local artifact library.
@@ -20,15 +22,15 @@ class ArtifactLibraryService {
   ArtifactLibraryService(this._db, {HookCatalog? catalog})
       : _catalog = catalog ?? HookCatalog.system();
 
-  /// Compute SHA-256 hash of an ELF file.
+  /// Compute SHA-256 hash of an ELF file. Same digest that stamps call
+  /// graphs ([sha256OfFile]), so firmware records and graph stamps
+  /// compare directly.
   Future<String> hashElfFile(String elfFilePath) async {
-    final file = File(elfFilePath);
-    if (!await file.exists()) {
+    try {
+      return await sha256OfFile(elfFilePath);
+    } on FileSystemException {
       throw ArtifactLibraryException('ELF file not found: $elfFilePath');
     }
-    final bytes = await file.readAsBytes();
-    final digest = sha256.convert(bytes);
-    return digest.toString();
   }
 
   /// Look up a firmware image by its ELF hash.

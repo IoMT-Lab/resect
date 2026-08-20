@@ -136,7 +136,9 @@ sink. That's the whole difference between `resect-cli autotune` and clicking
     resect-cli autotune --emu example/aya.emu --max-rounds 10
 
 That one command builds the whole stack the UI builds: engine lifecycle,
-call graph (the project's cached one when present), firmware registration,
+call graph (the project's cached one when its SHA-256 stamp matches the
+firmware being emulated — a stale or unstamped cache is rejected with a
+logged reason and re-extracted, on both surfaces), firmware registration,
 the [RAG](@ref gloss_rag) index, the hook generator, the recommender, comms
 classification (the same classifier-and-merge the UI runs on every graph
 load — in memory by default, written back with `--save-comms`) and

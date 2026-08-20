@@ -24,9 +24,6 @@ export 'data/models/synthesizer_result.dart';
 export 'data/models/trace_activity_event.dart';
 // Data repositories
 export 'data/repositories/emulator_repository.dart';
-// Data services
-export 'services/hooks/artifact_library_service.dart';
-export 'services/analysis/fidelity_calculator.dart';
 // Orchestrator
 export 'orchestrator/emulation_orchestrator.dart';
 export 'orchestrator/engine/dart/dart_engine.dart';
@@ -39,3 +36,7 @@ export 'orchestrator/workflows/analysis_workflow.dart';
 export 'orchestrator/workflows/emulation_workflow.dart';
 export 'orchestrator/workflows/emulator_workflow.dart';
 export 'orchestrator/workflows/synthesizer_workflow.dart';
+export 'services/analysis/call_graph_guard.dart';
+export 'services/analysis/fidelity_calculator.dart';
+// Data services
+export 'services/hooks/artifact_library_service.dart';

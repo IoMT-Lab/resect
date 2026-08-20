@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:emulator_orchestrator/data/models/auto_tune_config.dart';
+import 'package:emulator_orchestrator/data/models/call_graph.dart';
 import 'package:emulator_orchestrator/data/models/round_snapshot.dart';
 import 'package:emulator_orchestrator/orchestrator/auto_tune_engine.dart';
 import 'package:emulator_orchestrator/orchestrator/auto_tune_report_writer.dart';
+import 'package:emulator_orchestrator/services/analysis/call_graph_guard.dart';
 import 'package:emulator_orchestrator/services/hooks/symbol_group_classifier.dart';
 import 'package:emulator_orchestrator/services/llm/recommendation_service.dart';
 import 'package:flutter/foundation.dart';
@@ -25,6 +27,37 @@ import 'ui_review_policy.dart';
 /// disposed) by the panel's Close button.
 final autoTuneOrchestratorProvider =
     StateProvider<LlmSynthesisOrchestrator?>((ref) => null);
+
+/// Resolve the call graph an auto-tune session may reason over: the one
+/// belonging to the firmware the open project emulates
+/// (`emulator.elfFilePath`). Candidates — the project's persisted graph,
+/// then the live provider value — are trusted only when their sha256
+/// stamp matches the ELF's bytes; otherwise a fresh extraction runs.
+/// The validated graph is written back onto [currentEmulatorProvider]
+/// so the next save persists a stamped, matching graph (self-heals a
+/// poisoned .emu) and every other `cachedCallGraph` reader sees it.
+///
+/// Top-level (not a method) so tests can exercise the exact production
+/// trust decision with only provider overrides.
+Future<CallGraph> resolveSessionCallGraph(ProviderContainer container) async {
+  final emulator = container.read(currentEmulatorProvider);
+  final elfPath = emulator?.elfFilePath;
+  if (emulator == null || elfPath == null) {
+    throw StateError('Project has no firmware ELF.');
+  }
+  final callGraph = await ensureCallGraphForElf(
+    elfPath: elfPath,
+    cached: emulator.cachedCallGraph,
+    fallback: container.read(callgraphProvider).valueOrNull,
+    generate: (path) =>
+        container.read(emulationOrchestratorProvider).generateCallGraph(path),
+  );
+  if (!identical(callGraph, emulator.cachedCallGraph)) {
+    container.read(currentEmulatorProvider.notifier).state =
+        emulator.copyWith(cachedCallGraph: callGraph);
+  }
+  return callGraph;
+}
 
 /// UI adapter for the shared [AutoTuneEngine] — the closed-loop
 /// LLM-orchestrated synthesizer.
@@ -111,19 +144,19 @@ class LlmSynthesisOrchestrator extends ChangeNotifier {
           'persist.');
     }
 
-    // Session inputs the engine needs up front.
-    final callGraph = emulator.cachedCallGraph ??
-        container.read(callgraphProvider).valueOrNull;
-    if (callGraph == null) {
-      throw StateError('No call graph loaded.');
+    // Session inputs the engine needs up front. The call graph must be
+    // the graph OF THE FIRMWARE THIS SESSION EMULATES: cached graphs are
+    // trusted only when their sha256 stamp matches the ELF's bytes, else
+    // a fresh extraction runs. (Observed failure this guards against: a
+    // stale cached graph from another firmware fed the LLM a symbol
+    // universe that didn't exist in the running binary.)
+    final sessionElfPath = emulator.elfFilePath;
+    if (sessionElfPath == null) {
+      throw StateError('Project has no firmware ELF.');
     }
-    final elfHash =
-        container.read(artifactProcessingProvider).valueOrNull?.elfHash ??
-            emulator.synthesisResult?.manifest?.elfHash;
-    if (elfHash == null) {
-      throw StateError(
-          'Firmware not processed. Ensure the call graph has loaded.');
-    }
+    final elfHash = await sha256OfFile(sessionElfPath);
+    final callGraph = await resolveSessionCallGraph(container);
+    emulator = container.read(currentEmulatorProvider)!;
 
     // Apply the session's snapshot cap to the project so
     // appendRoundSnapshot prunes to what the dialog asked for.

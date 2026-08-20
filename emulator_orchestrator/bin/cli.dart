@@ -19,6 +19,7 @@ import 'package:emulator_orchestrator/orchestrator/comms/comms_session.dart';
 import 'package:emulator_orchestrator/orchestrator/emulation_orchestrator.dart';
 import 'package:emulator_orchestrator/orchestrator/engine/dart/dart_engine.dart';
 import 'package:emulator_orchestrator/services/analysis/artifact_census.dart';
+import 'package:emulator_orchestrator/services/analysis/call_graph_guard.dart';
 import 'package:emulator_orchestrator/services/analysis/fidelity_calculator.dart';
 import 'package:emulator_orchestrator/services/comms/comms_assignment_merge.dart';
 import 'package:emulator_orchestrator/services/comms/comms_classifier.dart';
@@ -581,10 +582,19 @@ Future<void> _runAutotune(Map<String, String> flags) async {
     await orchestrator.traceSource.connect();
 
     // Call graph — prefer the project's cached one (what the UI reasons
-    // over); regenerate if absent.
-    final callGraph = emulator.cachedCallGraph ??
-        await orchestrator.generateCallGraph(elfPath);
+    // over), but only when its sha256 stamp matches the ELF actually
+    // being emulated; a stale/unstamped cache is rejected (logged) and
+    // regenerated so the LLM never reasons over another firmware's
+    // symbol universe.
+    final callGraph = await ensureCallGraphForElf(
+      elfPath: elfPath,
+      cached: emulator.cachedCallGraph,
+      generate: orchestrator.generateCallGraph,
+    );
     stderr.writeln('Call graph: ${callGraph.totalFunctions} functions');
+    if (!identical(callGraph, emulator.cachedCallGraph)) {
+      emulator = emulator.copyWith(cachedCallGraph: callGraph);
+    }
 
     // Classify + merge comms assignments the way the UI does on every graph
     // load: persisted entries win, new symbols get the classifier's

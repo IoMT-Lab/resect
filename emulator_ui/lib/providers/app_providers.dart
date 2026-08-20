@@ -25,6 +25,7 @@ import 'package:emulator_orchestrator/orchestrator/engine/paused_event.dart';
 import 'package:emulator_orchestrator/orchestrator/events/orchestrator_events.dart';
 import 'package:emulator_orchestrator/orchestrator/vagrant_test_event.dart';
 import 'package:emulator_orchestrator/orchestrator/workflows/synthesizer_workflow.dart';
+import 'package:emulator_orchestrator/services/analysis/call_graph_guard.dart';
 import 'package:emulator_orchestrator/services/analysis/call_graph_service.dart';
 import 'package:emulator_orchestrator/services/analysis/fidelity_calculator.dart';
 import 'package:emulator_orchestrator/services/external/signatures_service.dart';
@@ -74,13 +75,17 @@ final callgraphProvider = FutureProvider<CallGraph?>((ref) async {
     return null;
   }
 
-  // Reuse the open project's saved graph when it matches the loaded ELF, so
-  // reopening a project doesn't re-run objdump. `ref.read` (not watch) is
-  // intentional — the graph must not recompute when the emulator mutates for
-  // other reasons (hooks, etc.). Regenerate Call Graph clears the cache and
-  // invalidates this provider to force a fresh extraction.
+  // Reuse the open project's saved graph when its sha256 stamp matches
+  // the loaded ELF's bytes, so reopening a project doesn't re-run
+  // objdump. Content identity, not path identity: a path match proves
+  // nothing (the file may have been replaced; stale graphs can cross
+  // project switches), and unstamped legacy graphs never match — they
+  // regenerate once and come back stamped. `ref.read` (not watch) is
+  // intentional — the graph must not recompute when the emulator mutates
+  // for other reasons (hooks, etc.). Regenerate Call Graph clears the
+  // cache and invalidates this provider to force a fresh extraction.
   final cached = ref.read(currentEmulatorProvider)?.cachedCallGraph;
-  if (cached != null && cached.elfPath == elfPath) {
+  if (cached != null && await callGraphMatchesElf(cached, elfPath)) {
     return cached;
   }
 
@@ -620,6 +625,12 @@ final artifactProcessingProvider = FutureProvider<FirmwareRecord?>((ref) async {
 
   final callGraph = callgraphAsync.valueOrNull;
   if (callGraph == null) return null;
+  // While callgraphProvider re-extracts after an ELF switch, valueOrNull
+  // still serves the PREVIOUS firmware's graph (riverpod keeps the prior
+  // value through a rebuild). Registering this hash with that graph's
+  // symbol list would poison the firmware record — wait for the matching
+  // graph instead (this provider re-fires when it lands).
+  if (callGraph.elfPath != elfPath) return null;
 
   final service = ref.watch(artifactLibraryServiceProvider);
 

@@ -22,9 +22,26 @@ class AutosaveController {
   /// [base] before writing it to disk. Falls back to the base's existing
   /// values when a provider has nothing fresh to contribute, so a save never
   /// wipes previously persisted artifacts.
-  Emulator gatherState(Emulator base) => base.copyWith(
+  Emulator gatherState(Emulator base) {
+    final elfFilePath = ref.read(selectedElfPathProvider) ?? base.elfFilePath;
+    // Persist a call graph only if it belongs to the firmware this save
+    // records. While callgraphProvider re-extracts after an ELF switch,
+    // valueOrNull still serves the PREVIOUS firmware's graph (riverpod
+    // keeps the prior value through a rebuild) — writing that here is
+    // how a project gets durably poisoned with another firmware's graph.
+    // Path equality is the (sync) filter for that cross-firmware case;
+    // content (sha256 stamp) is validated at every load/use site. A base
+    // graph that doesn't match the saved ELF path is dropped, so a save
+    // actively cleans an already-poisoned project.
+    final liveGraph = ref.read(callgraphProvider).valueOrNull;
+    final graphToPersist = liveGraph != null && liveGraph.elfPath == elfFilePath
+        ? liveGraph
+        : (base.cachedCallGraph?.elfPath == elfFilePath
+            ? base.cachedCallGraph
+            : null);
+    return base.copyWith(
         modifiedAt: DateTime.now(),
-        elfFilePath: ref.read(selectedElfPathProvider) ?? base.elfFilePath,
+        elfFilePath: elfFilePath,
         uiState: UiState(
           leftSidebarExpanded: ref.read(leftSidebarExpandedProvider),
           rightSidebarExpanded: ref.read(rightSidebarExpandedProvider),
@@ -36,13 +53,14 @@ class AutosaveController {
             Map<String, String>.from(ref.read(hookOverrideScopesProvider)),
         hookBindings:
             Map<String, HookBinding>.from(ref.read(hookBindingsProvider)),
-        cachedCallGraph:
-            ref.read(callgraphProvider).valueOrNull ?? base.cachedCallGraph,
+        cachedCallGraph: graphToPersist,
+        clearCachedCallGraph: graphToPersist == null,
         synthesisResult: ref.read(synthesisResultProvider) ?? base.synthesisResult,
         executedSymbols: Set<String>.from(ref.read(executedSymbolsProvider)),
         lastRunInsight:
             ref.read(lastRunInsightProvider) ?? base.lastRunInsight,
       );
+  }
 
   /// Restore persisted synthesis artifacts from [emulator] into the live
   /// providers, reconstructing a completed [SynthesisProgress] when a result

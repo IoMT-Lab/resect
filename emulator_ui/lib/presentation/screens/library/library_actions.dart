@@ -6,6 +6,7 @@ import 'package:emulator_orchestrator/core/constants.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/models/hook_binding.dart';
 import 'package:emulator_orchestrator/data/models/rag_index_status.dart';
+import 'package:emulator_orchestrator/services/analysis/call_graph_guard.dart';
 import 'package:emulator_orchestrator/services/hooks/hook_binding_seeder.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -107,13 +108,40 @@ Future<void> openEmulator(
       RagIndexStatus.checking;
   stderr.writeln('[openEmulator] loading $emulatorPath');
   try {
-    final emulator = await repository.loadEmulator(emulatorPath);
+    var emulator = await repository.loadEmulator(emulatorPath);
     stderr.writeln('[openEmulator] loaded; overrides=${emulator.hookOverrides.length} '
         'prefs=${emulator.hookPreferences.length} '
         'bindings=${emulator.hookBindings.length} '
         'hooks=${emulator.hooks.length} '
         'commsAssignments=${emulator.commsAssignments.length} '
         'elfFilePath=${emulator.elfFilePath}');
+
+    // Trust the persisted call graph only if its sha256 stamp matches
+    // the project's firmware bytes. A mismatched, unstamped (pre-stamp
+    // .emu), or unverifiable graph is stripped here so every downstream
+    // reader of cachedCallGraph (RAG index, synthesis, auto-tune) starts
+    // from nothing rather than from another firmware's symbol universe;
+    // callgraphProvider then re-extracts and re-stamps.
+    final persistedGraph = emulator.cachedCallGraph;
+    if (persistedGraph != null) {
+      var matches = false;
+      final elf = emulator.elfFilePath;
+      if (elf != null) {
+        try {
+          matches = await callGraphMatchesElf(persistedGraph, elf);
+        } on FileSystemException catch (e) {
+          stderr.writeln('[openEmulator] cannot validate call graph '
+              '(${e.message}: ${e.path}); stripping it.');
+        }
+      }
+      if (!matches) {
+        stderr.writeln('[openEmulator] stripping cached call graph: stamp '
+            '${persistedGraph.elfHash ?? '(unstamped)'} does not match '
+            'firmware $elf (graph extracted from ${persistedGraph.elfPath}). '
+            'It will be re-extracted.');
+        emulator = emulator.copyWith(clearCachedCallGraph: true);
+      }
+    }
 
     container.read(currentEmulatorProvider.notifier).state = emulator;
     container.read(emulatorDirtyProvider.notifier).state = false;

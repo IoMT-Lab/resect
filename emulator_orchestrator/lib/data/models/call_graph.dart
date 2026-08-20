@@ -7,7 +7,14 @@ import 'symbol.dart';
 class CallGraph {
   /// Path to the ELF file this call graph was generated from
   final String elfPath;
-  
+
+  /// SHA-256 of the ELF file this graph was extracted from. This is the
+  /// graph's identity: consumers must validate it against the firmware
+  /// actually in use (see `call_graph_guard.dart`) instead of trusting
+  /// the path. Null on graphs deserialized from pre-stamp `.emu` files —
+  /// treated as unvalidated, i.e. "must regenerate".
+  final String? elfHash;
+
   /// Map of function name -> Symbol data
   /// Example: {"main": Symbol(...), "SystemInit": Symbol(...)}
   final Map<String, Symbol> symbols;
@@ -15,6 +22,7 @@ class CallGraph {
   CallGraph({
     required this.elfPath,
     required this.symbols,
+    this.elfHash,
   });
 
   /// Create a CallGraph from JSON data received from Python server
@@ -56,7 +64,11 @@ class CallGraph {
     symbolsData.forEach((name, data) {
       symbols[name] = Symbol.fromJson(name, data as Map<String, dynamic>);
     });
-    return CallGraph(elfPath: elfPath, symbols: symbols);
+    return CallGraph(
+      elfPath: elfPath,
+      symbols: symbols,
+      elfHash: json['elfHash'] as String?,
+    );
   }
 
   /// Get a specific symbol by name, or null if not found
@@ -90,6 +102,7 @@ class CallGraph {
 
   Map<String, dynamic> toJson() => {
       'elfPath': elfPath,
+      if (elfHash != null) 'elfHash': elfHash,
       'symbols': symbols.map((name, symbol) => MapEntry(name, symbol.toJson())),
     };
 

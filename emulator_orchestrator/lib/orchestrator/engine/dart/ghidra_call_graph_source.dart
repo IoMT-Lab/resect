@@ -1,10 +1,9 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:crypto/crypto.dart' show sha256;
-
 import '../../../data/models/call_graph.dart';
 import '../../../data/models/symbol.dart';
+import '../../../services/analysis/call_graph_guard.dart';
 import '../../../services/analysis/call_graph_service.dart';
 import '../../../services/external/signatures_service.dart';
 import '../call_graph_source.dart';
@@ -91,9 +90,8 @@ class GhidraCallGraphSource implements CallGraphSource {
           calledSymbols: Map<String, int>.from(entry.value.calls),
         ),
     };
-    return CallGraph(elfPath: elfPath, symbols: symbols);
+    return CallGraph(elfPath: elfPath, symbols: symbols, elfHash: elfHash);
   }
 
-  Future<String> _hashFile(File f) async =>
-      sha256.convert(await f.readAsBytes()).toString();
+  Future<String> _hashFile(File f) async => sha256OfFile(f.path);
 }
