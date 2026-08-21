@@ -222,7 +222,15 @@ class SynthesisProgress {
   final int hooksApplied;
   final String currentSymbol;
   final String status;
-  final DateTime countdownStart; // when the 30s success countdown began/reset
+
+  /// When the current phase began: the 30s success countdown while
+  /// emulating, or the LLM call start while [llmActive].
+  final DateTime countdownStart;
+
+  /// True while the synthesizer's on-demand LLM fallback is authoring a
+  /// hook — emulation is functionally paused, so the 30s observation
+  /// countdown does not apply and the UI shows an elapsed timer instead.
+  final bool llmActive;
   final bool complete;
   final bool success;
 
@@ -231,6 +239,7 @@ class SynthesisProgress {
     this.hooksApplied = 0,
     this.currentSymbol = '',
     this.status = 'Starting...',
+    this.llmActive = false,
     this.complete = false,
     this.success = false,
   });
@@ -241,6 +250,7 @@ class SynthesisProgress {
     String? currentSymbol,
     String? status,
     DateTime? countdownStart,
+    bool? llmActive,
     bool? complete,
     bool? success,
   }) => SynthesisProgress(
@@ -249,6 +259,7 @@ class SynthesisProgress {
       currentSymbol: currentSymbol ?? this.currentSymbol,
       status: status ?? this.status,
       countdownStart: countdownStart ?? this.countdownStart,
+      llmActive: llmActive ?? this.llmActive,
       complete: complete ?? this.complete,
       success: success ?? this.success,
     );

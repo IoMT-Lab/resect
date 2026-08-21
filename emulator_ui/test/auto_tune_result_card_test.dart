@@ -79,7 +79,7 @@ void main() {
     expect(find.textContaining('uart_rx_getc'), findsOneWidget);
   });
 
-  testWidgets('no round budget drops the OF M suffix', (tester) async {
+  testWidgets('round 0 is titled BASELINE, never ROUND 0', (tester) async {
     await pump(
       tester,
       progress: SynthesisProgress(
@@ -90,6 +90,41 @@ void main() {
       ),
       notifier: session(rounds: 1),
     );
-    expect(find.text('ROUND 0 — FAILED'), findsOneWidget);
+    expect(find.text('BASELINE — FAILED'), findsOneWidget);
+    expect(find.textContaining('ROUND 0'), findsNothing);
+  });
+
+  testWidgets('baseline in flight is titled BASELINE — SYNTHESIZING…',
+      (tester) async {
+    final n = AutoTuneSessionNotifier()
+      ..beginLive('/tmp/reports', maxRounds: 5);
+    await pump(
+      tester,
+      progress: SynthesisProgress(
+        countdownStart: DateTime(2026),
+        iteration: 1,
+      ),
+      notifier: n,
+    );
+    expect(find.text('BASELINE — SYNTHESIZING…'), findsOneWidget);
+  });
+
+  testWidgets('llmActive replaces the frozen iteration line with the status',
+      (tester) async {
+    await pump(
+      tester,
+      progress: SynthesisProgress(
+        countdownStart: DateTime(2026),
+        iteration: 4,
+        hooksApplied: 2,
+        currentSymbol: 'uart_rx_getc',
+        llmActive: true,
+        status: 'LLM generating: uart_rx_getc (gemma4:e4b)',
+      ),
+      notifier: session(rounds: 1, maxRounds: 5),
+    );
+    expect(find.text('LLM generating: uart_rx_getc (gemma4:e4b)'),
+        findsOneWidget);
+    expect(find.textContaining('iteration 4'), findsNothing);
   });
 }

@@ -307,6 +307,7 @@ class SynthesisController {
           iteration: event.iteration,
           status: 'Iteration ${event.iteration}',
           countdownStart: DateTime.now(),
+          llmActive: false,
         );
       } else if (event is SynthesizerHookApplied) {
         ref
@@ -317,6 +318,7 @@ class SynthesisController {
           currentSymbol: event.symbol,
           status: 'Hook: ${event.hookName}',
           countdownStart: DateTime.now(),
+          llmActive: false,
         );
       } else if (event is SynthesizerSymbolExhausted) {
         ref.read(synthesisProgressProvider.notifier).state = current.copyWith(
@@ -326,15 +328,15 @@ class SynthesisController {
       } else if (event is SynthesizerLlmGenerating) {
         // The iteration loop has exhausted DB candidates for this
         // symbol and the on-demand LLM is generating a fresh hook
-        // — ~2 min on gemma4:e4b. Reset the countdown timestamp so
-        // the elapsed-time stamp in the progress strip starts at
-        // zero for the LLM call rather than carrying over from
-        // the previous iteration.
+        // — ~2 min on gemma4:e4b. Emulation is functionally paused,
+        // so flag llmActive (the view swaps the 30s countdown for an
+        // elapsed timer) and restart the timestamp at the LLM call.
         ref.read(synthesisProgressProvider.notifier).state = current.copyWith(
           currentSymbol: event.symbol,
           status: 'LLM generating: ${event.symbol} '
               '(${event.modelTag})',
           countdownStart: DateTime.now(),
+          llmActive: true,
         );
       } else if (event is SynthesizerLlmGenerated) {
         // Fresh artifact + binding ready. Don't bump hooksApplied
@@ -345,6 +347,18 @@ class SynthesisController {
           status: 'LLM produced hook for ${event.symbol} '
               '(fidelity ${event.fidelity.toStringAsFixed(2)})',
           countdownStart: DateTime.now(),
+          llmActive: false,
+        );
+      } else if (event is SynthesizerLlmFailed) {
+        // The fallback died or returned nothing — leave the LLM state
+        // so the countdown resumes; the synthesizer continues on its
+        // own (symbol-exhausted path).
+        ref.read(synthesisProgressProvider.notifier).state = current.copyWith(
+          currentSymbol: event.symbol,
+          status: 'LLM failed for ${event.symbol} — continuing '
+              '(${event.reason})',
+          countdownStart: DateTime.now(),
+          llmActive: false,
         );
       } else if (event is SynthesizerCompleted) {
         final result = _enrichManifest(event.result);

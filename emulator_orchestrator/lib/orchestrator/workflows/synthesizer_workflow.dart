@@ -860,8 +860,10 @@ class SynthesizerWorkflow {
   ///
   /// Emits [SynthesizerLlmGenerating] before the LLM call so the UI
   /// can flip its progress indicator from "iteration N waiting…" to
-  /// "LLM generating for $symbol…", and [SynthesizerLlmGenerated]
-  /// after a successful insert.
+  /// "LLM generating for $symbol…", [SynthesizerLlmGenerated] after a
+  /// successful insert, and [SynthesizerLlmFailed] when the generation
+  /// dies or returns nothing — so the UI never sticks in the
+  /// LLM-generating state.
   Future<HookBinding?> _tryLlmFallback({
     required String symbol,
     required int iteration,
@@ -914,11 +916,21 @@ class SynthesizerWorkflow {
       }
     } catch (e) {
       print('[Synthesizer] LLM fallback failed for "$symbol": $e');
+      _eventController.add(SynthesizerLlmFailed(
+        iteration: iteration,
+        symbol: symbol,
+        reason: '$e',
+      ));
       return null;
     }
     final body = buffer.toString().trim();
     if (body.isEmpty) {
       print('[Synthesizer] LLM returned empty body for "$symbol"');
+      _eventController.add(SynthesizerLlmFailed(
+        iteration: iteration,
+        symbol: symbol,
+        reason: 'empty response',
+      ));
       return null;
     }
 

@@ -102,9 +102,12 @@ class AutoTuneResultCard extends ConsumerWidget {
     final round = running && (session?.rounds.isNotEmpty ?? false)
         ? lastRound + 1
         : lastRound;
+    // Round 0 is the baseline, not an LLM round — "ROUND 0 OF 5" reads
+    // as not-started, so name it. LLM rounds are genuinely 1..maxRounds.
+    final label = round == 0 ? 'BASELINE' : 'ROUND $round$ofMax';
     final title = running
-        ? 'ROUND $round$ofMax — SYNTHESIZING…'
-        : 'ROUND $round$ofMax — ${progress.success ? 'COMPLETE' : 'FAILED'}';
+        ? '$label — SYNTHESIZING…'
+        : '$label — ${progress.success ? 'COMPLETE' : 'FAILED'}';
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -146,7 +149,10 @@ class AutoTuneResultCard extends ConsumerWidget {
           ]),
           const SizedBox(height: 6),
           Text(
-            running
+            // During the in-round LLM fallback the iteration readout is
+            // frozen (emulation paused) — the status line is the only
+            // truthful signal, so surface it.
+            running && !progress.llmActive
                 ? 'iteration ${progress.iteration} · '
                     '${progress.hooksApplied} hooks · '
                     '${progress.currentSymbol.isEmpty ? '—' : progress.currentSymbol}'
@@ -430,6 +436,13 @@ class _RunningView extends ConsumerStatefulWidget {
 class _RunningViewState extends ConsumerState<_RunningView> {
   Timer? _ticker;
 
+  /// `47s` under a minute, `2m 07s` from there on.
+  static String _formatElapsed(Duration d) {
+    final secs = d.inSeconds.clamp(0, 359999);
+    if (secs < 60) return '${secs}s';
+    return '${secs ~/ 60}m ${(secs % 60).toString().padLeft(2, '0')}s';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -456,38 +469,68 @@ class _RunningViewState extends ConsumerState<_RunningView> {
         (remaining.inMilliseconds / widget.countdownWindow.inMilliseconds)
             .clamp(0.0, 1.0);
 
+    // While the on-demand LLM authors a hook, emulation is paused and
+    // the 30s observation window doesn't apply — show an indeterminate
+    // spinner with elapsed time instead of a countdown running to zero.
+    final ring = progress.llmActive
+        ? Stack(
+            alignment: Alignment.center,
+            children: [
+              const SizedBox(
+                width: 96,
+                height: 96,
+                child: CircularProgressIndicator(
+                  strokeWidth: 4,
+                  backgroundColor: AppTheme.border,
+                  valueColor: AlwaysStoppedAnimation(AppTheme.accent),
+                ),
+              ),
+              Text(
+                _formatElapsed(elapsed),
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          )
+        : Stack(
+            alignment: Alignment.center,
+            children: [
+              SizedBox(
+                width: 96,
+                height: 96,
+                child: CircularProgressIndicator(
+                  value: fraction,
+                  strokeWidth: 4,
+                  backgroundColor: AppTheme.border,
+                  valueColor: const AlwaysStoppedAnimation(AppTheme.accent),
+                ),
+              ),
+              Text(
+                '${remainingSecs}s',
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          );
+
     return _Centered(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(
-            width: 96,
-            height: 96,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                SizedBox(
-                  width: 96,
-                  height: 96,
-                  child: CircularProgressIndicator(
-                    value: fraction,
-                    strokeWidth: 4,
-                    backgroundColor: AppTheme.border,
-                    valueColor:
-                        const AlwaysStoppedAnimation(AppTheme.accent),
-                  ),
-                ),
-                Text(
-                  '${remainingSecs}s',
-                  style: const TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
+          SizedBox(width: 96, height: 96, child: ring),
+          if (progress.llmActive) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'LLM authoring hook — emulation paused',
+              style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
             ),
-          ),
+          ],
           const SizedBox(height: 20),
           Text(
             progress.status,

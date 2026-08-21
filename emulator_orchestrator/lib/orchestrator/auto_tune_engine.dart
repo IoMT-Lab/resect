@@ -504,10 +504,11 @@ class AutoTuneEngine {
       final preRoundOverlays = overlays.copy();
       overlays.apply(effective);
 
-      // Re-synthesize with the new overlays. Display round+1 — the user
-      // just applied round N's recs, so the run now starting is round
-      // N+1's input.
-      sink.phase(AutoTunePhase.synthesizing, round: round + 1);
+      // Re-synthesize with the new overlays. This synthesis IS round N —
+      // the same number its round report and snapshot will carry — so the
+      // phase event must use the same base or the panel and the result
+      // card disagree about which round just ran.
+      sink.phase(AutoTunePhase.synthesizing, round: round);
       final runResult = await runSynthesis(overlays, round);
       if (_cancelled) return _finish(AutoTuneStopReason.cancelled, round);
       if (runResult == null || runResult.manifest == null) {
@@ -768,7 +769,7 @@ class AutoTuneEngine {
     for (final rec in recs) {
       if (_cancelled) return null;
       sink.phase(AutoTunePhase.generatingHook,
-          round: round + 1, symbol: rec.symbol);
+          round: round, symbol: rec.symbol);
       final responseBuf = StringBuffer();
       try {
         await for (final ev in generator.generateEvents(

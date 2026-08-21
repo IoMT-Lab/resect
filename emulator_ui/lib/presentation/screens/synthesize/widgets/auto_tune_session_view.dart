@@ -74,8 +74,10 @@ class AutoTuneSessionView extends ConsumerWidget {
   }
 
   Widget _header(AutoTuneSessionState session) {
+    // rounds.last.round is the last COMPLETED round, not the one in
+    // flight — say "done" so it can't be misread as the current round.
     final status = session.live
-        ? 'running · round ${session.rounds.last.round}'
+        ? 'running · ${session.rounds.last.round == 0 ? 'baseline' : 'round ${session.rounds.last.round}'} done'
         : [
             if (session.stopReason != null) session.stopReason!,
             if (session.bestRound != null)

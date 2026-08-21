@@ -78,6 +78,26 @@ class SynthesizerLlmGenerating extends SynthesizerEvent {
   });
 }
 
+/// Emitted when the on-demand LLM fallback ends WITHOUT producing a
+/// hook (empty/failed generation or an error from the client). Pairs
+/// with [SynthesizerLlmGenerating] so the UI can leave its "LLM
+/// generating…" state instead of sticking there until the next
+/// iteration event.
+class SynthesizerLlmFailed extends SynthesizerEvent {
+  /// The symbol the LLM was asked to hook.
+  final String symbol;
+
+  /// Short human-readable reason (e.g. `empty response`, an exception
+  /// message).
+  final String reason;
+
+  SynthesizerLlmFailed({
+    required super.iteration,
+    required this.symbol,
+    required this.reason,
+  });
+}
+
 /// Emitted after the LLM call returns successfully and the resulting
 /// hook has been inserted as an artifact + binding. The synthesizer
 /// then re-tries iteration with the new candidate in hand.
