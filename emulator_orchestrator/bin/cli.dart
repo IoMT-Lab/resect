@@ -9,7 +9,7 @@ import 'package:emulator_orchestrator/data/models/call_graph.dart';
 import 'package:emulator_orchestrator/data/models/comms_assignment.dart';
 import 'package:emulator_orchestrator/data/models/emulator.dart';
 import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart'
-    show ManifestDecision, StopTiming;
+    show ManifestDecision, StopTiming, SynthesisTerminationReason;
 import 'package:emulator_orchestrator/data/models/synthesizer_result.dart';
 import 'package:emulator_orchestrator/data/repositories/emulator_repository.dart';
 import 'package:emulator_orchestrator/orchestrator/auto_tune_engine.dart';
@@ -363,8 +363,16 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
       stderr.writeln('SUCCESS: Firmware runs cleanly with '
           '${result.resolvedHooks.length} hooks applied');
     } else {
-      stderr.writeln('FAILED: Symbol "${result.failedSymbol}" '
-          'exhausted all hooks after ${result.totalIterations} iterations');
+      // Cap/cancel endings deliberately carry no failed symbol — say
+      // what actually happened instead of `Symbol "null" exhausted…`.
+      final msg = switch (result.terminationReason) {
+        SynthesisTerminationReason.maxIterations =>
+          'STOPPED: iteration cap (${result.totalIterations}) reached',
+        SynthesisTerminationReason.cancelled => 'CANCELLED',
+        _ => 'FAILED: Symbol "${result.failedSymbol}" '
+            'exhausted all hooks after ${result.totalIterations} iterations',
+      };
+      stderr.writeln(msg);
       exitCode = 1;
     }
     stderr.writeln('Duration: ${result.totalDuration.inSeconds}s');

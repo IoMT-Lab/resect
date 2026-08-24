@@ -82,7 +82,8 @@ class _LastRunCardState extends ConsumerState<LastRunCard> {
           _BigFidelity(
             success: result.success,
             fidelityPct: metrics?.overallFidelity,
-            failedSymbol: result.failedSymbol,
+            failureText: 'Last attempt: '
+                '${result.failureLabel.toLowerCase()}.',
           ),
           const SizedBox(height: 16),
           _RecommendationPanel(
@@ -249,11 +250,14 @@ class _BigFidelity extends StatelessWidget {
   const _BigFidelity({
     required this.success,
     required this.fidelityPct,
-    required this.failedSymbol,
+    required this.failureText,
   });
   final bool success;
   final double? fidelityPct;
-  final String? failedSymbol;
+
+  /// Failure sentence from [SynthesizerResult.failureLabel] — already
+  /// reason-aware (cap/cancel endings carry no failed symbol).
+  final String failureText;
 
   @override
   Widget build(BuildContext context) {
@@ -284,15 +288,11 @@ class _BigFidelity extends StatelessWidget {
         const SizedBox(width: 14),
         Expanded(
           child: Text(
-            fidelityPct != null
-                ? (success
+            success
+                ? (fidelityPct != null
                     ? 'Firmware ran clean within the observation window.'
-                    : 'Last attempt failed at '
-                        '`${failedSymbol ?? '?'}`.')
-                : (success
-                    ? 'Last attempt completed.'
-                    : 'Last attempt failed at '
-                        '`${failedSymbol ?? '?'}`.'),
+                    : 'Last attempt completed.')
+                : failureText,
             style: const TextStyle(
               color: AppTheme.textMuted,
               fontSize: 12,

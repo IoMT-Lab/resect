@@ -83,7 +83,7 @@ class AutosaveController {
         hooksApplied: result.resolvedHooks.length,
         status: result.success
             ? 'Complete — ${result.resolvedHooks.length} hooks'
-            : 'Failed at ${result.failedSymbol}',
+            : result.failureLabel,
       );
     } else {
       ref.read(synthesisProgressProvider.notifier).state = null;

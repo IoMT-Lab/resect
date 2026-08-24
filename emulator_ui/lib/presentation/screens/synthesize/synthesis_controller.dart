@@ -368,7 +368,7 @@ class SynthesisController {
           success: result.success,
           status: result.success
               ? 'Complete — ${result.resolvedHooks.length} hooks'
-              : 'Failed at ${result.failedSymbol}',
+              : result.failureLabel,
         );
         if (persistResolvedHooks && result.resolvedHookCode.isNotEmpty) {
           ref.read(currentEmulatorProvider.notifier).state = emulator.copyWith(

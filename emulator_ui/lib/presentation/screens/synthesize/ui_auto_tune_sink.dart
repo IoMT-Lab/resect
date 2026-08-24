@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:emulator_orchestrator/data/models/hook_binding.dart';
+import 'package:emulator_orchestrator/data/models/synthesis_manifest.dart'
+    show SynthesisTerminationReason;
 import 'package:emulator_orchestrator/orchestrator/auto_tune_engine.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -192,7 +194,11 @@ class UiAutoTuneSink implements AutoTuneSink {
         ? 'success'
         : result.failedSymbol != null
             ? 'failed @${result.failedSymbol}'
-            : 'no-converge';
+            : switch (result.terminationReason) {
+                SynthesisTerminationReason.maxIterations => 'cap reached',
+                SynthesisTerminationReason.cancelled => 'cancelled',
+                _ => 'no-converge',
+              };
     onRoundLine(AutoTuneRoundLine(
       round: report.round,
       outcome: outcome,

@@ -109,6 +109,23 @@ void main() {
     expect(find.text('BASELINE — SYNTHESIZING…'), findsOneWidget);
   });
 
+  testWidgets('cap-ended failure renders the reason, never "null"',
+      (tester) async {
+    await pump(
+      tester,
+      progress: SynthesisProgress(
+        countdownStart: DateTime(2026),
+        complete: true,
+        success: false,
+        status: 'Stopped — iteration cap reached (500 iterations)',
+      ),
+      notifier: session(rounds: 2, maxRounds: 5),
+    );
+    expect(find.text('Stopped — iteration cap reached (500 iterations)'),
+        findsOneWidget);
+    expect(find.textContaining('null'), findsNothing);
+  });
+
   testWidgets('llmActive replaces the frozen iteration line with the status',
       (tester) async {
     await pump(

@@ -120,6 +120,17 @@ class SynthesizerResult {
           : SynthesisManifest.fromJson(json['manifest'] as Map<String, dynamic>),
     );
 
+  /// Human-readable label for a failed run. The workflow deliberately
+  /// leaves [failedSymbol] null on control-flow endings (iteration cap,
+  /// cancellation) — those are not faults at a symbol, so render the
+  /// reason, never the string "null".
+  String get failureLabel => switch (terminationReason) {
+        SynthesisTerminationReason.maxIterations =>
+          'Stopped — iteration cap reached ($totalIterations iterations)',
+        SynthesisTerminationReason.cancelled => 'Cancelled',
+        _ => failedSymbol != null ? 'Failed at $failedSymbol' : 'Failed',
+      };
+
   Map<String, dynamic> toJson() => {
       'success': success,
       'totalIterations': totalIterations,
