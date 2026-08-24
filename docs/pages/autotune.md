@@ -125,7 +125,8 @@ Session knobs live in `AutoTuneConfig`
 5 max rounds, 10 recommendations per round, stagnant-round limit 2,
 3-round history window, snapshot cap 100, cold-start rounds. The
 synthesizer's per-round iteration cap is separate and comes from the caller
-(500 from the CLI).
+(500 on both surfaces; the LLM's `adjust_iteration_cap` recommendation can
+change it mid-session).
 
 One knob deserves its own sentence: **warm start** (`--warm-start` on the
 CLI, a switch in the UI's config dialog; default off). Cold-start rounds —

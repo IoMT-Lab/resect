@@ -140,7 +140,7 @@ class AutoTuneEngine {
     AutoTuneConfig config = const AutoTuneConfig(),
     Map<CommsClass, CommsProtocolStatus> commsConfigs = const {},
     SynthesizerResult? seedBaseline,
-    int iterationCap = 10,
+    int iterationCap = 500,
   }) async {
     _cancelled = false;
     _cancelRequested = Completer<void>();
@@ -999,7 +999,8 @@ class AutoTuneOverlays {
     required this.iterationCap,
   });
 
-  factory AutoTuneOverlays.fromEmulator(Emulator e, {int iterationCap = 10}) =>
+  factory AutoTuneOverlays.fromEmulator(Emulator e,
+          {int iterationCap = 500}) =>
       AutoTuneOverlays(
         hookOverrides: Map<String, int>.from(e.hookOverrides),
         hookOverrideScopes: Map<String, String>.from(e.hookOverrideScopes),
