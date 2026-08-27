@@ -20,9 +20,9 @@ compose stack, or a portable build you start in server mode.
 The quickest way to run any of it:
 
 ```bash
-./scripts/install.sh    # once: pull the LLM models
-./scripts/run_cli.sh    # containerized CLI + Renode + Ollama
-./scripts/run_gui.sh    # containerized GUI on your own display (or run_vnc.sh)
+just install # once: pull the LLM models
+just run_cli    # containerized CLI + Renode + Ollama
+just run_gui    # containerized GUI on your own display 
 ```
 
 See [Docker](#docker) below.
@@ -116,19 +116,8 @@ resect/                              ← workspace root
 ├── pubspec_overrides.yaml           ← (optional, gitignored) routes an
 │                                       engine package to a local checkout
 ├── compose.yml                      ← the container stack (init / normal profiles)
-├── .env                             ← compose defaults (display sockets, env file)
 ├── docker/                          ← Dockerfile, entrypoint, env files, config
-├── scripts/                         ← build.sh, clean.sh, install.sh,
-│                                       run_cli.sh, run_gui.sh, run_vnc.sh,
-│                                       stop.sh, uninstall.sh
 ├── workdir/                         ← bind-mounted into containers as /workdir
-├── install.sh                       ← one-time host setup
-├── run.sh                           ← launches the Flutter app on the host
-├── resect.config                    ← paths/ports/prefs/module flags
-│                                       (gitignored; managed by Tools →
-│                                       System Configuration or install.sh)
-├── emulation_engine/                ← optional host-side Renode portables
-│                                       (unused by the container path)
 │
 ├── emulator_orchestrator/           ← pure Dart package (no Flutter)
 │   ├── bin/
@@ -555,23 +544,11 @@ preference lives in the separate Preferences dialog.
 
 ## Requirements
 
-**Container path:** Docker with the Compose plugin. Nothing else — Renode,
-Ollama, the models, objdump, and Resect all come from images.
-
-**Host path:**
-
-| Dependency | Purpose |
-|---|---|
-| Flutter SDK (Dart >= 3.9) | GUI + Dart toolchain |
-| clang, cmake, ninja-build | Flutter Linux desktop build |
-| libgtk-3-dev, liblzma-dev, pkg-config | GTK runtime + build glue |
-| binutils-arm-none-eabi | `arm-none-eabi-objdump` for ARM call graphs |
-| A reachable Renode **server** (patched build) | Emulation. Resect connects to `RENODE_HOST:RENODE_PORT`; the patched build is required for the hook scope argument |
-| **Ollama (optional)** | `MODULE_LLM_HOOKGEN`. Any reachable daemon at `LLM_OLLAMA_HOST` counts (no local install required); pull at least one inference model and `nomic-embed-text` |
-| **Ghidra + Java 21+ (optional)** | `MODULE_GHIDRA`. Headless analysis for signatures + decompilation — without it the hook classifier has no bodies to read |
-
-Optional: VirtualBox + Vagrant for the CI/CD test harness; opt-in via
-`./install.sh --with-vagrant-test`.
+**Container path:** 
+- Docker 
+- Docker Compose
+- just (https://just.systems/man/en/)
+- Nothing else — Renode, Ollama, the models, objdump, and Resect all come from images.
 
 ## Docker <a id="docker"></a>
 
@@ -580,18 +557,18 @@ the `resect` container (which carries both the compiled CLI and the Flutter
 app; the entrypoint's `cli` / `gui` / `vnc` argument picks one) with a Renode
 server and a healthchecked Ollama. The one-shot model pull (`gemma4:e4b` +
 `nomic-embed-text`) lives in the separate `init` profile — run it once via
-`install.sh` or the LLM features have no models. App state persists in the
+`just install` or the LLM features have no models. App state persists in the
 `resect-state` volume.
 
 ```bash
-./scripts/install.sh     # FIRST RUN: creates ./workdir, pulls the LLM models
-./scripts/build.sh       # build the resect image locally (else it pulls)
-./scripts/run_cli.sh     # interactive CLI shell in /workdir
-./scripts/run_gui.sh     # GUI on your own display (Wayland/X11 passthrough)
-./scripts/run_vnc.sh     # GUI on a virtual display; VNC client → localhost:5900
-./scripts/stop.sh        # stop both profiles, keep volumes
-./scripts/clean.sh       # WIPES the resect-state volume contents (app data)
-./scripts/uninstall.sh   # down -v — DESTROYS the state + model volumes
+just install     # FIRST RUN: creates ./workdir, pulls the LLM models
+just build       # build the resect image locally (else it pulls)
+just run_cli     # interactive CLI shell in /workdir
+just run_gui     # GUI on your own display (Wayland/X11 passthrough)
+just run_vnc     # GUI on a virtual display; VNC client → localhost:5900
+just stop        # stop both profiles, keep volumes
+just clean       # WIPES the resect-state volume contents (app data)
+just uninstall   # down -v — DESTROYS the state + model volumes
 ```
 
 The run scripts pass `HOST_UID`/`HOST_GID` through, so files written into
@@ -610,76 +587,17 @@ git clone git@github.com:IoMT-Lab/resect.git
 cd resect
 
 # Containers (no host toolchain needed):
-./scripts/install.sh    # once — model pull
-./scripts/run_cli.sh
+just install    # once — model pull
+just run_cli
 
-# Or a native development install:
-./install.sh                  # or: ./install.sh --with-vagrant-test
-```
-
-`install.sh` provisions system packages, ensures Flutter is on PATH (or
-clones a stable SDK to `~/Development/flutter`), resolves the Dart workspace
-against the hosted engine packages, and writes `resect.config` with detected
-paths. It does **not** provide Renode, Ollama, or Ghidra: point
-`RENODE_HOST`/`RENODE_PORT` at a Renode server (the compose stack has one),
-and install the other two from Tools → System Configuration once the GUI is
-up.
-
-### Manual
-
-```bash
-# 1. System packages
-sudo apt-get update
-sudo apt-get install -y \
-  clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
-  binutils-arm-none-eabi git curl
-
-# 2. Flutter SDK (git install — required for Linux desktop)
-git clone https://github.com/flutter/flutter.git -b stable ~/Development/flutter
-echo 'export PATH="$HOME/Development/flutter/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
-flutter precache
-flutter config --enable-linux-desktop
-
-# 3. A Renode server to connect to. Either use the compose stack's
-#    `renode` service, or start a patched portable yourself:
-#      renode -p --disable-gui --server-mode --server-mode-port 5000
-#    then set RENODE_HOST / RENODE_PORT in resect.config. (RENODE_BIN /
-#    RENODE_PORTABLE are only used by the hook-quality harness and the
-#    Vagrant export, which launch Renode themselves.)
-
-# 5. (Optional) Ollama for MODULE_LLM_HOOKGEN
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull gemma4:e4b
-ollama pull nomic-embed-text
-
-# 6. (Optional) Ghidra for MODULE_GHIDRA — install via Tools →
-#    System Configuration once the GUI is up.
-
-# 7. Dart workspace
-cd ..
-dart pub get
-```
-
-Verify:
-
-```bash
-flutter doctor -v
-dart analyze emulator_orchestrator
-```
 
 ## Run
 
 ```bash
-./run.sh                # host: Drift codegen if needed, then flutter run -d linux
-./scripts/run_gui.sh    # container: same app, on your own display
-./scripts/run_vnc.sh    # container: same app, over VNC on localhost:5900
+just run_cli            # container: cli version of the app
+just run_gui            # container: same app, on your own display
+just run_cli            # container: same app, over VNC on localhost:5900
 ```
-
-`run.sh` runs Drift codegen (`build_runner build`) if the generated files
-are missing, runs the embedded-modules drift safeguard when a local package
-override is active, then launches `flutter run -d linux`. No Python server is
-involved. Exit Flutter normally with `q`.
 
 ## CLI
 
@@ -687,7 +605,6 @@ Headless commands for scripting:
 
 ```bash
 resect-cli --help                             # in the container
-dart run emulator_orchestrator:cli --help     # on the host
 ```
 
 Available commands:
