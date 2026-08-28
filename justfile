@@ -65,7 +65,6 @@ uninstall:
 run_cli: create_workdir print_gpu_status
     #!/bin/bash
     set -euxo pipefail
-    export INTERNAL_ENV_FILE={{DOCKER_DIR}}/non_gui.env
     {{COMPOSE}} {{RUN_PROFILE}} run --rm resect cli
 
 [group('Run')]
@@ -82,7 +81,6 @@ run_gui: create_workdir print_gpu_status
 run_vnc: create_workdir print_gpu_status
     #!/bin/bash
     set -euxo pipefail
-    export INTERNAL_ENV_FILE={{DOCKER_DIR}}/non_gui.env
     {{COMPOSE}} {{RUN_PROFILE}} run --rm resect vnc
 
 #===============================================================================
