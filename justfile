@@ -5,11 +5,13 @@ export HOST_GID := `id -g`
 export WAYLAND_DISPLAY := env('WAYLAND_DISPLAY', 'wayland-0')
 export XDG_RUNTIME_DIR := env('XDG_RUNTIME_DIR', f'/run/user/{{HOST_UID}}')
 
-export ALLOW_BUILD := '0'
+export ALLOW_BUILD := env('ALLOW_RESECT_BUILD', '0')
+GPU := env('RESECT_GPU', '0')
+export OLLAMA_COMPOSE_FILE := if GPU == '1' {'compose.ollama.gpu.yml'} else {'compose.ollama.cpu.yml'}
 
 PROJECT_DIR := `pwd`
-DOCKER_DIR := '`pwd`/docker'
-COMPOSE := 'docker compose'
+DOCKER_DIR := f'{{PROJECT_DIR}}/docker'
+COMPOSE := f'docker compose --project-directory {{PROJECT_DIR}} --file {{DOCKER_DIR}}/compose.yml'
 
 INSTALL_PROFILE := '--profile init'
 RUN_PROFILE := '--profile normal'
@@ -60,7 +62,7 @@ uninstall:
 
 [group('Run')]
 [doc('Run the CLI version of Resect.')]
-run_cli: create_workdir
+run_cli: create_workdir print_gpu_status
     #!/bin/bash
     set -euxo pipefail
     export INTERNAL_ENV_FILE={{DOCKER_DIR}}/non_gui.env
@@ -69,7 +71,7 @@ run_cli: create_workdir
 [group('Run')]
 [doc('Run the GUI version of Resect locally.')]
 [no-exit-message]
-run_gui: create_workdir
+run_gui: create_workdir print_gpu_status
     #!/bin/bash
     set -euxo pipefail
     export INTERNAL_ENV_FILE={{DOCKER_DIR}}/gui.env
@@ -77,7 +79,7 @@ run_gui: create_workdir
 
 [group('Run')]
 [doc('Run the GUI version of Resect in a VNC session.')]
-run_vnc: create_workdir
+run_vnc: create_workdir print_gpu_status
     #!/bin/bash
     set -euxo pipefail
     export INTERNAL_ENV_FILE={{DOCKER_DIR}}/non_gui.env
@@ -100,3 +102,10 @@ build:
     else
         echo "Error: Building is not allowed. Set ALLOW_BUILD to '1' to enable."
     fi
+
+[private]
+@print_gpu_status:
+    echo "====================================="
+    echo "GPU support is {{if GPU == '1' {'enabled'} else {'disabled'}}}."
+    echo "====================================="
+    echo ""

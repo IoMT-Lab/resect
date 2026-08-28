@@ -1,0 +1,42 @@
+include:
+  - docker/compose.ollama.yml
+  - docker/compose.renode.yml
+
+services:
+  resect:
+    image: nexus.medmakers.io/docker/resect:latest
+    restart: no
+    profiles: [normal]
+    init: true
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    working_dir: /workdir
+    volumes:
+      - resect-state:/static_home
+      - ./workdir:/workdir
+      # Mount native Wayland socket directly to matching path inside container
+      - ${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}:${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}
+
+      # Mount X11 socket for XWayland fallback
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+    env_file:
+      - ${INTERNAL_ENV_FILE:-docker/default.env}
+
+    depends_on:
+      renode:
+        condition: service_started
+      ollama:
+        condition: service_healthy
+    ports: [5900:5900] # VNC server for GUI
+
+  cache-cleaner:
+    image: busybox:latest
+    restart: no
+    profiles: [_]
+    volumes: [resect-state:/static_home]
+    entrypoint: /bin/sh
+    command: -c "rm -rf /static_home/*"
+
+volumes:
+  resect-state: # Persistent state for the resect container

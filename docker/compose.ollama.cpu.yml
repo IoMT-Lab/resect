@@ -1,0 +1,5 @@
+services:
+  ollama:
+    mem_reservation: 10g
+    mem_limit: 12g
+    shm_size: 2g

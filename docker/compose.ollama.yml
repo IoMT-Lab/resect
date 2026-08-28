@@ -1,10 +1,3 @@
-# Resect development stack.
-#
-#   renode       - Renode emulation environment
-#   ollama       — LLM inference + embeddings server (HTTP)
-#   ollama-init  — one-shot: pulls the shipped models into the persistent volume
-#
-
 services:
   ollama:
     image: ollama/ollama:latest
@@ -25,6 +18,9 @@ services:
       retries: 5
       start_period: 90s
       start_interval: 3s
+    extends:
+      file: ${OLLAMA_COMPOSE_FILE:-compose.ollama.cpu.yml}
+      service: ollama
 
   ollama-init:
     # Pulls the shipped inference + embedding models into the ollama-models
@@ -49,49 +45,5 @@ services:
         ollama pull nomic-embed-text
         echo "Model pull complete."
 
-  renode:
-    image: nexus.medmakers.io/docker/renode:latest
-    restart: unless-stopped
-    profiles: [normal]
-    environment:
-      RENODE_COMMS_HOST: "resect"
-
-  resect:
-    image: nexus.medmakers.io/docker/resect:latest
-    restart: no
-    profiles: [normal]
-    init: true
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-    working_dir: /workdir
-    volumes:
-      - resect-state:/static_home
-      - ./workdir:/workdir
-      # Mount native Wayland socket directly to matching path inside container
-      - ${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}:${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}
-
-      # Mount X11 socket for XWayland fallback
-      - /tmp/.X11-unix:/tmp/.X11-unix:ro
-    env_file:
-      - ${INTERNAL_ENV_FILE}
-
-    depends_on:
-      renode:
-        condition: service_started
-      ollama:
-        condition: service_healthy
-    ports: [5900:5900] # VNC server for GUI
-
-  cache-cleaner:
-    image: busybox:latest
-    restart: no
-    profiles: [_]
-    volumes: [resect-state:/static_home]
-    entrypoint: /bin/sh
-    command: -c "rm -rf /static_home/*"
-
 volumes:
   ollama-models: # LLM model store (large; re-pullable)
-  resect-state: # Persistent state for the resect container
-

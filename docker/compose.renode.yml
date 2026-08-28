@@ -1,0 +1,7 @@
+services:
+  renode:
+    image: nexus.medmakers.io/docker/renode:latest
+    restart: unless-stopped
+    profiles: [normal]
+    environment:
+      RENODE_COMMS_HOST: "resect"
