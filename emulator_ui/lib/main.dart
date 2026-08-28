@@ -1,3 +1,6 @@
+import 'dart:io';
+import 'dart:ui';
+
 import 'package:emulator_orchestrator/core/app_paths.dart';
 import 'package:emulator_orchestrator/core/constants.dart';
 import 'package:flutter/material.dart';
@@ -12,6 +15,13 @@ import 'presentation/shell/resect_shell.dart';
 /// This initializes the app, connects to the Python server,
 /// and starts the UI.
 void main() async {
+  // Async errors with no other handler (including anything thrown
+  // during window teardown) get logged instead of vanishing.
+  PlatformDispatcher.instance.onError = (error, stack) {
+    stderr.writeln('[resect] unhandled error: $error\n$stack');
+    return true;
+  };
+
   // Ensure Flutter is initialized
   WidgetsFlutterBinding.ensureInitialized();
 

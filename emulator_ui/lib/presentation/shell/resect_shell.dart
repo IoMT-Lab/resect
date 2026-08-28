@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../../core/app_shutdown.dart';
 import '../../core/theme.dart';
 import '../../providers/app_providers.dart';
 import '../../providers/config_providers.dart';
@@ -63,6 +64,10 @@ class _ResectShellState extends ConsumerState<ResectShell> with WindowListener {
 
   @override
   Future<void> onWindowClose() async {
+    // destroy() re-fires GTK's delete-event, which lands here a second
+    // time while the window is being torn down — that pass must not
+    // re-open the dialog or call destroy() again.
+    if (appShutdownInProgress) return;
     final emulator = ref.read(currentEmulatorProvider);
     final isDirty = ref.read(emulatorDirtyProvider);
     if (emulator != null && isDirty && mounted) {
@@ -76,7 +81,7 @@ class _ResectShellState extends ConsumerState<ResectShell> with WindowListener {
       // Save handling will be wired through the Library tab in a follow-up
       // commit; for now both Save and Discard proceed to close.
     }
-    await windowManager.destroy();
+    await shutdownAndDestroy(ref);
   }
 
   @override

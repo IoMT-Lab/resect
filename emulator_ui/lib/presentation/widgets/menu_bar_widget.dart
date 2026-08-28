@@ -1,8 +1,7 @@
 import 'package:emulator_orchestrator/core/constants.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:window_manager/window_manager.dart';
-
+import '../../core/app_shutdown.dart';
 import '../../core/theme.dart';
 import '../../providers/app_providers.dart';
 import '../dialogs/hook_database_dialog.dart';
@@ -106,6 +105,9 @@ class MenuBarWidget extends ConsumerWidget {
 
   /// Exit, prompting about unsaved changes first.
   Future<void> _exit(BuildContext context, WidgetRef ref) async {
+    // destroy() re-fires the close event during window teardown; once a
+    // shutdown is underway, further exit requests must be no-ops.
+    if (appShutdownInProgress) return;
     final emulator = ref.read(currentEmulatorProvider);
     final isDirty = ref.read(emulatorDirtyProvider);
     if (emulator != null && isDirty) {
@@ -120,7 +122,7 @@ class MenuBarWidget extends ConsumerWidget {
         if (!ok) return;
       }
     }
-    await windowManager.destroy();
+    await shutdownAndDestroy(ref);
   }
 
   void _showAbout(BuildContext context) {
