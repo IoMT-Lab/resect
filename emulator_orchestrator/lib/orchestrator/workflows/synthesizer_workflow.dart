@@ -91,6 +91,7 @@ class SynthesizerWorkflow {
     required String elfPath,
     required String elfHash,
     required String baseImagePath,
+    String? vectorTableOffset,
     String? startFrom,
     List<String>? endAt,
     int maxIterations = 500,
@@ -387,6 +388,7 @@ class SynthesizerWorkflow {
         }
 
         final pauseEvent = await _startAndWaitForPause(
+          vectorTableOffset: vectorTableOffset,
           startFrom: startFrom,
           endAt: endAt,
           pauseOnUnhandled: true,
@@ -728,7 +730,7 @@ class SynthesizerWorkflow {
   /// prior reset/load cycles. Only accepts pauses after the engine confirms
   /// execution actually began.
   Future<PausedEvent?> _startAndWaitForPause({
-    required bool pauseOnUnhandled, String? startFrom,
+    required bool pauseOnUnhandled, String? vectorTableOffset, String? startFrom,
     List<String>? endAt,
   }) async {
     final completer = Completer<PausedEvent?>();
@@ -759,6 +761,7 @@ class SynthesizerWorkflow {
       await _renodeOp(
         'start',
         () => emulationController.start(
+          vectorTableOffset: vectorTableOffset,
           startFrom: startFrom,
           endAt: endAt,
           pauseOnUnhandled: pauseOnUnhandled,

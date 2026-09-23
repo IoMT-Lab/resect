@@ -166,13 +166,16 @@ class SynthesisConfigPanel extends ConsumerWidget {
   void _updateConfig(
     WidgetRef ref,
     Emulator emulator, {
+    String? vectorTableOffset,
     String? startFrom,
     List<String>? endAt,
     String? memoryMapPath,
   }) {
+    final clearVectorTableOffset = vectorTableOffset == '';
     final clearStart = startFrom == '';
     final clearMap = memoryMapPath == '';
     final config = EmulationConfig(
+      vectorTableOffset: clearVectorTableOffset ? null : (vectorTableOffset ?? emulator.emulationConfig.vectorTableOffset),
       startFrom:
           clearStart ? null : (startFrom ?? emulator.emulationConfig.startFrom),
       endAt: endAt ?? emulator.emulationConfig.endAt,

@@ -118,6 +118,7 @@ class DartEmulationController implements EmulationController {
 
   @override
   Future<void> start({
+    String? vectorTableOffset,
     String? startFrom,
     List<String>? endAt,
     bool pauseOnUnhandled = true,
@@ -125,6 +126,10 @@ class DartEmulationController implements EmulationController {
     await _applyHooks();
     _pendingPause = false;
     _lastUnhandledSymbol = null; // fresh run — detect new unhandled accesses
+    if (vectorTableOffset != null) {
+      await _client.setVectorTableOffsetSymbol(vectorTableOffset);
+    }
+
     await _client.run(
       startFrom: startFrom,
       endAt: endAt,

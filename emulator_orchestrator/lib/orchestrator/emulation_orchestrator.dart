@@ -108,6 +108,7 @@ class EmulationOrchestrator {
     required String elfPath,
     String? baseImagePath,
     String? startFrom,
+    String? vectorTableOffset,
     List<String>? endAt,
     bool pauseOnUnhandled = true,
     Map<String, int> hookOverrides = const {},
@@ -121,6 +122,7 @@ class EmulationOrchestrator {
     await emulationWorkflow.start(
       elfPath: elfPath,
       baseImagePath: baseImagePath,
+      vectorTableOffset: vectorTableOffset,
       startFrom: startFrom,
       endAt: endAt,
       pauseOnUnhandled: pauseOnUnhandled,
@@ -138,6 +140,7 @@ class EmulationOrchestrator {
   Future<void> restartEmulation({
     required String elfPath,
     String? baseImagePath,
+    String? vectorTableOffset,
     String? startFrom,
     List<String>? endAt,
     bool pauseOnUnhandled = true,
@@ -152,6 +155,7 @@ class EmulationOrchestrator {
     await emulationWorkflow.restart(
       elfPath: elfPath,
       baseImagePath: baseImagePath,
+      vectorTableOffset: vectorTableOffset,
       startFrom: startFrom,
       endAt: endAt,
       pauseOnUnhandled: pauseOnUnhandled,
@@ -219,6 +223,7 @@ class EmulationOrchestrator {
     required String elfPath,
     required String baseImagePath,
     required String elfHash,
+    String? vectorTableOffset,
     String? startFrom,
     List<String>? endAt,
     int maxIterations = 500,
@@ -237,6 +242,7 @@ class EmulationOrchestrator {
       elfPath: elfPath,
       elfHash: elfHash,
       baseImagePath: baseImagePath,
+    vectorTableOffset: vectorTableOffset,
       startFrom: startFrom,
       endAt: endAt,
       maxIterations: maxIterations,

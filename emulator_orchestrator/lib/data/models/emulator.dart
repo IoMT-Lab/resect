@@ -437,6 +437,8 @@ class DocumentEntry {
 
 /// Emulation configuration settings
 class EmulationConfig {
+  final String? vectorTableOffset;
+
   /// Optional symbol/address to start execution from
   final String? startFrom;
 
@@ -450,6 +452,7 @@ class EmulationConfig {
   final String? memoryMapPath;
 
   const EmulationConfig({
+    this.vectorTableOffset,
     this.startFrom,
     this.endAt = const [],
     this.pauseOnUnhandled = true,
@@ -459,6 +462,7 @@ class EmulationConfig {
   factory EmulationConfig.defaults() => const EmulationConfig();
 
   factory EmulationConfig.fromJson(Map<String, dynamic> json) => EmulationConfig(
+    vectorTableOffset: json['vector_table_offset'] as String?,
       startFrom: json['start_from'] as String?,
       endAt: (json['end_at'] as List<dynamic>?)
               ?.map((e) => e as String)
@@ -469,6 +473,7 @@ class EmulationConfig {
     );
 
   Map<String, dynamic> toJson() => {
+    'vector_table_offset': vectorTableOffset,
       'start_from': startFrom,
       'end_at': endAt,
       'pause_on_unhandled': pauseOnUnhandled,
@@ -476,11 +481,13 @@ class EmulationConfig {
     };
 
   EmulationConfig copyWith({
+    String? vectorTableOffset,
     String? startFrom,
     List<String>? endAt,
     bool? pauseOnUnhandled,
     String? memoryMapPath,
   }) => EmulationConfig(
+        vectorTableOffset: vectorTableOffset ?? this.vectorTableOffset,
       startFrom: startFrom ?? this.startFrom,
       endAt: endAt ?? this.endAt,
       pauseOnUnhandled: pauseOnUnhandled ?? this.pauseOnUnhandled,

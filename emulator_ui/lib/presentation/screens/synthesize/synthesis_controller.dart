@@ -104,6 +104,7 @@ class SynthesisController {
       await orchestrator.restartEmulation(
         elfPath: elfPath,
         baseImagePath: baseImagePath,
+        vectorTableOffset: config.vectorTableOffset,
         startFrom: config.startFrom,
         pauseOnUnhandled: true,
         hookOverrides: hookOverrides,
@@ -152,6 +153,7 @@ class SynthesisController {
         elfPath: elfPath,
         baseImagePath: baseImagePath,
         elfHash: elfHash,
+        vectorTableOffset: config.vectorTableOffset,
         startFrom: config.startFrom,
         endAt: config.endAt,
         hookPreferences: hookPreferences,
@@ -206,6 +208,7 @@ class SynthesisController {
     await orchestrator.restartEmulation(
       elfPath: elfPath,
       baseImagePath: baseImagePath,
+      vectorTableOffset: config.vectorTableOffset,
       startFrom: config.startFrom,
       endAt: config.endAt,
       pauseOnUnhandled: config.pauseOnUnhandled,

@@ -59,6 +59,7 @@ class EmulationWorkflow {
   Future<void> start({
     required String elfPath,
     String? baseImagePath,
+    String? vectorTableOffset,
     String? startFrom,
     List<String>? endAt,
     bool pauseOnUnhandled = true,
@@ -85,6 +86,7 @@ class EmulationWorkflow {
       await _setupTraceChannels();
       await _setupLifecycleListeners();
       await _startEmulation(
+        vectorTableOffset: vectorTableOffset,
         startFrom: startFrom,
         endAt: endAt,
         pauseOnUnhandled: pauseOnUnhandled,
@@ -109,6 +111,7 @@ class EmulationWorkflow {
   Future<void> restart({
     required String elfPath,
     String? baseImagePath,
+    String? vectorTableOffset,
     String? startFrom,
     List<String>? endAt,
     bool pauseOnUnhandled = true,
@@ -120,6 +123,7 @@ class EmulationWorkflow {
       return start(
         elfPath: elfPath,
         baseImagePath: baseImagePath,
+        vectorTableOffset: vectorTableOffset,
         startFrom: startFrom,
         endAt: endAt,
         pauseOnUnhandled: pauseOnUnhandled,
@@ -154,6 +158,7 @@ class EmulationWorkflow {
 
       await _setupLifecycleListeners();
       await _startEmulation(
+        vectorTableOffset: vectorTableOffset,
         startFrom: startFrom,
         endAt: endAt,
         pauseOnUnhandled: pauseOnUnhandled,
@@ -350,11 +355,12 @@ class EmulationWorkflow {
   }
 
   Future<void> _startEmulation({
-    required bool pauseOnUnhandled, String? startFrom,
+    required bool pauseOnUnhandled, String? vectorTableOffset, String? startFrom,
     List<String>? endAt,
   }) async {
     print('Starting emulation...');
     await emulationController.start(
+      vectorTableOffset: vectorTableOffset,
       startFrom: startFrom,
       endAt: endAt,
       pauseOnUnhandled: pauseOnUnhandled,

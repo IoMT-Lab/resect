@@ -26,6 +26,7 @@ abstract class EmulationController {
   /// Begin execution. Returns once the engine acknowledges the start command;
   /// the [onStarted] stream fires when execution actually begins.
   Future<void> start({
+    String? vectorTableOffset,
     String? startFrom,
     List<String>? endAt,
     bool pauseOnUnhandled = true,
