@@ -83,6 +83,12 @@ run_vnc: create_workdir print_gpu_status
     set -euxo pipefail
     {{COMPOSE}} {{RUN_PROFILE}} run --rm resect vnc
 
+[group('Run')]
+[doc('Print the logs for the Renode container.')]
+logs: create_workdir print_gpu_status
+    #!/bin/bash
+    set -euxo pipefail
+    {{COMPOSE}} {{RUN_PROFILE}} logs renode
 #===============================================================================
 # Private recipes
 #===============================================================================
