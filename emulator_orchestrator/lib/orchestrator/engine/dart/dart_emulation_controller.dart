@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:renode/renode.dart';
@@ -111,9 +112,9 @@ class DartEmulationController implements EmulationController {
 
   @override
   Future<void> loadMemoryMap(String memoryMapPath) async {
-    // The legacy Python backend never implemented this; the memory-map format
-    // is owned by the forthcoming Memory Map Initialization module. No-op for
-    // now to preserve current behavior.
+    final snapshotData = await File(memoryMapPath).readAsString();
+    final snapshot = Snapshot.fromJson(jsonDecode(snapshotData));
+    await _client.restore(snapshot);
   }
 
   @override
