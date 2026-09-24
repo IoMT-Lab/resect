@@ -93,6 +93,29 @@ logs: create_workdir print_gpu_status
     #!/bin/bash
     set -euxo pipefail
     {{COMPOSE}} {{RUN_PROFILE}} logs renode
+
+#===============================================================================
+# Distribution Recipes
+#===============================================================================
+
+[group('Distribution')]
+[doc('Export all Docker images making up the compose setup')]
+export-images dest:
+    #!/bin/bash
+    set -euo pipefail
+    {{COMPOSE}} {{ALL_PROFILES}} pull --policy missing --ignore-pull-failures
+    IMAGES=$({{COMPOSE}} {{ALL_PROFILES}} config --images | sort -u | xargs)
+    echo "Exporting images to {{dest}}"
+    docker save $IMAGES | gzip > "{{dest}}"
+    
+[group('Distribution')]
+[doc('Import Docker images from a gzipped archive.')]
+import-images src:
+    #!/bin/bash
+    set -euo pipefail
+    echo "Importing images from {{src}}"
+    gunzip -c "{{src}}" | docker load
+
 #===============================================================================
 # Private recipes
 #===============================================================================
