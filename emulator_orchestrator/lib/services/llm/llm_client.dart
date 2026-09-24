@@ -232,6 +232,57 @@ class LlmClient {
   /// Embed [text] with the configured [embeddingModel]. Used both for
   /// document chunks (during RAG index build) and for query text (at
   /// retrieve-time). Returns 768-dim float32 for nomic-embed-text.
+  /// Whether the newer batch `/api/embed` endpoint is available.
+  /// Probed once on first [embedBatch] call, then cached.
+  bool? _batchSupported;
+
+  /// Embed a batch of texts in one request via Ollama's newer
+  /// `POST /api/embed` (array `input`). Falls back to sequential
+  /// [embed] on a 404 (older Ollama) — probed once. Bulk ingestion
+  /// (thousands of SDK chunks) needs this; single-chunk callers should
+  /// keep using [embed].
+  Future<List<Float32List>> embedBatch(List<String> texts) async {
+    if (texts.isEmpty) return const [];
+    if (_batchSupported == false) {
+      return [for (final t in texts) await embed(t)];
+    }
+    try {
+      final body =
+          jsonEncode({'model': embeddingModel, 'input': texts});
+      final req = await _http.postUrl(Uri.parse('http://$host/api/embed'));
+      req.headers.contentType = ContentType.json;
+      req.add(utf8.encode(body));
+      final resp = await req.close();
+      final raw = await resp.transform(utf8.decoder).join();
+      if (resp.statusCode == 404) {
+        _batchSupported = false;
+        return [for (final t in texts) await embed(t)];
+      }
+      if (resp.statusCode != 200) {
+        throw LlmClientException(
+            'Ollama /api/embed returned ${resp.statusCode}: $raw');
+      }
+      final obj = jsonDecode(raw) as Map<String, dynamic>;
+      final rows = obj['embeddings'];
+      if (rows is! List) {
+        throw LlmClientException(
+            'Ollama /api/embed returned no embeddings field: $raw');
+      }
+      _batchSupported = true;
+      return [
+        for (final row in rows)
+          Float32List.fromList(
+              [for (final v in row as List) (v as num).toDouble()])
+      ];
+    } on LlmClientException {
+      rethrow;
+    } on Exception {
+      // Network/parse trouble on the batch path — don't poison the
+      // cache; let the caller's retry logic decide.
+      rethrow;
+    }
+  }
+
   Future<Float32List> embed(String text) async {
     final body = jsonEncode({
       'model': embeddingModel,

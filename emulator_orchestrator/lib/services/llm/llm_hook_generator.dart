@@ -8,7 +8,10 @@ import '../../data/models/target_arch.dart';
 import '../hooks/hook_classifier.dart';
 import 'llm_client.dart';
 import 'llm_profiles.dart';
+import '../corpus/corpus_index.dart';
 import '../rag/rag_index.dart';
+import '../rag/retrieval_query_builder.dart';
+import '../rag/retriever.dart';
 
 export '../hooks/hook_classifier.dart' show ClassificationResult, HookInvariant, InvariantResult;
 
@@ -97,11 +100,34 @@ class LlmHookGenerator {
     required this.index,
     required this.client,
     this.artifactDb,
+    this.corpusRetriever,
+    this.corpusPart,
     HookClassifier? classifier,
   }) : classifier = classifier ?? const HookClassifier();
 
   final RagIndex index;
   final LlmClient client;
+
+  /// Optional shared chip-corpus retriever (SDK source/headers, SVD
+  /// register maps, datasheets for the firmware's MCU). When set,
+  /// composePrompt adds a `## Chip SDK context` section ON TOP of the
+  /// project context — never crowding out project chunks.
+  final Retriever? corpusRetriever;
+
+  /// Exact part for corpus retrieval scoping/labeling (e.g. STM32WB05).
+  final String? corpusPart;
+
+  /// How many chip-corpus chunks to inject, additive to the project
+  /// budget. SVD register maps and headers are the target.
+  static const _kCorpusContext = 5;
+
+  static const _kCorpusKinds = <String>{
+    'svd_register',
+    'sdk_header',
+    'sdk_source',
+    'datasheet',
+    'ref_manual',
+  };
 
   /// Optional handle on the artifact DB. When provided AND the
   /// hook is targeting a named symbol, we pin that symbol's
@@ -656,6 +682,26 @@ don't exist:
       ...ctxHits,
     ];
 
+    // Chip SDK context — additive, from the shared per-chip corpus.
+    // Queried with the symbol + repl peripheral terms so header/SVD
+    // text with matching identifiers surfaces.
+    var corpusHits = const <RagHit>[];
+    if (corpusRetriever != null) {
+      final cq = RetrievalQueryBuilder.build(
+        symbol: targetSymbol,
+        userPrompt: userPrompt,
+        replContent: platform?.replContent,
+        part: corpusPart,
+      );
+      final retriever = corpusRetriever!;
+      if (retriever is CorpusIndex) retriever.pendingFtsTerms = cq.ftsTerms;
+      corpusHits = await retriever.retrieve(
+        cq.embedText,
+        topK: _kCorpusContext,
+        kinds: _kCorpusKinds,
+      );
+    }
+
     final prompt = _composePrompt(
       userPrompt: userPrompt,
       targetSymbol: targetSymbol,
@@ -663,6 +709,7 @@ don't exist:
       targetCallees: targetCallees,
       hookExamples: hookHits,
       contextHits: orderedCtxHits,
+      corpusHits: corpusHits,
       platform: platform,
       signature: signature,
       targetArch: targetArch,
@@ -809,6 +856,7 @@ don't exist:
     required PlatformFacts? platform,
     required FunctionSignature? signature,
     required TargetArch? targetArch,
+    List<RagHit> corpusHits = const [],
   }) {
     final b = StringBuffer();
 
@@ -891,6 +939,25 @@ don't exist:
           'doc' => '### Doc: ${h.sourceId}',
           'symbol' => '### Symbol: ${h.sourceId}',
           _ => '### ${h.sourceKind}: ${h.sourceId}',
+        };
+        b
+          ..writeln(header)
+          ..writeln(h.text.trim())
+          ..writeln();
+      }
+    }
+
+    if (corpusHits.isNotEmpty) {
+      final part = corpusPart != null ? ' ($corpusPart)' : '';
+      b.writeln('## Chip SDK context$part');
+      for (final h in corpusHits) {
+        final header = switch (h.sourceKind) {
+          'svd_register' => '### Registers (SVD) — ${h.sourceId}',
+          'sdk_header' => '### SDK header — ${h.sourceId}',
+          'sdk_source' => '### SDK source — ${h.sourceId}',
+          'datasheet' => '### Datasheet — ${h.sourceId}',
+          'ref_manual' => '### Reference manual — ${h.sourceId}',
+          _ => '### ${h.sourceKind} — ${h.sourceId}',
         };
         b
           ..writeln(header)

@@ -16,6 +16,8 @@ historical):
     │   └── artifacts.db            Model #1: the artifact database.
     ├── projects/                   Default home for .emu files (model #2) …
     │   └── <project-id>/documents/ … and per-project attached documents.
+    ├── corpus/                     Shared per-chip SDK/doc corpus (@ref chip_corpus).
+    │   └── <vendor.family>/        e.g. st.stm32wb0/ — corpus.db + raw/extracted/drop_in.
     └── recent_emulators.json       The Library tab's recent-projects list.
 
 (The two models have their own pages: @ref model_artifacts and

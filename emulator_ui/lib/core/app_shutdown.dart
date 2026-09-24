@@ -89,6 +89,7 @@ Future<void> _teardown(WidgetRef ref) async {
   await step('artifact db', () => ref.read(artifactDatabaseProvider).close());
   // RAG sqlite (main-isolate FFI handle, WAL journal).
   await step('rag index', () => ref.read(ragIndexProvider)?.close());
+  await step('chip corpus', () => ref.read(chipCorpusIndexProvider)?.close());
   // Locally-spawned `ollama serve` (native installs only; docker no-op).
   await step('ollama daemon', () => ref.read(ollamaInstallerProvider).stopDaemon());
   // Ollama HTTP client.

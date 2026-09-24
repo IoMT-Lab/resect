@@ -11,7 +11,10 @@ import '../../data/models/symbol_group.dart';
 import '../../data/models/synthesis_manifest.dart';
 import '../analysis/coverage_frontier.dart';
 import '../analysis/fidelity_delta.dart';
+import '../corpus/corpus_index.dart';
 import '../rag/rag_index.dart';
+import '../rag/retrieval_query_builder.dart';
+import '../rag/retriever.dart';
 import 'last_run_insight_service.dart';
 import 'llm_client.dart';
 import 'llm_profiles.dart';
@@ -227,6 +230,9 @@ class RecommendationService {
     required this.insightService,
     required this.artifactDb,
     this.ragIndex,
+    this.corpusRetriever,
+    this.corpusPart,
+    this.replContent,
   });
 
   final LlmClient llmClient;
@@ -252,6 +258,18 @@ class RecommendationService {
   /// new-hook flow). Null is tolerated for environments without
   /// an open project (headless tests, library-mode dumps).
   final RagIndex? ragIndex;
+
+  /// Optional shared chip-corpus retriever. When set, the advisor
+  /// prompt also carries a `### Chip reference` block — SVD register
+  /// maps and SDK source for the firmware's MCU, the register-level
+  /// context halt diagnosis otherwise lacks.
+  final Retriever? corpusRetriever;
+
+  /// Exact part for corpus scoping/labeling.
+  final String? corpusPart;
+
+  /// Platform .repl content, for deriving peripheral query terms.
+  final String? replContent;
 
   /// Default cap on recommendations per round (the schema's
   /// `maxItems`). 10 — high enough for the batch name-classification
@@ -1324,7 +1342,10 @@ class RecommendationService {
       topK: 1,
       kinds: {'decompilation'},
     );
-    if (hookHits.isEmpty && decompHits.isEmpty) return '';
+    final corpusHits = await _corpusHitsFor(haltSymbol);
+    if (hookHits.isEmpty && decompHits.isEmpty && corpusHits.isEmpty) {
+      return '';
+    }
     final buf = StringBuffer();
     buf.writeln('## Retrieved context for `$haltSymbol`');
     if (decompHits.isNotEmpty) {
@@ -1340,7 +1361,33 @@ class RecommendationService {
             '${_truncate(h.text, 280)}');
       }
     }
+    if (corpusHits.isNotEmpty) {
+      final part = corpusPart != null ? ' ($corpusPart)' : '';
+      buf.writeln('### Chip reference$part');
+      for (final h in corpusHits) {
+        buf.writeln('- [${h.sourceKind}] ${_truncate(h.text, 400)}');
+      }
+    }
     return buf.toString();
+  }
+
+  /// Register-map + SDK context for the halt symbol from the shared
+  /// chip corpus. Up to 3 hits; SVD registers first (that's what halt
+  /// diagnosis most often lacks). Empty when no corpus is wired.
+  Future<List<RagHit>> _corpusHitsFor(String haltSymbol) async {
+    final retriever = corpusRetriever;
+    if (retriever == null) return const [];
+    final cq = RetrievalQueryBuilder.build(
+      symbol: haltSymbol,
+      replContent: replContent,
+      part: corpusPart,
+    );
+    if (retriever is CorpusIndex) retriever.pendingFtsTerms = cq.ftsTerms;
+    return retriever.retrieve(
+      cq.embedText,
+      topK: 3,
+      kinds: {'svd_register', 'sdk_source', 'sdk_header'},
+    );
   }
 
   /// Find the first balanced `{...}` JSON object in [raw]. Returns

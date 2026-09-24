@@ -566,6 +566,8 @@ class ArtifactCensus {
     required this.ragChunksByKind,
     required this.signatures,
     required this.decompilations,
+    this.chip,
+    this.chipCorpusChunksByKind = const {},
   });
 
   /// Hook bodies in the artifact DB. NOTE: the firmware-scoped query
@@ -586,6 +588,17 @@ class ArtifactCensus {
   /// Ghidra-derived rows for this firmware (0 when extraction never ran).
   final int signatures;
   final int decompilations;
+
+  /// Detected MCU part (e.g. STM32WB05), or null when unidentified.
+  final String? chip;
+
+  /// Shared chip-corpus chunks by kind (svd_register / sdk_header /
+  /// sdk_source / datasheet). Empty when no corpus fed this run — the
+  /// audit answer to "did this round have SDK context".
+  final Map<String, int> chipCorpusChunksByKind;
+
+  int get chipCorpusChunksTotal =>
+      chipCorpusChunksByKind.values.fold(0, (a, b) => a + b);
 
   int get ragChunksTotal =>
       ragChunksByKind.values.fold(0, (a, b) => a + b);
@@ -609,6 +622,9 @@ class ArtifactCensus {
         'rag_chunks_by_kind': ragChunksByKind,
         'signatures': signatures,
         'decompilations': decompilations,
+        if (chip != null) 'chip': chip,
+        if (chipCorpusChunksByKind.isNotEmpty)
+          'chip_corpus_chunks_by_kind': chipCorpusChunksByKind,
       };
 
   factory ArtifactCensus.fromJson(Map<String, dynamic> json) =>
@@ -623,6 +639,11 @@ class ArtifactCensus {
             const {},
         signatures: json['signatures'] as int? ?? 0,
         decompilations: json['decompilations'] as int? ?? 0,
+        chip: json['chip'] as String?,
+        chipCorpusChunksByKind:
+            (json['chip_corpus_chunks_by_kind'] as Map<String, dynamic>?)
+                    ?.map((k, v) => MapEntry(k, v as int)) ??
+                const {},
       );
 }
 

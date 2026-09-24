@@ -30,6 +30,10 @@ import 'package:emulator_orchestrator/services/llm/last_run_insight_service.dart
 import 'package:emulator_orchestrator/services/llm/llm_client.dart';
 import 'package:emulator_orchestrator/services/llm/llm_hook_generator.dart';
 import 'package:emulator_orchestrator/services/llm/recommendation_service.dart';
+import 'package:emulator_orchestrator/cli/corpus_command.dart';
+import 'package:emulator_orchestrator/services/chip/chip_detector.dart';
+import 'package:emulator_orchestrator/services/corpus/corpus_index.dart';
+import 'package:emulator_orchestrator/services/corpus/corpus_service.dart';
 import 'package:emulator_orchestrator/services/rag/rag_index.dart';
 
 /// CLI tool for emulator creation, call graph generation, and synthesizer.
@@ -66,6 +70,8 @@ void main(List<String> args) async {
         await _runExport(flags);
       case 'fidelity':
         await _runFidelity(flags);
+      case 'corpus':
+        await _runCorpus(flags);
       default:
         stderr.writeln('Unknown command: $command');
         _printUsage();
@@ -344,6 +350,60 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
           '${symbolGroups.length > 5 ? ', …' : ''})');
     }
 
+    // LLM stack for the on-demand hook fallback + chip corpus, matching
+    // the autotune path so `synthesize` also reasons over SDK context.
+    final cfg = EnvConfig.load();
+    final client = LlmClient(
+      host: (flags['host'] ?? cfg.get('LLM_OLLAMA_HOST') ?? 'localhost:11434')
+          .trim(),
+      model:
+          (flags['model'] ?? cfg.get('LLM_MODEL') ?? 'gemma4:e4b').trim(),
+    );
+    final corpusCli = CorpusCli(client: client);
+    final replContent =
+        File(replPath).existsSync() ? File(replPath).readAsStringSync() : null;
+    final chipId = flags['chip'] != null
+        ? await corpusCli.detectFor(chipOverride: flags['chip'])
+        : ChipDetector.detect(
+            replContent: replContent,
+            replPath: replPath,
+            elfPath: elfPath,
+            symbolNames: symbolNames,
+          );
+    stderr.writeln('Chip: ${chipId.label}'
+        '${chipId.corpusKey != null ? ' [${chipId.corpusKey}]' : ''}');
+    if (flags.containsKey('fetch-corpus')) {
+      final ok = await corpusCli.fetch(chipId,
+          assumeYes: flags.containsKey('yes'),
+          skipPdf: flags.containsKey('skip-pdf'));
+      if (!ok && !flags.containsKey('yes')) {
+        stderr.writeln('Corpus not fetched — continuing without SDK context.');
+      }
+    }
+    final corpusService = CorpusService(client: client);
+    final corpusIndex = corpusService.openIndex(chipId);
+    if (corpusIndex != null) {
+      stderr.writeln('Chip corpus: ${chipId.corpusKey} '
+          '(${corpusIndex.status().chunkCount} chunks)');
+    }
+    final ragIndex = RagIndex(
+      projectDir: File(elfPath).parent.path,
+      client: client,
+      artifactDb: orchestrator.artifactDb,
+    );
+    final hookGenerator = LlmHookGenerator(
+      index: ragIndex,
+      client: client,
+      artifactDb: orchestrator.artifactDb,
+      corpusRetriever: corpusIndex,
+      corpusPart: chipId.part,
+    );
+    final platform = await PlatformFacts.tryBuild(
+      replPath: replPath,
+      archString: firmwareRecord.machine?.name,
+      firmwareSymbols: symbolNames,
+    );
+
     stderr.writeln('Starting synthesizer (max $maxIterations iterations)...');
     final result = await orchestrator.runSynthesizer(
       elfPath: elfPath,
@@ -354,6 +414,8 @@ Future<void> _runSynthesize(Map<String, String> flags) async {
       maxIterations: maxIterations,
       commsHooks: commsHooks,
       symbolGroups: symbolGroups,
+      llmGenerator: hookGenerator,
+      platform: platform,
     );
 
     await traceSubscription.cancel();
@@ -631,22 +693,57 @@ Future<void> _runAutotune(Map<String, String> flags) async {
     final elfHash = firmwareRecord.elfHash;
     stderr.writeln('ELF hash: $elfHash');
 
+    // Chip corpus (shared SDK/doc RAG). Detect the chip; optionally
+    // fetch on demand (--fetch-corpus, same consent path as the UI);
+    // then open a retriever if a corpus exists.
+    final corpusCli = CorpusCli(client: client);
+    final chip = await corpusCli.detectFor(
+      emuPath: emuPath,
+      chipOverride: flags['chip'],
+    );
+    stderr.writeln('Chip: ${chip.label}'
+        '${chip.corpusKey != null ? ' [${chip.corpusKey}]' : ''}');
+    if (flags.containsKey('fetch-corpus')) {
+      final ok = await corpusCli.fetch(chip,
+          assumeYes: flags.containsKey('yes'),
+          skipPdf: flags.containsKey('skip-pdf'));
+      if (!ok && !flags.containsKey('yes')) {
+        stderr.writeln('Corpus not fetched — continuing without SDK context.');
+      }
+    }
+    final corpusService = CorpusService(client: client);
+    final CorpusIndex? corpusIndex = corpusService.openIndex(chip);
+    if (corpusIndex != null) {
+      stderr.writeln('Chip corpus: ${chip.corpusKey} '
+          '(${corpusIndex.status().chunkCount} chunks)');
+    } else if (chip.corpusKey != null) {
+      stderr.writeln("Chip corpus: none for ${chip.corpusKey} — run "
+          "'resect-cli corpus fetch --emu $emuPath'");
+    }
+
     // RAG index + hook generator + recommender — same wiring as the UI.
     final ragIndex = RagIndex(
       projectDir: projectDir,
       client: client,
       artifactDb: orchestrator.artifactDb,
     );
+    final replContent =
+        File(replPath).existsSync() ? File(replPath).readAsStringSync() : null;
     final hookGenerator = LlmHookGenerator(
       index: ragIndex,
       client: client,
       artifactDb: orchestrator.artifactDb,
+      corpusRetriever: corpusIndex,
+      corpusPart: chip.part,
     );
     final recommendationService = RecommendationService(
       llmClient: client,
       insightService: LastRunInsightService(llmClient: client),
       artifactDb: orchestrator.artifactDb,
       ragIndex: ragIndex,
+      corpusRetriever: corpusIndex,
+      corpusPart: chip.part,
+      replContent: replContent,
     );
 
     // Comms virtualization + bus servers — the shared stanza (see
@@ -1003,6 +1100,35 @@ EmulationOrchestrator _createOrchestrator() {
   );
 }
 
+/// `corpus detect|fetch|status` — chip-corpus operations sharing the
+/// CorpusService code path with the UI.
+Future<void> _runCorpus(Map<String, String> flags) async {
+  final sub = flags['_positional'] ?? 'status';
+  final cli = CorpusCli();
+  final chip = await cli.detectFor(
+    emuPath: flags['emu'],
+    chipOverride: flags['chip'],
+  );
+  switch (sub) {
+    case 'detect':
+      cli.printIdentity(chip);
+    case 'fetch':
+      cli.printIdentity(chip);
+      final ok = await cli.fetch(
+        chip,
+        assumeYes: flags.containsKey('yes'),
+        skipPdf: flags.containsKey('skip-pdf'),
+      );
+      if (!ok) exitCode = 1;
+    case 'status':
+      cli.printStatus(chip);
+    default:
+      stderr.writeln('Unknown corpus subcommand: $sub '
+          '(detect|fetch|status)');
+      exitCode = 1;
+  }
+}
+
 Map<String, String> _parseFlags(List<String> args) {
   final flags = <String, String>{};
   for (var i = 0; i < args.length; i++) {
@@ -1020,6 +1146,9 @@ Map<String, String> _parseFlags(List<String> args) {
       } else {
         flags[key] = 'true';
       }
+    } else if (!flags.containsKey('_positional')) {
+      // First bare token = subcommand (e.g. `corpus fetch`).
+      flags['_positional'] = args[i];
     }
   }
   return flags;

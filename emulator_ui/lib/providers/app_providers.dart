@@ -35,6 +35,10 @@ import 'package:emulator_orchestrator/services/llm/llm_client.dart';
 import 'package:emulator_orchestrator/services/llm/llm_hook_generator.dart';
 import 'package:emulator_orchestrator/services/llm/recommendation_service.dart';
 import 'package:emulator_orchestrator/services/quality/hook_test_harness.dart';
+import 'package:emulator_orchestrator/data/models/chip_identity.dart';
+import 'package:emulator_orchestrator/services/chip/chip_detector.dart';
+import 'package:emulator_orchestrator/services/corpus/corpus_index.dart';
+import 'package:emulator_orchestrator/services/corpus/corpus_service.dart';
 import 'package:emulator_orchestrator/services/rag/rag_index.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -444,14 +448,22 @@ final lastRunInsightServiceProvider = Provider<LastRunInsightService>(
 /// orchestrator. Reuses `LastRunInsightService.composePrompt` for
 /// the input context section so device-class additions land in
 /// both services when that work ships.
-final recommendationServiceProvider = Provider<RecommendationService>(
-  (ref) => RecommendationService(
+final recommendationServiceProvider = Provider<RecommendationService>((ref) {
+  final emulator = ref.watch(currentEmulatorProvider);
+  final replPath = emulator?.baseImagePath;
+  final replContent = (replPath != null && File(replPath).existsSync())
+      ? File(replPath).readAsStringSync()
+      : null;
+  return RecommendationService(
     llmClient: ref.watch(llmClientProvider),
     insightService: ref.watch(lastRunInsightServiceProvider),
     artifactDb: ref.watch(artifactDatabaseProvider),
     ragIndex: ref.watch(ragIndexProvider),
-  ),
-);
+    corpusRetriever: ref.watch(chipCorpusIndexProvider),
+    corpusPart: ref.watch(chipIdentityProvider)?.part,
+    replContent: replContent,
+  );
+});
 
 /// LLM-generated advisory for the last successful synthesis run.
 /// Hydrated from `Emulator.lastRunInsight` on project open by
@@ -505,19 +517,76 @@ final ragIndexProvider = Provider<RagIndex?>((ref) {
   return index;
 });
 
+/// Detected MCU identity for the current project (repl + symbols).
+/// Pure/cheap; re-detects when the emulator changes. A stored
+/// user-override in `metadata['chip_identity']` wins.
+final chipIdentityProvider = Provider<ChipIdentity?>((ref) {
+  final emulator = ref.watch(currentEmulatorProvider);
+  if (emulator == null) return null;
+  final stored = emulator.metadata[ChipIdentity.metadataKey];
+  if (stored is Map<String, dynamic>) {
+    final id = ChipIdentity.fromJson(stored);
+    if (id.userOverridden) return id;
+  }
+  final replPath = emulator.baseImagePath;
+  final replContent = (replPath != null && File(replPath).existsSync())
+      ? File(replPath).readAsStringSync()
+      : null;
+  return ChipDetector.detect(
+    replContent: replContent,
+    replPath: replPath,
+    elfPath: emulator.elfFilePath,
+    symbolNames: emulator.cachedCallGraph?.symbols.keys ?? const [],
+  );
+});
+
+/// Shared corpus service (façade over detection/fetch/retrieval).
+final corpusServiceProvider = Provider<CorpusService>(
+    (ref) => CorpusService(client: ref.watch(llmClientProvider)));
+
+/// Bumped after a fetch completes to invalidate corpus-status reads.
+final corpusRefreshProvider = StateProvider<int>((ref) => 0);
+
+/// Live status of the current chip's corpus (chunk counts by kind),
+/// or null when nothing is fetched. Recomputed when [corpusRefreshProvider]
+/// changes.
+final corpusStatusProvider = Provider<CorpusStatus?>((ref) {
+  ref.watch(corpusRefreshProvider);
+  final chip = ref.watch(chipIdentityProvider);
+  if (chip == null) return null;
+  return ref.watch(corpusServiceProvider).statusFor(chip);
+});
+
+/// Streaming progress line while a corpus fetch runs (null when idle).
+final corpusFetchProgressProvider = StateProvider<String?>((ref) => null);
+
+/// Retrieval index over the current chip's fetched corpus, or null when
+/// no corpus exists for it yet. Closed on dispose.
+final chipCorpusIndexProvider = Provider<CorpusIndex?>((ref) {
+  final chip = ref.watch(chipIdentityProvider);
+  if (chip == null) return null;
+  final index = ref.watch(corpusServiceProvider).openIndex(chip);
+  if (index != null) ref.onDispose(index.close);
+  return index;
+});
+
 /// Composes the RAG-context lookup with the Ollama generate stream.
 /// Null until [ragIndexProvider] is ready (i.e. an emulator is loaded).
 ///
 /// Threads the artifact DB through so the generator can pin the
 /// target function's Ghidra decompilation as the first
-/// project-context chunk when MODULE_GHIDRA has extracted one.
+/// project-context chunk when MODULE_GHIDRA has extracted one, and the
+/// shared chip corpus for SDK/SVD context.
 final llmHookGeneratorProvider = Provider<LlmHookGenerator?>((ref) {
   final index = ref.watch(ragIndexProvider);
   if (index == null) return null;
+  final chip = ref.watch(chipIdentityProvider);
   return LlmHookGenerator(
     index: index,
     client: ref.watch(llmClientProvider),
     artifactDb: ref.watch(artifactDatabaseProvider),
+    corpusRetriever: ref.watch(chipCorpusIndexProvider),
+    corpusPart: chip?.part,
   );
 });
 

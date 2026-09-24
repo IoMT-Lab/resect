@@ -21,6 +21,16 @@ class AppPaths {
   static String documentsDir(String emulatorId) =>
       p.join(projectsDir, emulatorId, 'documents');
 
+  /// Root of the shared per-chip SDK/document corpus cache. Under
+  /// configDir so it persists in the docker resect-state volume (unlike
+  /// ~/.local/share, which --rm containers discard).
+  static String get corpusDir => p.join(configDir, 'corpus');
+
+  /// The corpus directory for one chip family, keyed by
+  /// `ChipIdentity.corpusKey` (e.g. 'st.stm32wb0').
+  static String corpusDirFor(String corpusKey) =>
+      p.join(corpusDir, corpusKey);
+
   /// Find the emulation_engine directory relative to the current working directory.
   ///
   /// Checks two locations in order:

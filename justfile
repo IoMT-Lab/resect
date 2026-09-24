@@ -72,6 +72,14 @@ run_cli: create_workdir print_gpu_status
     {{COMPOSE}} {{RUN_PROFILE}} run --rm resect cli
 
 [group('Run')]
+[doc('Fetch the vendor SDK/doc corpus for a chip (e.g. `just corpus STM32WB05`).')]
+corpus chip: create_workdir print_gpu_status
+    #!/bin/bash
+    set -euxo pipefail
+    {{COMPOSE}} {{RUN_PROFILE}} run --rm --entrypoint "" resect \
+      resect-cli corpus fetch --chip {{chip}} --yes
+
+[group('Run')]
 [doc('Run the GUI version of Resect locally.')]
 [no-exit-message]
 run_gui: create_workdir print_gpu_status

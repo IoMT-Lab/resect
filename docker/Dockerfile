@@ -23,6 +23,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     binutils-arm-none-eabi \
     libsqlite3-dev \
     gosu \
+    # HTTPS trust store for the chip-corpus fetcher (vendor SDK/SVD/PDF
+    # downloads over TLS); absent from the slim base image.
+    ca-certificates \
+    # pdftotext for datasheet/reference-manual ingestion into the corpus.
+    poppler-utils \
     # Install GUI dependencies
     libgtk-3-dev \
     liblzma-dev \

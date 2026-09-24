@@ -6,6 +6,7 @@ import '../../../providers/app_providers.dart';
 import 'widgets/documents_card.dart';
 import 'widgets/emulator_card.dart';
 import 'widgets/library_empty_state.dart';
+import 'widgets/chip_corpus_card.dart';
 import 'widgets/rag_card.dart';
 import 'widgets/recent_list.dart';
 
@@ -60,7 +61,13 @@ class _LoadedLayout extends StatelessWidget {
               SizedBox(width: _columnGap),
               Expanded(
                 flex: 2,
-                child: RagCard(),
+                child: Column(
+                  children: [
+                    RagCard(),
+                    SizedBox(height: _columnGap),
+                    ChipCorpusCard(),
+                  ],
+                ),
               ),
               SizedBox(width: _columnGap),
               Expanded(

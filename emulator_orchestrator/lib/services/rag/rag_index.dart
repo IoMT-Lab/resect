@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' show sha256;
@@ -14,7 +13,9 @@ import '../../data/models/emulator.dart';
 import '../../data/models/rag_index_status.dart';
 import '../../data/models/symbol.dart' as cg;
 import '../llm/llm_client.dart';
+import 'embedding_math.dart';
 import 'rag_chunker.dart';
+import 'retriever.dart';
 
 /// Per-project RAG store backing the LLM hook-generation prompt.
 ///
@@ -30,7 +31,7 @@ import 'rag_chunker.dart';
 ///
 /// Construction is lightweight; the actual DB is opened lazily on the
 /// first call to keep the Library tab cold-start free of disk work.
-class RagIndex {
+class RagIndex implements Retriever {
   RagIndex({
     required this.projectDir,
     required this.client,
@@ -440,6 +441,7 @@ class RagIndex {
   /// Optionally restrict by [kinds] (e.g. `{'hook'}` for the few-shot
   /// catalog slice of the prompt) and exclude already-selected chunks
   /// via [exclude]. Returns an empty list when the index is empty.
+  @override
   Future<List<RagHit>> retrieve(
     String queryText, {
     int topK = 10,
@@ -457,15 +459,15 @@ class RagIndex {
           );
     if (rows.isEmpty) return const [];
     final query = await client.embed(queryText);
-    final qNorm = _norm(query);
+    final qNorm = sumOfSquares(query);
     final scored = <RagHit>[];
     for (final r in rows) {
       final id = r['id'] as int;
       if (exclude.contains(id)) continue;
       final blob = r['embedding'] as Uint8List;
-      final vec = _blobToFloat32(blob);
+      final vec = blobToFloat32(blob);
       if (vec.length != query.length) continue;
-      final score = _cosine(query, vec, qNorm);
+      final score = cosine(query, vec, qNorm);
       scored.add(RagHit(
         id: id,
         sourceKind: r['source_kind'] as String,
@@ -496,7 +498,7 @@ class RagIndex {
           c.sourceId,
           c.position,
           c.text,
-          _float32ToBlob(embedding),
+          float32ToBlob(embedding),
         ]);
       }
     } finally {
@@ -602,12 +604,18 @@ class RagHit {
     required this.sourceId,
     required this.text,
     required this.score,
+    this.origin = 'project',
   });
   final int id;
   final String sourceKind;
   final String sourceId;
   final String text;
   final double score;
+
+  /// Which store produced this hit: 'project' (the per-project
+  /// [RagIndex]) or 'corpus' (the shared per-chip SDK corpus). Prompt
+  /// composers render the two as separate labeled sections.
+  final String origin;
 }
 
 class RagRebuildEvent {
@@ -669,40 +677,6 @@ class _GhidraRagInputs {
 
 // -----------------------------------------------------------------------------
 // embedding blob + cosine helpers
-
-Uint8List _float32ToBlob(Float32List v) =>
-    v.buffer.asUint8List(v.offsetInBytes, v.lengthInBytes);
-
-Float32List _blobToFloat32(Uint8List bytes) {
-  // Embedding rows are always written by [_float32ToBlob], which
-  // produces a length divisible by 4. SQLite hands us a fresh buffer
-  // each select, so we can wrap it without copying.
-  final bd = ByteData.sublistView(bytes);
-  final out = Float32List(bytes.lengthInBytes ~/ 4);
-  for (var i = 0; i < out.length; i++) {
-    out[i] = bd.getFloat32(i * 4, Endian.little);
-  }
-  return out;
-}
-
-double _norm(Float32List v) {
-  var s = 0.0;
-  for (final x in v) {
-    s += x * x;
-  }
-  return s == 0 ? 1 : s;
-}
-
-double _cosine(Float32List a, Float32List b, double aNorm) {
-  var dot = 0.0;
-  var bNorm = 0.0;
-  for (var i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    bNorm += b[i] * b[i];
-  }
-  if (bNorm == 0) return 0;
-  return dot / (math.sqrt(aNorm) * math.sqrt(bNorm));
-}
 
 Future<String> _fingerprintFile(File f) async =>
     sha256.convert(await f.readAsBytes()).toString();

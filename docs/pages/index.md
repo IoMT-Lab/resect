@@ -90,6 +90,8 @@ each one stands alone.
   answer, and what happens to the answer.
 - @subpage comms_virtualization — how firmware I2C/SPI/UART traffic is
   forwarded out of the emulator to a virtual device.
+- @subpage chip_corpus — detecting the MCU and fetching vendor SDKs,
+  register maps, and datasheets into the retrieval context.
 
 ### Part IV — Appendices
 

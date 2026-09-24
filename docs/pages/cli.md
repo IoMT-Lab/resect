@@ -70,6 +70,17 @@ that change behavior rather than paths:
 | `--start-from` / `--end-at` | the project's | Override the run's entry and stop symbols |
 | `--report-dir <path>` | `<projectDir>/autotune_reports/<timestamp>/` | Where reports land |
 | `--color <auto\|always\|never>` | `auto` | Colorize the console output |
+| `--chip <part>` | detected | Override the detected MCU for @ref chip_corpus retrieval |
+| `--fetch-corpus` | off | Detect → consent → fetch the vendor SDK/doc corpus, then run. `--yes` gives non-interactive consent |
+
+`synthesize` takes the same `--chip` / `--fetch-corpus` / `--yes`, so SDK
+context reaches both surfaces headlessly.
+
+**`corpus`** — @ref chip_corpus operations, sharing the UI's code path:
+
+    resect-cli corpus detect --emu aya.emu             # identity + evidence
+    resect-cli corpus fetch  --chip STM32WB05 --yes    # plan → consent → fetch
+    resect-cli corpus status --chip STM32WB05
 
 **`fidelity`** — compute fidelity metrics for a call graph (`--elf` or a
 saved `--callgraph` JSON), with `--hooks`, `--traversed`,
