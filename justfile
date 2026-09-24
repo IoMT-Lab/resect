@@ -1,8 +1,8 @@
 set shell := ["bash", "-c"]
 
-export OLLAMA_VER := 'latest'
+export OLLAMA_VER := '0.34.4'
 export RENODE_VER := '1.16.1-35c28a02'
-export RESECT_VER := 'latest'
+export RESECT_VER := '0.3.0'
 
 export HOST_UID := `id -u`
 export HOST_GID := `id -g`
