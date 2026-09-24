@@ -31,7 +31,7 @@ services:
     ports: [5900:5900] # VNC server for GUI
 
   cache-cleaner:
-    image: busybox:latest
+    image: busybox:1.38.0
     restart: no
     profiles: [_]
     volumes: [resect-state:/static_home]
