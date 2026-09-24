@@ -1,5 +1,9 @@
 set shell := ["bash", "-c"]
 
+export OLLAMA_VER := 'latest'
+export RENODE_VER := '1.16.1-35c28a02'
+export RESECT_VER := 'latest'
+
 export HOST_UID := `id -u`
 export HOST_GID := `id -g`
 export WAYLAND_DISPLAY := env('WAYLAND_DISPLAY', 'wayland-0')

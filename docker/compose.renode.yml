@@ -1,6 +1,6 @@
 services:
   renode:
-    image: nexus.medmakers.io/docker/renode:1.16.1-35c28a02
+    image: nexus.medmakers.io/docker/renode:${RENODE_VER:-latest}
     restart: unless-stopped
     profiles: [normal]
     environment:

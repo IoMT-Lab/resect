@@ -4,7 +4,7 @@ include:
 
 services:
   resect:
-    image: nexus.medmakers.io/docker/resect:latest
+    image: nexus.medmakers.io/docker/resect:${RESECT_VER:-latest}
     restart: no
     profiles: [normal]
     init: true

@@ -1,6 +1,6 @@
 services:
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:${OLLAMA_VER:-latest}
     restart: unless-stopped
     profiles: [init, normal]
     volumes: [ollama-models:/root/.ollama]
@@ -26,7 +26,7 @@ services:
     # Pulls the shipped inference + embedding models into the ollama-models
     # volume, then exits. Idempotent: already-present models report "up to date"
     # and this returns immediately on warm boots.
-    image: ollama/ollama:latest
+    image: ollama/ollama:${OLLAMA_VER:-latest}
     restart: no
     profiles: [init]
     environment:
