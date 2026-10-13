@@ -41,7 +41,12 @@ case "$MODE" in
         # Hand off execution to your app as the non-root user
         echo "Starting container as user: $CONTAINER_USER (UID: $USER_ID, GID: $GROUP_ID)"
         echo "Resect CLI available as 'resect-cli'"
-        exec gosu "$CONTAINER_USER" "/bin/bash"
+        if [ -t 0 ]; then
+            exec gosu "$CONTAINER_USER" "/bin/bash"
+        else
+            echo "No TTY detected; keeping container alive. Use 'docker exec -it' to attach."
+            exec gosu "$CONTAINER_USER" tail -f /dev/null
+        fi
         ;;
     gui)
         echo "Starting container as user: $CONTAINER_USER (UID: $USER_ID, GID: $GROUP_ID)"

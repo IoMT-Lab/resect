@@ -51,6 +51,8 @@ install:
 [doc('Stop all running containers.')]
 stop:
     {{COMPOSE}} {{ALL_PROFILES}} stop
+    docker ps -q --filter label=com.docker.compose.oneoff=True \
+        --filter label=com.docker.compose.project=$(basename {{PROJECT_DIR}}) | xargs -r docker stop
 
 [group('Teardown')]
 [doc('Clean all databases and caches.')]
@@ -69,17 +71,32 @@ uninstall:
 #===============================================================================
 
 [group('Run')]
-[doc('Run the CLI version of Resect.')]
-run_cli: create_workdir print_gpu_status
+[doc('Run the CLI version of Resect. Pass `headless` to run detached without a TTY.')]
+run_cli headless='': create_workdir print_gpu_status
     #!/bin/bash
-    set -euxo pipefail
-    {{COMPOSE}} {{RUN_PROFILE}} run --rm resect cli
+    set -euo pipefail
+    if [ "{{headless}}" = 'headless' ]; then
+        {{COMPOSE}} {{RUN_PROFILE}} run --rm -d -T resect cli
+    else
+        {{COMPOSE}} {{RUN_PROFILE}} run --rm resect cli
+    fi
 
+[group('Run')]
+[doc('Attach to the running CLI container, or run a one-off command in it (e.g. `just exec_cli resect-cli --help`).')]
+exec_cli *cmd:
+    #!/bin/bash
+    set -euo pipefail
+    if [ -n "{{cmd}}" ]; then
+        {{COMPOSE}} {{RUN_PROFILE}} exec -u "$HOST_UID:$HOST_GID" resect {{cmd}}
+    else
+        {{COMPOSE}} {{RUN_PROFILE}} exec -it resect /entrypoint.sh
+    fi
+    
 [group('Run')]
 [doc('Fetch the vendor SDK/doc corpus for a chip (e.g. `just corpus STM32WB05`).')]
 corpus chip: create_workdir print_gpu_status
     #!/bin/bash
-    set -euxo pipefail
+    set -euo pipefail
     {{COMPOSE}} {{RUN_PROFILE}} run --rm --entrypoint "" resect \
       resect-cli corpus fetch --chip {{chip}} --yes
 
@@ -88,7 +105,7 @@ corpus chip: create_workdir print_gpu_status
 [no-exit-message]
 run_gui: create_workdir print_gpu_status
     #!/bin/bash
-    set -euxo pipefail
+    set -euo pipefail
     export INTERNAL_ENV_FILE={{DOCKER_DIR}}/gui.env
     {{COMPOSE}} {{RUN_PROFILE}} run --rm resect gui
 
@@ -96,14 +113,14 @@ run_gui: create_workdir print_gpu_status
 [doc('Run the GUI version of Resect in a VNC session.')]
 run_vnc: create_workdir print_gpu_status
     #!/bin/bash
-    set -euxo pipefail
+    set -euo pipefail
     {{COMPOSE}} {{RUN_PROFILE}} run --service-ports --rm resect vnc
 
 [group('Run')]
 [doc('Print the logs for the Renode container.')]
 logs: create_workdir print_gpu_status
     #!/bin/bash
-    set -euxo pipefail
+    set -euo pipefail
     {{COMPOSE}} {{RUN_PROFILE}} logs renode
 
 #===============================================================================
