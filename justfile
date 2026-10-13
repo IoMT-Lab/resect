@@ -93,7 +93,7 @@ run_gui: create_workdir print_gpu_status
 run_vnc: create_workdir print_gpu_status
     #!/bin/bash
     set -euxo pipefail
-    {{COMPOSE}} {{RUN_PROFILE}} run --rm resect vnc
+    {{COMPOSE}} {{RUN_PROFILE}} run --service-ports --rm resect vnc
 
 [group('Run')]
 [doc('Print the logs for the Renode container.')]
