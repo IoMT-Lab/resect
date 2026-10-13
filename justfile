@@ -1,3 +1,4 @@
+# Minimum required just version: 1.40.0
 set shell := ["bash", "-c"]
 
 export OLLAMA_VER := '0.34.4'
@@ -7,23 +8,26 @@ export RESECT_VER := '0.3.0'
 export HOST_UID := `id -u`
 export HOST_GID := `id -g`
 export WAYLAND_DISPLAY := env('WAYLAND_DISPLAY', 'wayland-0')
-export XDG_RUNTIME_DIR := env('XDG_RUNTIME_DIR', f'/run/user/{{HOST_UID}}')
+export XDG_RUNTIME_DIR := env('XDG_RUNTIME_DIR', '/run/user/' + HOST_UID)
 
 export ALLOW_BUILD := env('ALLOW_RESECT_BUILD', '0')
 GPU := env('RESECT_GPU', '0')
 export OLLAMA_COMPOSE_FILE := if GPU == '1' {'compose.ollama.gpu.yml'} else {'compose.ollama.cpu.yml'}
 
 PROJECT_DIR := `pwd`
-DOCKER_DIR := f'{{PROJECT_DIR}}/docker'
-COMPOSE := f'docker compose --project-directory {{PROJECT_DIR}} --file {{DOCKER_DIR}}/compose.yml'
+DOCKER_DIR := PROJECT_DIR + '/docker'
+COMPOSE := 'docker compose --project-directory ' + PROJECT_DIR + ' --file ' + DOCKER_DIR + '/compose.yml'
 
 INSTALL_PROFILE := '--profile init'
 RUN_PROFILE := '--profile normal'
-ALL_PROFILES := f'{{INSTALL_PROFILE}} {{RUN_PROFILE}}'
+ALL_PROFILES := INSTALL_PROFILE + ' ' + RUN_PROFILE
 
 alias cli := run_cli
 alias gui := run_gui
 alias vnc := run_vnc
+
+help:
+    @just --list
 
 #===============================================================================
 # Setup Recipes
@@ -127,11 +131,6 @@ import-images src:
 #===============================================================================
 # Private recipes
 #===============================================================================
-
-[default]
-[no-exit-message]
-_default:
-    @just --choose
 
 [private]
 build:
