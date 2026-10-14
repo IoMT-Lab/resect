@@ -2,7 +2,7 @@
 set shell := ["bash", "-c"]
 
 export OLLAMA_VER := '0.34.4'
-export RENODE_VER := '1.16.1-35c28a02'
+export RENODE_VER := 'latest'
 export RESECT_VER := '0.3.0'
 
 export HOST_UID := `id -u`
@@ -42,6 +42,11 @@ install:
 [doc('Create the working directory that will be mounted into the container, if it does not exist.')]
 @create_workdir:
     mkdir -p workdir
+
+[group('Setup')]
+[doc('Pull the latest versions of all images.')]
+@pull:
+    {{COMPOSE}} {{ALL_PROFILES}} pull --policy missing --ignore-pull-failures
 
 #===============================================================================
 # Teardown Recipes
@@ -107,7 +112,7 @@ run_gui: create_workdir print_gpu_status
     #!/bin/bash
     set -euo pipefail
     export INTERNAL_ENV_FILE={{DOCKER_DIR}}/gui.env
-    {{COMPOSE}} {{RUN_PROFILE}} run --rm resect gui
+    {{COMPOSE}} {{RUN_PROFILE}} run  --service-ports --rm resect gui
 
 [group('Run')]
 [doc('Run the GUI version of Resect in a VNC session.')]
@@ -129,10 +134,9 @@ logs: create_workdir print_gpu_status
 
 [group('Distribution')]
 [doc('Export all Docker images making up the compose setup')]
-export-images dest:
+export-images dest: pull
     #!/bin/bash
     set -euo pipefail
-    {{COMPOSE}} {{ALL_PROFILES}} pull --policy missing --ignore-pull-failures
     IMAGES=$({{COMPOSE}} {{ALL_PROFILES}} config --images | sort -u | xargs)
     echo "Exporting images to {{dest}}"
     docker save $IMAGES | gzip > "{{dest}}"

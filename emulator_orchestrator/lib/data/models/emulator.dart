@@ -451,12 +451,15 @@ class EmulationConfig {
   /// Path to a memory map JSON file (snapshot format) to apply after firmware load
   final String? memoryMapPath;
 
+  final List<String>? initCommands;
+
   const EmulationConfig({
     this.vectorTableOffset,
     this.startFrom,
     this.endAt = const [],
     this.pauseOnUnhandled = true,
     this.memoryMapPath,
+    this.initCommands,
   });
 
   factory EmulationConfig.defaults() => const EmulationConfig();
@@ -470,6 +473,7 @@ class EmulationConfig {
           [],
       pauseOnUnhandled: json['pause_on_unhandled'] as bool? ?? true,
       memoryMapPath: json['memory_map'] as String?,
+    initCommands: (json['init_commands'] as List<dynamic>?)?.map((e) => e as String).toList() ?? [],
     );
 
   Map<String, dynamic> toJson() => {
@@ -478,6 +482,7 @@ class EmulationConfig {
       'end_at': endAt,
       'pause_on_unhandled': pauseOnUnhandled,
       'memory_map': memoryMapPath,
+    'init_commands': initCommands,
     };
 
   EmulationConfig copyWith({
@@ -486,12 +491,14 @@ class EmulationConfig {
     List<String>? endAt,
     bool? pauseOnUnhandled,
     String? memoryMapPath,
+    List<String>? initCommands,
   }) => EmulationConfig(
         vectorTableOffset: vectorTableOffset ?? this.vectorTableOffset,
       startFrom: startFrom ?? this.startFrom,
       endAt: endAt ?? this.endAt,
       pauseOnUnhandled: pauseOnUnhandled ?? this.pauseOnUnhandled,
       memoryMapPath: memoryMapPath ?? this.memoryMapPath,
+    initCommands: initCommands ?? this.initCommands,
     );
 }
 

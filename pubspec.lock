@@ -588,10 +588,10 @@ packages:
     dependency: transitive
     description:
       name: renode
-      sha256: c82e0733c7e38a031325af37e85b31f696ca085690bda00d85b98464ed7adf85
+      sha256: "19d8d5872d3687b8b9dacc9913b87b4dce0bb4873a9ef7f4551b49d2a81ffd1e"
       url: "https://nexus.medmakers.io/repository/pub/"
     source: hosted
-    version: "2.2.2"
+    version: "3.3.0"
   resect_callgraph:
     dependency: transitive
     description:
@@ -604,10 +604,10 @@ packages:
     dependency: transitive
     description:
       name: resect_hooks
-      sha256: "888ebc4a419e89523caf8fd193556b85957437a9fe18e88185af1cf8371ddbff"
+      sha256: "62207d7bf24f7a4a77cd7da2430caaf9afc48d0def452b74ea5206599d747fd2"
       url: "https://nexus.medmakers.io/repository/pub/"
     source: hosted
-    version: "1.5.1"
+    version: "1.6.0"
   resect_signatures:
     dependency: transitive
     description:

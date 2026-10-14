@@ -29,6 +29,7 @@ abstract class EmulationController {
     String? vectorTableOffset,
     String? startFrom,
     List<String>? endAt,
+    List<String>? initCommands,
     bool pauseOnUnhandled = true,
   });
 

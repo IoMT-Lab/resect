@@ -122,16 +122,22 @@ class DartEmulationController implements EmulationController {
     String? vectorTableOffset,
     String? startFrom,
     List<String>? endAt,
+    List<String>? initCommands,
     bool pauseOnUnhandled = true,
   }) async {
     await _applyHooks();
+    await _client.enableTracing(firstOccurenceOnly: true);
     _pendingPause = false;
     _lastUnhandledSymbol = null; // fresh run — detect new unhandled accesses
     if (vectorTableOffset != null) {
       await _client.setVectorTableOffsetSymbol(vectorTableOffset);
     }
 
-    await _client.run(
+    if (initCommands != null && initCommands.isNotEmpty) {
+      await _client.callMany(initCommands);
+    }
+
+    await _client.start(
       startFrom: startFrom,
       endAt: endAt,
       pauseOnUnhandled: pauseOnUnhandled,

@@ -94,6 +94,7 @@ class SynthesizerWorkflow {
     String? vectorTableOffset,
     String? startFrom,
     List<String>? endAt,
+    List<String>? initCommands,
     int maxIterations = 500,
     Map<String, int> hookPreferences = const {},
     Map<String, int> hookOverrides = const {},
@@ -391,6 +392,7 @@ class SynthesizerWorkflow {
           vectorTableOffset: vectorTableOffset,
           startFrom: startFrom,
           endAt: endAt,
+          initCommands: initCommands,
           pauseOnUnhandled: true,
         );
 
@@ -732,6 +734,7 @@ class SynthesizerWorkflow {
   Future<PausedEvent?> _startAndWaitForPause({
     required bool pauseOnUnhandled, String? vectorTableOffset, String? startFrom,
     List<String>? endAt,
+    List<String>? initCommands,
   }) async {
     final completer = Completer<PausedEvent?>();
     var executionStarted = false;
@@ -764,6 +767,7 @@ class SynthesizerWorkflow {
           vectorTableOffset: vectorTableOffset,
           startFrom: startFrom,
           endAt: endAt,
+          initCommands: initCommands,
           pauseOnUnhandled: pauseOnUnhandled,
         ),
       );

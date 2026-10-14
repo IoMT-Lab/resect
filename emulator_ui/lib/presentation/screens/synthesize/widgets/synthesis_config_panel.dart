@@ -169,10 +169,12 @@ class SynthesisConfigPanel extends ConsumerWidget {
     String? vectorTableOffset,
     String? startFrom,
     List<String>? endAt,
+    List<String>? initCommands,
     String? memoryMapPath,
   }) {
     final clearVectorTableOffset = vectorTableOffset == '';
     final clearStart = startFrom == '';
+    final clearInitCommands = initCommands == null || initCommands.isEmpty;
     final clearMap = memoryMapPath == '';
     final config = EmulationConfig(
       vectorTableOffset: clearVectorTableOffset ? null : (vectorTableOffset ?? emulator.emulationConfig.vectorTableOffset),
@@ -180,6 +182,7 @@ class SynthesisConfigPanel extends ConsumerWidget {
           clearStart ? null : (startFrom ?? emulator.emulationConfig.startFrom),
       endAt: endAt ?? emulator.emulationConfig.endAt,
       pauseOnUnhandled: emulator.emulationConfig.pauseOnUnhandled,
+      initCommands: clearInitCommands ? null : (initCommands ?? emulator.emulationConfig.initCommands),
       memoryMapPath: clearMap
           ? null
           : (memoryMapPath ?? emulator.emulationConfig.memoryMapPath),

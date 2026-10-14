@@ -190,7 +190,7 @@ class HookTestHarness {
           .timeout(timeout);
 
       // Run; pause when PC reaches `halt_loop` (bootstrap finished).
-      await client.run(
+      await client.start(
         endAt: [testHarnessHaltSymbol],
         pauseOnUnhandled: true,
       );

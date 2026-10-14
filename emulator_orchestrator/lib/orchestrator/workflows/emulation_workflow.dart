@@ -62,6 +62,7 @@ class EmulationWorkflow {
     String? vectorTableOffset,
     String? startFrom,
     List<String>? endAt,
+    List<String>? initCommands,
     bool pauseOnUnhandled = true,
     Map<String, HookSpec> resolvedOverrides = const {},
     Map<String, HookSpec> commsHooks = const {},
@@ -89,6 +90,7 @@ class EmulationWorkflow {
         vectorTableOffset: vectorTableOffset,
         startFrom: startFrom,
         endAt: endAt,
+        initCommands: initCommands,
         pauseOnUnhandled: pauseOnUnhandled,
       );
 
@@ -114,6 +116,7 @@ class EmulationWorkflow {
     String? vectorTableOffset,
     String? startFrom,
     List<String>? endAt,
+    List<String>? initCommands,
     bool pauseOnUnhandled = true,
     Map<String, HookSpec> resolvedOverrides = const {},
     Map<String, HookSpec> commsHooks = const {},
@@ -126,6 +129,7 @@ class EmulationWorkflow {
         vectorTableOffset: vectorTableOffset,
         startFrom: startFrom,
         endAt: endAt,
+        initCommands: initCommands,
         pauseOnUnhandled: pauseOnUnhandled,
         resolvedOverrides: resolvedOverrides,
         commsHooks: commsHooks,
@@ -161,6 +165,7 @@ class EmulationWorkflow {
         vectorTableOffset: vectorTableOffset,
         startFrom: startFrom,
         endAt: endAt,
+        initCommands: initCommands,
         pauseOnUnhandled: pauseOnUnhandled,
       );
 
@@ -357,12 +362,14 @@ class EmulationWorkflow {
   Future<void> _startEmulation({
     required bool pauseOnUnhandled, String? vectorTableOffset, String? startFrom,
     List<String>? endAt,
+    List<String>? initCommands,
   }) async {
     print('Starting emulation...');
     await emulationController.start(
       vectorTableOffset: vectorTableOffset,
       startFrom: startFrom,
       endAt: endAt,
+      initCommands: initCommands,
       pauseOnUnhandled: pauseOnUnhandled,
     );
   }

@@ -24,7 +24,7 @@ dependencies:
   # checkouts (see that file).
   renode:
     hosted: https://nexus.medmakers.io/repository/pub
-    version: 2.2.2
+    version: 3.3.0
   resect_callgraph:
     hosted: https://nexus.medmakers.io/repository/pub
     version: ^1.0.0

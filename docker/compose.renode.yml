@@ -5,3 +5,4 @@ services:
     profiles: [normal]
     environment:
       RENODE_COMMS_HOST: "resect"
+    ports: ["12345:12345"]
